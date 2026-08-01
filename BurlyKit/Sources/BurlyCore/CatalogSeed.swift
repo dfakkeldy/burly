@@ -5,6 +5,18 @@
 // tags were hand-curated from general lifting knowledge, not copied from a
 // third-party catalog. JSON is intentionally kept outside executable Swift so
 // catalog and Hevy-alias changes remain easy to review as authored data.
+//
+// MUTABILITY: catalog-seed-v1.json content (exercise names, muscle tags,
+// Hevy aliases) is mutable in place ONLY until the first TestFlight build
+// ships. Before that point nobody has installed seedVersion 1, so editing an
+// existing entry in place is a correction, not a breaking change. Once a
+// TestFlight build has shipped, `applyCatalogSeed` matches purely by UUID and
+// deliberately never overwrites a property of an already-inserted Exercise
+// (see SwiftDataStore.applyCatalogSeed) — a tester's device would keep the
+// old tags forever. Any further content change after that point must ship as
+// a new seedVersion (additive rows only; never mutate a shipped id's name or
+// muscleGroups in place). Existing UUIDs must never be changed or reused
+// regardless of which side of this line a change falls on.
 
 import Foundation
 

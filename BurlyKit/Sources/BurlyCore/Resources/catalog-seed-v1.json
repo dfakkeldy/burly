@@ -59,16 +59,14 @@
       "id": "10000000-0000-4000-8000-000000000007",
       "name": "Dumbbell Fly",
       "muscleGroups": [
-        "chest",
-        "shoulders"
+        "chest"
       ]
     },
     {
       "id": "10000000-0000-4000-8000-000000000008",
       "name": "Cable Crossover",
       "muscleGroups": [
-        "chest",
-        "shoulders"
+        "chest"
       ]
     },
     {
@@ -93,8 +91,7 @@
       "id": "10000000-0000-4000-8000-000000000011",
       "name": "Pec Deck",
       "muscleGroups": [
-        "chest",
-        "shoulders"
+        "chest"
       ]
     },
     {
@@ -663,8 +660,7 @@
       "id": "10000000-0000-4000-8000-000000000079",
       "name": "Nordic Hamstring Curl",
       "muscleGroups": [
-        "hamstrings",
-        "glutes"
+        "hamstrings"
       ]
     },
     {
@@ -820,6 +816,35 @@
       "muscleGroups": [
         "core"
       ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000101",
+      "name": "Barbell Shrug",
+      "muscleGroups": [
+        "upperBack",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000102",
+      "name": "Dumbbell Shrug",
+      "muscleGroups": [
+        "upperBack",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000103",
+      "name": "Trap Bar Deadlift",
+      "muscleGroups": [
+        "hamstrings",
+        "glutes",
+        "quads",
+        "upperBack",
+        "lats",
+        "forearms",
+        "core"
+      ]
     }
   ],
   "hevyAliases": {
@@ -922,6 +947,9 @@
     "Crunch (Cable)": "10000000-0000-4000-8000-000000000097",
     "Pallof Press (Cable)": "10000000-0000-4000-8000-000000000098",
     "Russian Twist (Weighted)": "10000000-0000-4000-8000-000000000099",
-    "Crunch (Reverse)": "10000000-0000-4000-8000-000000000100"
+    "Crunch (Reverse)": "10000000-0000-4000-8000-000000000100",
+    "Shrug (Barbell)": "10000000-0000-4000-8000-000000000101",
+    "Shrug (Dumbbell)": "10000000-0000-4000-8000-000000000102",
+    "Deadlift (Trap Bar)": "10000000-0000-4000-8000-000000000103"
   }
 }

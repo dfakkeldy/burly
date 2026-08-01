@@ -36,6 +36,61 @@ struct SeedLoaderTests {
         #expect(try store.exercises(includingArchived: true).count == seed.exercises.count)
     }
 
+    @Test("applying an older seed version after a newer one is stored is a no-op")
+    func olderSeedVersionAfterNewerStoredIsNoOp() throws {
+        let container = try BurlyContainer.phone(at: .inMemory)
+        let seed = try CatalogSeed.loadBundled()
+        try SeedLoader.apply(seed, to: SwiftDataStore(container: container))
+
+        let bumped = try makeBumpedSeed(from: seed)
+        let bumpedInserted = try SeedLoader.apply(bumped, to: SwiftDataStore(container: container))
+        #expect(bumpedInserted == 1)
+
+        // seed.seedVersion is now older than what's stored (bumped). Reapplying
+        // it must not insert, delete, or downgrade the stored version.
+        let olderReapplyInserted = try SeedLoader.apply(seed, to: SwiftDataStore(container: container))
+        #expect(olderReapplyInserted == 0)
+
+        let verifier = SwiftDataStore(container: container)
+        #expect(try verifier.exercises(includingArchived: true).count == bumped.exercises.count)
+
+        let metadataContext = ModelContext(container)
+        let states = try metadataContext.fetch(FetchDescriptor<CatalogSeedState>())
+        let state = try #require(states.first)
+        #expect(states.count == 1)
+        #expect(state.version == bumped.seedVersion)
+    }
+
+    @Test("applying the same seed version with different content is a no-op before any fetch or insert")
+    func sameSeedVersionWithDifferentContentIsNoOp() throws {
+        let store = try makeStore()
+        let seed = try CatalogSeed.loadBundled()
+        try SeedLoader.apply(seed, to: store)
+
+        // Same seedVersion as what's already stored, but with an extra
+        // exercise the store has never seen. The version guard is a pure
+        // integer comparison — it must fire before the loader ever fetches
+        // existing exercises or considers this new UUID for insertion.
+        let differentContentSameVersion = try CatalogSeed(
+            seedVersion: seed.seedVersion,
+            exercises: seed.exercises + [
+                CatalogSeed.CatalogExercise(
+                    id: try bumpExerciseID(),
+                    name: "Should Never Be Inserted",
+                    muscleGroups: [.core]
+                )
+            ],
+            hevyAliases: seed.hevyAliases
+        )
+
+        let inserted = try SeedLoader.apply(differentContentSameVersion, to: store)
+        #expect(inserted == 0)
+
+        let stored = try store.exercises(includingArchived: true)
+        #expect(stored.count == seed.exercises.count)
+        #expect(stored.contains { $0.name == "Should Never Be Inserted" } == false)
+    }
+
     @Test("a higher seed version inserts only newly introduced UUIDs")
     func seedBumpAddsOnlyNewExercises() throws {
         let store = try makeStore()
@@ -132,6 +187,9 @@ struct SeedLoaderTests {
     }
 
     private func bumpExerciseID() throws -> UUID {
-        try #require(UUID(uuidString: "10000000-0000-4000-8000-000000000101"))
+        // One past the real catalog's highest sequential id (currently .103,
+        // Trap Bar Deadlift) so this synthetic bump addition never collides
+        // with a real seed entry.
+        try #require(UUID(uuidString: "10000000-0000-4000-8000-000000000104"))
     }
 }

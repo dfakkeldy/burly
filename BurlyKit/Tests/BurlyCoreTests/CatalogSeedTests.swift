@@ -11,8 +11,8 @@ struct CatalogSeedTests {
         let seed = try CatalogSeed.loadBundled()
 
         #expect(seed.seedVersion == 1)
-        #expect(seed.exercises.count == 100)
-        #expect(seed.hevyAliases.count == 100)
+        #expect(seed.exercises.count == 103)
+        #expect(seed.hevyAliases.count == 103)
         #expect(Set(seed.exercises.map(\.id)).count == seed.exercises.count)
         #expect(Set(seed.exercises.map(\.name)).count == seed.exercises.count)
     }
