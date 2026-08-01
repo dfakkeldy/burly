@@ -6,7 +6,14 @@ let package = Package(
     name: "BurlyKit",
     platforms: [
         .iOS(.v26),
-        .watchOS(.v26)
+        .watchOS(.v26),
+        // macOS is not a shipping target. It is declared only so that
+        // `swift test` on the developer's Mac has a deployment target new
+        // enough for SwiftData (`@Model` requires macOS 14+); without it SPM
+        // falls back to macOS 10.13 and BurlyPersistence will not compile
+        // for the host. Kept level with the iOS/watchOS floor so no macOS-
+        // only availability drift can creep in.
+        .macOS(.v26)
     ],
     products: [
         .library(name: "BurlyCore", targets: ["BurlyCore"]),
