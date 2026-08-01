@@ -25,4 +25,30 @@ public struct SetSnapshot: Sendable, Equatable, Hashable, Codable {
     public var weight: Weight {
         Weight(kg: weightKg)
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case weightKg, reps, isWarmup
+    }
+
+    /// Custom decoder — same rationale as `SetRecordData.init(from:)`:
+    /// routes the raw `weightKg` Double through `Weight(validatingKg:)` to
+    /// close the Decodable hole (reject negative/NaN/infinite), and
+    /// defaults `isWarmup` to `false` when absent (§1 default symmetry).
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        let rawWeightKg = try container.decode(Double.self, forKey: .weightKg)
+        do {
+            weightKg = try Weight(validatingKg: rawWeightKg).kg
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .weightKg,
+                in: container,
+                debugDescription: "weightKg must be a finite, non-negative number (decoded \(rawWeightKg))."
+            )
+        }
+
+        reps = try container.decode(Int.self, forKey: .reps)
+        isWarmup = try container.decodeIfPresent(Bool.self, forKey: .isWarmup) ?? false
+    }
 }

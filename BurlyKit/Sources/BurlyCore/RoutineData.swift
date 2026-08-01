@@ -42,4 +42,20 @@ public struct RoutineData: Sendable, Equatable, Hashable, Codable, Identifiable 
         self.updatedAt = updatedAt
         self.archivedAt = archivedAt
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, orderIndex, items, updatedAt, archivedAt
+    }
+
+    /// Custom decoder for §1 default symmetry: `items` defaults to `[]`
+    /// when absent, matching the memberwise initializer's default.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        orderIndex = try container.decode(Int.self, forKey: .orderIndex)
+        items = try container.decodeIfPresent([RoutineItemData].self, forKey: .items) ?? []
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
+    }
 }

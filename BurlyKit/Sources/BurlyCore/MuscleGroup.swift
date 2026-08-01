@@ -14,17 +14,24 @@
 //
 // No Foundation import: a plain String-backed enum needs nothing from any
 // framework.
+//
+// Raw values are spelled out explicitly (rather than relying on Swift's
+// implicit lowerCamelCase-from-case-name synthesis) as a refactoring-safety
+// measure: renaming a case can never silently change the wire string, since
+// there is no synthesis step left to change with it. This is a pure
+// safety refactor — every string below is identical to what implicit
+// synthesis already produced; zero wire format change.
 public enum MuscleGroup: String, Sendable, Equatable, Hashable, Codable, CaseIterable {
-    case chest
-    case upperBack
-    case lats
-    case shoulders
-    case biceps
-    case triceps
-    case forearms
-    case quads
-    case hamstrings
-    case glutes
-    case calves
-    case core
+    case chest = "chest"
+    case upperBack = "upperBack"
+    case lats = "lats"
+    case shoulders = "shoulders"
+    case biceps = "biceps"
+    case triceps = "triceps"
+    case forearms = "forearms"
+    case quads = "quads"
+    case hamstrings = "hamstrings"
+    case glutes = "glutes"
+    case calves = "calves"
+    case core = "core"
 }

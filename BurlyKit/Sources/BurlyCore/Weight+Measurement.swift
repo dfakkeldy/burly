@@ -22,8 +22,21 @@ import Foundation
 extension Weight {
     /// Constructs from a `Measurement<UnitMass>` of any unit, converting to
     /// kg immediately (spec §1 acceptance #4).
+    ///
+    /// `.pounds` is special-cased through `Weight(pounds:)`'s exact
+    /// avoirdupois constant (0.45359237) rather than Foundation's own
+    /// rounded `UnitMass` conversion coefficient, so the two pound-input
+    /// paths — this initializer and `Weight(pounds:)` — always produce
+    /// identical kg for the same pounds value. Every other unit still goes
+    /// through Foundation's `Measurement` conversion; pounds is the only
+    /// unit this type constructs from a plain `Double` elsewhere, which is
+    /// what makes the two paths need to agree exactly.
     public init(_ measurement: Measurement<UnitMass>) {
-        self.init(kg: measurement.converted(to: .kilograms).value)
+        if measurement.unit == UnitMass.pounds {
+            self.init(pounds: measurement.value)
+        } else {
+            self.init(kg: measurement.converted(to: .kilograms).value)
+        }
     }
 
     /// Reads back as a `Measurement<UnitMass>`, in kilograms by default.

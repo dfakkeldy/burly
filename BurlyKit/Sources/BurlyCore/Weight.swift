@@ -55,3 +55,32 @@ public struct Weight: Sendable, Equatable, Hashable, Codable {
     /// The 0 kg bodyweight convention (see file doc above).
     public static let bodyweight = Weight(kg: 0)
 }
+
+/// Thrown by `Weight(validatingKg:)` when a raw `Double` cannot represent a
+/// physical weight. Every trusted construction path (`init(kg:)`,
+/// `init(pounds:)`, the `Measurement<UnitMass>` initializer) already hands
+/// this type values that satisfy these invariants by construction — this
+/// error only exists for the one boundary where `weightKg` arrives as an
+/// untrusted raw `Double` instead: Decodable. See `SetRecordData` and
+/// `SetSnapshot`'s custom `init(from:)` for where this becomes a
+/// `DecodingError.dataCorrupted`.
+public enum WeightValidationError: Error, Equatable {
+    case negative(Double)
+    case notFinite(Double)
+}
+
+extension Weight {
+    /// Validates a raw kg value against the invariants `Weight` otherwise
+    /// holds implicitly (finite, non-negative), for use at boundaries where
+    /// `weightKg` is decoded as a plain `Double` rather than constructed
+    /// through this type directly.
+    public init(validatingKg kg: Double) throws {
+        guard kg.isFinite else {
+            throw WeightValidationError.notFinite(kg)
+        }
+        guard kg >= 0 else {
+            throw WeightValidationError.negative(kg)
+        }
+        self.init(kg: kg)
+    }
+}

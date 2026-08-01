@@ -65,4 +65,26 @@ public struct SessionData: Sendable, Equatable, Hashable, Codable, Identifiable 
         self.items = items
         self.notes = notes
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, routineID, routineName, startedAt, endedAt, state, revision, healthKitWorkoutID, origin, items, notes
+    }
+
+    /// Custom decoder for §1 default symmetry: `state` defaults to
+    /// `.active`, `revision` to 1, and `items` to `[]` when absent —
+    /// matching the memberwise initializer's defaults.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        routineID = try container.decodeIfPresent(UUID.self, forKey: .routineID)
+        routineName = try container.decodeIfPresent(String.self, forKey: .routineName)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+        state = try container.decodeIfPresent(SessionState.self, forKey: .state) ?? .active
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        healthKitWorkoutID = try container.decodeIfPresent(UUID.self, forKey: .healthKitWorkoutID)
+        origin = try container.decode(SessionOrigin.self, forKey: .origin)
+        items = try container.decodeIfPresent([SessionItemData].self, forKey: .items) ?? []
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+    }
 }

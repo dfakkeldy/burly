@@ -10,12 +10,12 @@
 //
 // Every value type mirroring a spec §1 SwiftData entity is named
 // `<Entity>Data` — ExerciseData, RoutineData, RoutineItemData, SessionData,
-// SessionItemData, SetRecordData. The suffix reads "the data behind
-// <Entity>" and keeps these visually distinct from BurlyPersistence's
-// forthcoming `@Model` types of the bare entity names. `SetSnapshot`
-// (mirroring `ExerciseLastPerformance.sets`, already a value struct in the
-// spec) keeps its spec name — there is no `@Model` twin to disambiguate
-// from.
+// SessionItemData, SetRecordData, ExerciseLastPerformanceData. The suffix
+// reads "the data behind <Entity>" and keeps these visually distinct from
+// BurlyPersistence's forthcoming `@Model` types of the bare entity names.
+// `SetSnapshot` (mirroring `ExerciseLastPerformance.sets`, already a value
+// struct in the spec) keeps its spec name — there is no `@Model` twin to
+// disambiguate from.
 //
 // Relationship fields that are object references in the spec
 // (`exercise: Exercise?`) become `<name>ID: UUID?` here — cross-device

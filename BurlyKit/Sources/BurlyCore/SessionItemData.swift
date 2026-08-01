@@ -31,4 +31,18 @@ public struct SessionItemData: Sendable, Equatable, Hashable, Codable, Identifia
         self.order = order
         self.sets = sets
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, exerciseID, order, sets
+    }
+
+    /// Custom decoder for §1 default symmetry: `sets` defaults to `[]`
+    /// when absent, matching the memberwise initializer's default.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        exerciseID = try container.decodeIfPresent(UUID.self, forKey: .exerciseID)
+        order = try container.decode(Int.self, forKey: .order)
+        sets = try container.decodeIfPresent([SetRecordData].self, forKey: .sets) ?? []
+    }
 }

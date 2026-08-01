@@ -102,6 +102,19 @@ struct DomainCodableTests {
         #expect(try roundTrip(value) == value)
     }
 
+    @Test("ExerciseLastPerformanceData round-trips through JSON, including nested SetSnapshots")
+    func exerciseLastPerformanceRoundTrips() throws {
+        let value = ExerciseLastPerformanceData(
+            exerciseID: UUID(),
+            performedAt: Date(timeIntervalSince1970: 1_700_000_300),
+            sets: [
+                SetSnapshot(weight: Weight(kg: 60), reps: 8, isWarmup: true),
+                SetSnapshot(weight: Weight(pounds: 225), reps: 5, isWarmup: false)
+            ]
+        )
+        #expect(try roundTrip(value) == value)
+    }
+
     @Test("Weight round-trips through JSON")
     func weightRoundTrips() throws {
         let value = Weight(pounds: 315)

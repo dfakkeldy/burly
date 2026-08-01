@@ -41,4 +41,20 @@ public struct RoutineItemData: Sendable, Equatable, Hashable, Codable, Identifia
         self.restOverride = restOverride
         self.note = note
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, exerciseID, order, defaultSetCount, restOverride, note
+    }
+
+    /// Custom decoder for §1 default symmetry: `defaultSetCount` defaults
+    /// to 3 when absent, matching the memberwise initializer's default.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        exerciseID = try container.decodeIfPresent(UUID.self, forKey: .exerciseID)
+        order = try container.decode(Int.self, forKey: .order)
+        defaultSetCount = try container.decodeIfPresent(Int.self, forKey: .defaultSetCount) ?? 3
+        restOverride = try container.decodeIfPresent(TimeInterval.self, forKey: .restOverride)
+        note = try container.decodeIfPresent(String.self, forKey: .note)
+    }
 }

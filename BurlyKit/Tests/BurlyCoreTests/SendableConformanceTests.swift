@@ -20,12 +20,14 @@ struct SendableConformanceTests {
         _ = requireSendable(SessionItemData(exerciseID: nil, order: 0))
         _ = requireSendable(SetRecordData(order: 0, weight: .bodyweight, reps: 1, completedAt: Date()))
         _ = requireSendable(SetSnapshot(weight: .bodyweight, reps: 1))
+        _ = requireSendable(
+            ExerciseLastPerformanceData(exerciseID: UUID(), performedAt: Date(), sets: [SetSnapshot(weight: .bodyweight, reps: 1)])
+        )
         _ = requireSendable(Weight.bodyweight)
         _ = requireSendable(MuscleGroup.chest)
         _ = requireSendable(ExerciseOrigin.curated)
         _ = requireSendable(SessionState.active)
         _ = requireSendable(SessionOrigin.live)
-        #expect(Bool(true))
     }
 
     @Test("domain values can cross an actor boundary without a compiler error")

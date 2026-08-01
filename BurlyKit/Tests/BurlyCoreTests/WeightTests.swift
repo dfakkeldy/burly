@@ -36,18 +36,16 @@ struct WeightTests {
         #expect(Weight(kg: 0) == Weight.bodyweight)
     }
 
-    @Test("Measurement<UnitMass> in pounds converts to within Foundation's own coefficient precision of the plain-Double API")
+    @Test("Measurement<UnitMass> in pounds converts to IDENTICAL kg as Weight(pounds:) — both route through the exact avoirdupois constant")
     func measurementConversion() {
-        // Foundation's `UnitMass.pounds` conversion coefficient is a
-        // rounded 0.453592 (6 significant figures), not the exact
-        // avoirdupois 0.45359237 `Weight(pounds:)` uses — so the two paths
-        // agree to about 1e-5 kg per pound, not to floating-point epsilon.
-        // That's an intentional, tiny divergence between "did the math
-        // ourselves" and "asked Foundation," not a bug in either.
+        // `Weight(_:Measurement<UnitMass>)` special-cases `.pounds` through
+        // `Weight(pounds:)`'s exact 0.45359237 constant instead of
+        // Foundation's own rounded `UnitMass` coefficient, so these two
+        // pound-input paths must agree exactly, not just approximately.
         let measurement = Measurement(value: 45, unit: UnitMass.pounds)
         let fromMeasurement = Weight(measurement)
         let fromDouble = Weight(pounds: 45)
-        #expect(abs(fromMeasurement.kg - fromDouble.kg) < 0.001)
+        #expect(fromMeasurement.kg == fromDouble.kg)
     }
 
     @Test("Measurement<UnitMass> in kilograms round-trips exactly")

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import Testing
+import Foundation
 @testable import BurlyCore
 
 @Suite("MuscleGroup: frozen 12-value taxonomy")
@@ -37,10 +38,23 @@ struct MuscleGroupTests {
         #expect(MuscleGroup.core.rawValue == "core")
     }
 
-    @Test("multi-tag usage: an exercise can carry more than one MuscleGroup")
+    @Test("multi-tag usage: ExerciseData.muscleGroups can carry more than one MuscleGroup")
     func multiTagUsage() {
-        let tags: [MuscleGroup] = [.chest, .triceps, .shoulders]
-        #expect(tags.count == 3)
-        #expect(Set(tags).count == 3)
+        let exercise = ExerciseData(
+            name: "Bench Press",
+            muscleGroups: [.chest, .triceps, .shoulders],
+            origin: .curated
+        )
+        #expect(exercise.muscleGroups.count == 3)
+        #expect(Set(exercise.muscleGroups).count == 3)
+    }
+
+    @Test("raw JSON wire assertion: encoding a MuscleGroup array produces the exact expected strings, not just round-trippable ones")
+    func rawJSONWireFormat() throws {
+        let groups: [MuscleGroup] = [.upperBack, .hamstrings, .core]
+        let data = try JSONEncoder().encode(groups)
+        let json = String(decoding: data, as: UTF8.self)
+        #expect(json == "[\"upperBack\",\"hamstrings\",\"core\"]")
+        #expect(json.contains("upperBack"))
     }
 }

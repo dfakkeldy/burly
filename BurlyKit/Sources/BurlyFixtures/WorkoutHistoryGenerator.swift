@@ -16,6 +16,14 @@
 /// bodyweight set (e.g. pull-ups, dips) rather than an external load.
 /// `isWarmup` mirrors the app's frozen per-set schema flag.
 public struct FixtureSet: Sendable, Equatable {
+    /// kg by contract, same convention as `SetRecordData.weightKg`: this
+    /// field is always kilograms, never pounds. Synthetic fixture data
+    /// deliberately stays a plain `Double` here rather than routing
+    /// through BurlyCore's `Weight` type — `BurlyFixtures` depends on
+    /// nothing (see this file's header) and is not app/domain code; the
+    /// `Weight` construction boundary (validated, pounds-safe) is a
+    /// BurlyCore guarantee for real app data, not a requirement this
+    /// generator's synthetic output needs to satisfy.
     public let weightKg: Double
     public let reps: Int
     public let isWarmup: Bool

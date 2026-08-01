@@ -52,4 +52,39 @@ public struct SetRecordData: Sendable, Equatable, Hashable, Codable, Identifiabl
     public mutating func setWeight(_ weight: Weight) {
         weightKg = weight.kg
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, order, weightKg, reps, isWarmup, completedAt
+    }
+
+    /// Custom decoder, for two reasons `Codable` synthesis can't cover:
+    ///
+    /// 1. **Closing the Decodable hole**: the memberwise `init` only ever
+    ///    accepts weight through `Weight`, but synthesized `Decodable`
+    ///    would decode `weightKg` as a bare, unvalidated `Double` — the one
+    ///    path that could smuggle a negative, NaN, or infinite value past
+    ///    the type's guarantee. Routing it through
+    ///    `Weight(validatingKg:)` closes that hole.
+    /// 2. **§1 default symmetry**: `isWarmup` defaults to `false` when
+    ///    absent from the payload, matching the memberwise initializer.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        order = try container.decode(Int.self, forKey: .order)
+
+        let rawWeightKg = try container.decode(Double.self, forKey: .weightKg)
+        do {
+            weightKg = try Weight(validatingKg: rawWeightKg).kg
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .weightKg,
+                in: container,
+                debugDescription: "weightKg must be a finite, non-negative number (decoded \(rawWeightKg))."
+            )
+        }
+
+        reps = try container.decode(Int.self, forKey: .reps)
+        isWarmup = try container.decodeIfPresent(Bool.self, forKey: .isWarmup) ?? false
+        completedAt = try container.decode(Date.self, forKey: .completedAt)
+    }
 }
