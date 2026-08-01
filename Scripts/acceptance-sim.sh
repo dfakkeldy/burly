@@ -72,7 +72,7 @@ DERIVED_DATA="$REPO_ROOT/DerivedData"     # shared DerivedData for ALL Burly bui
 OUTPUT_DIR="$REPO_ROOT/Scripts/output"
 RUNS_DIR="$OUTPUT_DIR/runs"
 LATEST_LINK="$OUTPUT_DIR/latest"
-LOCK_DIR="/Users/dfakkeldy/Developer/health-apps/plan/dispatch/sim.lock"
+LOCK_DIR="${BURLY_LOCK_DIR:-/Users/dfakkeldy/Developer/health-apps/plan/dispatch/sim.lock}"
 OWNER_FILE="$LOCK_DIR/owner"
 
 IPHONE_NAME="Burly iPhone"
