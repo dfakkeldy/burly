@@ -15,4 +15,11 @@ public enum BurlyStoreError: Error, Equatable {
     /// (The spec allows a *nil* exercise reference; it does not allow a
     /// dangling one.)
     case missingExercise(UUID)
+    /// The call is only valid against a watch-kind store. Today this guards
+    /// `upsertLastPerformance`: the phone derives digests from full history
+    /// at push time and never stores `ExerciseLastPerformance` rows (§1).
+    /// A phone-kind store — or a store whose kind cannot be determined —
+    /// refuses the write rather than silently accumulating rows it should
+    /// never have.
+    case operationRequiresWatchStore
 }

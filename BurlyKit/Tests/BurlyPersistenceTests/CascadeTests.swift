@@ -168,4 +168,73 @@ struct CascadeTests {
         let survivor = try #require(try store.session(id: keeper.id))
         #expect(survivor.items[0].sets[0].weightKg == 140)
     }
+
+    /// The other cascade tests in this file run entirely in-memory: a
+    /// cascade that merely *orphaned* children (nulled their parent link
+    /// instead of deleting the rows) could still look clean against the same
+    /// live `ModelContext` that performed the delete. Reopening a brand-new
+    /// container on the same store file rules that out — there is no shared
+    /// in-memory state left to coincidentally agree with the assertions.
+    @Test("a Session's cascade survives a disk-backed cold reopen: cascaded SessionItems and SetRecords are genuinely gone, not just orphaned in the live context")
+    func deletingSessionCascadeSurvivesDiskColdReopen() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let bench = Fixture.exercise(name: "Bench Press")
+        let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
+        let routine = Fixture.routine(over: [bench, row])
+        let session = Fixture.session(from: routine)
+        let firstItemID = try #require(session.items.first?.id)
+        let secondItemID = try #require(session.items.last?.id)
+        var setIDs: [UUID] = []
+
+        // ---- write, delete, then let the writing container go out of scope ----
+        do {
+            let store = try SwiftDataStore(kind: .phone, at: .file(url))
+            try store.createExercise(bench)
+            try store.createExercise(row)
+            try store.createRoutine(routine)
+            try store.createSession(session)
+            for index in 0..<3 {
+                let set = SetRecordData(
+                    order: index,
+                    weight: Weight(kg: 80),
+                    reps: 5,
+                    completedAt: Fixture.epoch.addingTimeInterval(Double(index))
+                )
+                setIDs.append(set.id)
+                try store.logSet(set, toSessionItem: firstItemID)
+            }
+
+            #expect(try store.session(id: session.id) != nil)
+            try store.deleteSession(id: session.id)
+        }
+
+        // ---- cold open: a brand-new container/store over the same file ----
+        let container = try BurlyContainer.make(.phone, at: .file(url))
+        let reopened = SwiftDataStore(container: container)
+
+        #expect(try reopened.session(id: session.id) == nil)
+        #expect(try rowCount(Session.self, in: container) == 0)
+        #expect(try rowCount(SessionItem.self, in: container) == 0)
+        #expect(try rowCount(SetRecord.self, in: container) == 0)
+
+        // Fetch by the deleted ids directly, not just by count — counting
+        // alone couldn't tell a correct cascade from one that dropped the
+        // wrong rows but landed on the same totals.
+        let context = ModelContext(container)
+        for id in [firstItemID, secondItemID] {
+            let descriptor = FetchDescriptor<SessionItem>(predicate: #Predicate { $0.id == id })
+            #expect(try context.fetch(descriptor).isEmpty)
+        }
+        for id in setIDs {
+            let descriptor = FetchDescriptor<SetRecord>(predicate: #Predicate { $0.id == id })
+            #expect(try context.fetch(descriptor).isEmpty)
+        }
+
+        // The exercises the session referenced are untouched, on disk too.
+        #expect(try rowCount(Exercise.self, in: container) == 2)
+        #expect(try reopened.exercise(id: bench.id) == bench)
+        #expect(try reopened.exercise(id: row.id) == row)
+    }
 }

@@ -17,9 +17,22 @@ public final class SwiftDataStore: BurlyStore {
     /// note. One store, one isolation domain.
     private let context: ModelContext
 
+    /// Which device this store belongs to (§1 store shape: phone vs. watch
+    /// content differ). Inferred from the container's configuration name
+    /// rather than threaded through as a separate stored argument, so every
+    /// construction path — the `kind:` convenience initializer below, or a
+    /// bare `container:` built via `BurlyContainer.phone`/`.watch`/`.make`
+    /// — reports the same, correct kind without callers having to repeat it.
+    /// `nil` only when the container's configuration name doesn't match a
+    /// known `BurlyStoreKind` (e.g. a container assembled by hand, bypassing
+    /// `BurlyContainer`); treated as "not watch" by kind-gated operations.
+    private let kind: BurlyStoreKind?
+
     public init(container: ModelContainer) {
         self.context = ModelContext(container)
         self.context.autosaveEnabled = false
+        let configuredName = container.configurations.first?.name
+        self.kind = BurlyStoreKind.allCases.first { $0.storeName == configuredName }
     }
 
     public convenience init(
@@ -218,6 +231,11 @@ public final class SwiftDataStore: BurlyStore {
     }
 
     public func upsertLastPerformance(_ performance: ExerciseLastPerformanceData) throws {
+        // §1: the phone derives digests from full history at push time and
+        // never stores this entity — only a watch-kind store may write one.
+        guard kind == .watch else {
+            throw BurlyStoreError.operationRequiresWatchStore
+        }
         if let existing = try lastPerformanceModel(exerciseID: performance.exerciseID) {
             existing.performedAt = performance.performedAt
             existing.sets = performance.sets
