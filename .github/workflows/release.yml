@@ -19,15 +19,23 @@ concurrency:
   # Scoped to the ref (the tag) rather than the workflow, so pushing a
   # second tag doesn't cancel an in-flight upload for a different tag.
   # A duplicate push of the SAME tag (rare -- tags are meant to be
-  # immutable) is allowed to cancel-in-progress; re-running is safe
-  # because App Store Connect de-dupes by build number.
+  # immutable) is allowed to cancel-in-progress. App Store Connect does
+  # NOT de-dupe by build number -- it requires a unique
+  # version+build pair and rejects a repeat. Safety against a re-run
+  # colliding with a prior successful upload comes from the build
+  # number including github.run_attempt (see the Resolve step below),
+  # not from any ASC de-dupe behavior.
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   testflight-upload:
     name: Archive & upload to TestFlight
-    if: github.event_name == 'push'
+    # Guards against this job ever running for a plain branch push if
+    # `on:` above is broadened later -- only tag pushes should reach
+    # this job. See the header comment for why pull_request must also
+    # never reach it.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
@@ -54,17 +62,33 @@ jobs:
       # Version numbering scheme (documented here, the only place it's
       # decided):
       #   MARKETING_VERSION comes from the tag name:
-      #     burly-m<N>        -> 0.<N+1>.0   (m0 -> 0.1.0, m1 -> 0.2.0, ...)
+      #     burly-m<N>        -> 0.<N+1>.0   (m0 -> 0.1.0, m1 -> 0.2.0, ...;
+      #                                       N must not have a leading
+      #                                       zero, e.g. "m08" is rejected --
+      #                                       see arithmetic note below)
       #     burly-rc<N>       -> 0.9.<N>     (RC candidates patch-bump off
       #                                       the M8 baseline; bare
-      #                                       "burly-rc" == burly-rc1)
-      #     v<X.Y[.Z]>        -> X.Y[.Z]     (the release train's actual
-      #                                       App Store submission)
-      #   CURRENT_PROJECT_VERSION (the build number) is always
-      #   `github.run_number` -- monotonically increasing across every
-      #   workflow run in this repo, which satisfies App Store Connect's
-      #   "build number must increase" rule without any local state or
-      #   git-history parsing.
+      #                                       "burly-rc" == burly-rc1; same
+      #                                       no-leading-zero rule on N)
+      #     v<X.Y>            -> X.Y.0       (two-component tags are
+      #                                       normalized to three, since
+      #                                       Apple requires CFBundleShortVersionString
+      #                                       to be three period-separated
+      #                                       integers)
+      #     v<X.Y.Z>          -> X.Y.Z       (the release train's actual
+      #                                       App Store submission, taken
+      #                                       literally)
+      #   CURRENT_PROJECT_VERSION (the build number) is
+      #   `github.run_number`.`github.run_attempt` -- run_number is
+      #   monotonically increasing per workflow *identity* (not across the
+      #   whole repo: renaming or recreating this workflow file restarts
+      #   its numbering from 1, so that must not happen mid-release-train).
+      #   run_number alone is also not enough: a workflow RE-RUN keeps the
+      #   same run_number, and App Store Connect requires every upload to
+      #   have a unique version+build pair -- it does not de-dupe a repeat.
+      #   Appending run_attempt (which increments on each re-run) keeps a
+      #   re-run's build number unique. CFBundleVersion permits dotted
+      #   integers, so "N.M" is a valid build number.
       #   Both values are passed as xcodebuild command-line build
       #   setting overrides (see Archive step) rather than edited into
       #   the checked-out pbxproj, so the repo's committed baseline
@@ -75,15 +99,24 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
-          BUILD_NUMBER="${{ github.run_number }}"
+          BUILD_NUMBER="${{ github.run_number }}.${{ github.run_attempt }}"
 
-          if [[ "$TAG" =~ ^burly-m([0-9]+)$ ]]; then
+          # Milestone/RC numbers use the `0|[1-9][0-9]*` pattern to reject
+          # leading zeros (a bare "0" is still allowed). Without this,
+          # "burly-m08" fails bash arithmetic ("value too great for base",
+          # since 08 isn't valid octal) and "burly-m010" would silently be
+          # parsed as octal 8 instead of decimal 10. The `10#` prefix on
+          # the arithmetic below forces base-10 evaluation as a second,
+          # belt-and-braces layer against the octal misparse.
+          if [[ "$TAG" =~ ^burly-m(0|[1-9][0-9]*)$ ]]; then
             MILESTONE="${BASH_REMATCH[1]}"
-            MARKETING_VERSION="0.$((MILESTONE + 1)).0"
-          elif [[ "$TAG" =~ ^burly-rc([0-9]+)?$ ]]; then
+            MARKETING_VERSION="0.$((10#$MILESTONE + 1)).0"
+          elif [[ "$TAG" =~ ^burly-rc(0|[1-9][0-9]*)?$ ]]; then
             RC="${BASH_REMATCH[1]:-1}"
-            MARKETING_VERSION="0.9.${RC}"
-          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+(\.[0-9]+)?)$ ]]; then
+            MARKETING_VERSION="0.9.$((10#$RC))"
+          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+)$ ]]; then
+            MARKETING_VERSION="${BASH_REMATCH[1]}.0"
+          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             MARKETING_VERSION="${BASH_REMATCH[1]}"
           else
             echo "::error::Tag '$TAG' does not match a known release pattern (burly-m<N>, burly-rc<N>, v<semver>)"
