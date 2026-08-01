@@ -12,7 +12,8 @@ let package = Package(
         .library(name: "BurlyCore", targets: ["BurlyCore"]),
         .library(name: "BurlyPersistence", targets: ["BurlyPersistence"]),
         .library(name: "BurlySync", targets: ["BurlySync"]),
-        .library(name: "BurlyHealth", targets: ["BurlyHealth"])
+        .library(name: "BurlyHealth", targets: ["BurlyHealth"]),
+        .library(name: "BurlyFixtures", targets: ["BurlyFixtures"])
     ],
     targets: [
         .target(
@@ -29,6 +30,35 @@ let package = Package(
         .target(
             name: "BurlyHealth",
             dependencies: ["BurlyCore"]
+        ),
+        // Synthetic fixture generators (workout history, Hevy-shaped CSV)
+        // for tests and previews. Shipped as its own library target (not a
+        // test-support target) because BurlyPhone/BurlyWatch preview code
+        // and later test targets across the package all need to depend on
+        // it, and SPM test-support targets aren't importable from normal
+        // targets. Depends on nothing but the Swift standard library.
+        .target(
+            name: "BurlyFixtures"
+        ),
+        .testTarget(
+            name: "BurlyCoreTests",
+            dependencies: ["BurlyCore"]
+        ),
+        .testTarget(
+            name: "BurlyPersistenceTests",
+            dependencies: ["BurlyPersistence"]
+        ),
+        .testTarget(
+            name: "BurlySyncTests",
+            dependencies: ["BurlySync"]
+        ),
+        .testTarget(
+            name: "BurlyHealthTests",
+            dependencies: ["BurlyHealth"]
+        ),
+        .testTarget(
+            name: "BurlyFixturesTests",
+            dependencies: ["BurlyFixtures"]
         )
     ],
     swiftLanguageModes: [.v6]
