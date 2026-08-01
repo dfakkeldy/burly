@@ -47,8 +47,22 @@ public protocol BurlyStore: AnyObject {
 
     // MARK: - Routines
 
-    /// Throws `BurlyStoreError.duplicateID` if `routine.id` already exists,
-    /// or `.missingExercise` if an item names an exercise that isn't stored.
+    /// **Local authoring.** Creates a routine the user just made on *this*
+    /// device, stamping `updatedAt` from the store's own clock — the
+    /// caller's `routine.updatedAt` is ignored, exactly as `updateRoutine`
+    /// ignores it. A locally-authored routine cannot be born backdated or
+    /// postdated (m1-06 review, m2).
+    ///
+    /// This is not the path for a routine that was authored elsewhere. A
+    /// phone-pushed §5 snapshot must land on the watch carrying the
+    /// *phone's* timestamp, or the two devices disagree about when the
+    /// routine last changed; that is `applyRoutineSnapshot(_:)`.
+    ///
+    /// Throws `BurlyStoreError.duplicateID` if `routine.id` — or any
+    /// item id — already exists, or `.missingExercise` if an item names an
+    /// exercise that isn't stored. Every one of those checks runs before
+    /// the first insert, so a rejected create leaves nothing pending for a
+    /// later save to commit (m1-06 review, M1).
     func createRoutine(_ routine: RoutineData) throws
     func routine(id: UUID) throws -> RoutineData?
     /// Sorted by `orderIndex` (the user's manual order, §9), then by `id`
@@ -95,10 +109,38 @@ public protocol BurlyStore: AnyObject {
     /// exactly as it was.
     func updateRoutine(_ routine: RoutineData) throws
 
+    /// **Replicated apply**, the counterpart to `createRoutine` /
+    /// `updateRoutine` (m1-06 review, m2). This is how a routine that was
+    /// authored on the *other* device lands here: §5's `snapshot` payload
+    /// is a whole-working-set replace, and the receiving store's job is to
+    /// mirror it, not to re-date it.
+    ///
+    /// So this is the one routine path that **preserves the incoming
+    /// `updatedAt` and `archivedAt` verbatim**. The store's clock is not
+    /// consulted. Upserts by id: creates the routine when it isn't stored,
+    /// replaces name/orderIndex/items/updatedAt/archivedAt wholesale when
+    /// it is.
+    ///
+    /// Available on either store kind — the snapshot direction is a §5
+    /// policy question owned by BurlySync, not something the store can or
+    /// should second-guess.
+    ///
+    /// Throws `.missingExercise` for a dangling item reference, or
+    /// `.duplicateID` if an item id is already owned by a *different*
+    /// routine — both before any row is touched.
+    func applyRoutineSnapshot(_ routine: RoutineData) throws
+
     // MARK: - Sessions
 
-    /// Throws `BurlyStoreError.duplicateID` if `session.id` already exists,
-    /// or `.missingExercise` if an item names an exercise that isn't stored.
+    /// Throws `BurlyStoreError.duplicateID` if `session.id` — or any item
+    /// or set id inside it — already exists, or `.missingExercise` if an
+    /// item names an exercise that isn't stored. All of it is checked
+    /// before the first insert (m1-06 review, M1).
+    ///
+    /// This is the strict *create*. The §2 in-flight write path is
+    /// `saveActiveSession(_:)`, which also creates; use this one for a
+    /// session that arrives whole and finished (a Hevy import, a §5
+    /// `session` payload landing on the phone).
     func createSession(_ session: SessionData) throws
     func session(id: UUID) throws -> SessionData?
     /// Reverse-chronological by `startedAt` (§6 history surface).
@@ -119,11 +161,139 @@ public protocol BurlyStore: AnyObject {
     @discardableResult
     func deleteSession(id: UUID) throws -> UUID?
 
+    // MARK: - The in-flight session (§2/§3; watch-authored)
+    //
+    // ## One unit of work, and the revision line
+    //
+    // A workout is not a create followed by a stream of appends. Between
+    // Start and Finish the §2 engine changes *persisted* facts: a swap
+    // rewrites an item's `exerciseID` or splits the item in two, add /
+    // reorder rewrites the item graph, Finish rewrites `state` and
+    // `endedAt` — and all of that happens alongside the plan/rest-timer
+    // scaffolding §1 has no entity for. Persisting those through separate
+    // calls means separate saves, and separate saves mean a crash window in
+    // which the stored graph, the newly logged set, and the journal
+    // disagree. `saveActiveSession(_:)` is the single transaction that
+    // closes that window (m1-06 review, B1).
+    //
+    // The revision line runs straight through this section, so it is worth
+    // stating once: **`saveActiveSession` never increments `revision`.**
+    // Everything the watch does to a live session — every mutation, and
+    // Finish — leaves it at the value the session was created with (§1: 1).
+    // `revision` exists for §5's idempotent upsert rule, and exactly one
+    // method in this protocol moves it: `applyPhoneEdit(_:)`.
+
+    /// Durably applies one in-flight session, whole, in **one** save.
+    ///
+    /// M2 calls this after each `SessionMutator` / `SessionEngine`
+    /// mutation and once more after Finish. Each call reconciles, together:
+    ///
+    /// - the `SessionData` graph as the engine now holds it — swapped
+    ///   `exerciseID`s, inserted, removed, reordered and renumbered items,
+    ///   and every `SetRecordData` logged so far, including the one that
+    ///   was just logged;
+    /// - the §2/§3 scaffolding (`plans`, `restTimer`) journaled next to
+    ///   that graph rather than in a second write a crash could tear away
+    ///   from it (§3: "timer state is part of the active session record");
+    /// - the Finish transition, which writes `state`/`endedAt` and retires
+    ///   the journal — a `.logged` session is no longer in flight.
+    ///
+    /// Creates the session if it isn't stored yet, so §2 Start is the same
+    /// one call as every mutation after it.
+    ///
+    /// **Revision:** never incremented, and on an already-stored session
+    /// never written at all — the stored value survives untouched however
+    /// `active.session.revision` reads. Only the first (creating) call
+    /// takes the DTO's revision. See `applyPhoneEdit(_:)`.
+    ///
+    /// Nothing is written until every exercise reference resolves, every
+    /// item and set id is either already this session's or unowned, and
+    /// `active.invariantViolations()` is empty. Throws
+    /// `.missingExercise`, `.duplicateID`, or `.invalidActiveSession`
+    /// respectively, before touching a row.
+    func saveActiveSession(_ active: ActiveSession) throws
+
+    /// The in-flight session named by `id`, graph plus journaled
+    /// scaffolding, or `nil` when no session carries a journal under that
+    /// id (never written by `saveActiveSession`, or already finished).
+    /// Throws `.unreadableActiveSessionJournal` if the journal is present
+    /// but corrupt.
+    func activeSession(id: UUID) throws -> ActiveSession?
+
+    /// §2 Resume: the one session to offer on relaunch, or `nil`.
+    ///
+    /// **Bounded by construction** (m1-06 review, M4 slice): a
+    /// `fetchLimit = 1` fetch of the journal index — a table that holds a
+    /// row only while a session is in flight — followed by a predicated
+    /// `fetchLimit = 1` fetch of the session it names. Resume needs at
+    /// most one session, so it costs at most two single-row fetches;
+    /// `sessions(state:)` would materialise and snapshot the entire stored
+    /// history to answer the same question. The rest of the bounded query
+    /// surface (date ranges, per-exercise slices, flat set projections) is
+    /// M6's, not this method's.
+    func resumableActiveSession() throws -> ActiveSession?
+
+    /// §6 phone-side edit of a stored session — **the only method in this
+    /// protocol that increments `revision`**, and the only place it should
+    /// ever be incremented.
+    ///
+    /// §5's apply rule is "incoming revision ≤ stored revision → drop
+    /// silently", which only works if a bump means "a human edited this
+    /// after the fact." Watch-authored activity must therefore never bump:
+    /// see `saveActiveSession(_:)`, which is that path and does not.
+    ///
+    /// Replaces the stored graph with `session` — items, sets, notes, HK
+    /// link, state, timestamps — then increments the stored revision by
+    /// exactly one and returns it. As everywhere else, references and ids
+    /// are validated before any row is touched.
+    ///
+    /// M1 scope: the transaction and the revision rule. The §6 editor's
+    /// own semantics (what the phone is allowed to edit, how a conflicting
+    /// concurrent watch session is resolved) are M4's.
+    ///
+    /// Throws `.notFound` if `session.id` isn't stored.
+    @discardableResult
+    func applyPhoneEdit(_ session: SessionData) throws -> Int
+
     // MARK: - Last-performance digests (watch store; §1, §5 `digest`)
 
     func lastPerformance(exerciseID: UUID) throws -> ExerciseLastPerformanceData?
-    /// Latest-wins upsert keyed on `exerciseID` (§5 digest rule).
+    /// Latest-wins upsert keyed on `exerciseID` (§5 digest rule). Single
+    /// entry, single save; for a whole §5 `digest` payload use
+    /// `applyDigest(lastPerformance:ackedSessionIDs:)`, which is atomic
+    /// across the entries *and* the prune. Throws
+    /// `.operationRequiresWatchStore` on a phone-kind store, or
+    /// `.invalidLastPerformance` if a set snapshot carries a negative,
+    /// NaN, or infinite `weightKg`.
     func upsertLastPerformance(_ performance: ExerciseLastPerformanceData) throws
+
+    /// §5 `digest` apply, as **one transaction** (m1-06 review, M2).
+    ///
+    /// A digest is a single latest-wins payload carrying both halves of
+    /// one fact: here are the new per-exercise last-performance entries,
+    /// *and* here are the sessions the phone has durably received. Applying
+    /// those halves through separate saves opens a crash window in which
+    /// the acked session is already pruned from the watch while its
+    /// replacement ghost row is stale or absent — history the watch no
+    /// longer holds, described by numbers that never arrived. So: every
+    /// entry upserts and every eligible acked session is pruned in the
+    /// same context save, or nothing happens at all.
+    ///
+    /// Validation runs over the whole payload first. A duplicate
+    /// `exerciseID` (`.duplicateID`) or an out-of-range `weightKg`
+    /// (`.invalidLastPerformance`) rejects the entire digest, entries and
+    /// prune alike — a half-applied latest-wins payload is not a state the
+    /// phone ever described.
+    ///
+    /// Pruning follows `pruneDeliveredSessions(ackedIDs:)`'s rule exactly:
+    /// an id naming an `.active` session, or no session at all, is skipped
+    /// rather than treated as an error, so replaying a digest converges.
+    /// Watch-only; throws `.operationRequiresWatchStore` on a phone-kind
+    /// store before touching anything.
+    func applyDigest(
+        lastPerformance: [ExerciseLastPerformanceData],
+        ackedSessionIDs: [UUID]
+    ) throws
 
     // MARK: - Watch working set (§1 store shape; watch-only)
     //
@@ -146,5 +316,11 @@ public protocol BurlyStore: AnyObject {
     /// hasn't finished yet, or a duplicate/late ack, is a timing fact, not
     /// an error. Throws `.operationRequiresWatchStore` on a phone-kind
     /// store, before touching anything.
+    ///
+    /// This is the prune on its own, in its own save.
+    /// `applyDigest(lastPerformance:ackedSessionIDs:)` runs the identical
+    /// rule as part of a larger transaction, and is what a real §5 digest
+    /// — including the BurlySync ack seam — goes through. Reach for this
+    /// one only when the prune genuinely is the whole operation.
     func pruneDeliveredSessions(ackedIDs: [UUID]) throws
 }

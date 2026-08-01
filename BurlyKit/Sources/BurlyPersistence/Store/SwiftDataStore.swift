@@ -29,22 +29,35 @@ public final class SwiftDataStore: BurlyStore {
     /// "not watch" by kind-gated operations.
     private let kind: BurlyStoreKind?
 
+    /// The store's own time source, for the metadata the store owns rather
+    /// than the caller: `Routine.updatedAt` on the local-authoring paths
+    /// (`createRoutine`, `updateRoutine`) and the journal's sort key.
+    ///
+    /// Injected rather than reading `Date()` inline so the ownership rule
+    /// is testable as a rule — "the stored timestamp is *the store's* now,
+    /// never the DTO's" is only provable against a clock the test controls.
+    /// It is deliberately *not* consulted by `applyRoutineSnapshot`, which
+    /// replicates someone else's authored timestamp.
+    private let clock: any WallClock
+
     /// Internal — see BurlyContainer.swift's boundary doc: `ModelContainer`
     /// must never appear in a public signature of this module. Construct a
     /// store publicly through `.phone(at:)` / `.watch(at:)` /
     /// `init(kind:at:)` instead.
-    init(container: ModelContainer) {
+    init(container: ModelContainer, clock: any WallClock = SystemWallClock()) {
         self.context = ModelContext(container)
         self.context.autosaveEnabled = false
         let configuredName = container.configurations.first?.name
         self.kind = BurlyStoreKind.allCases.first { $0.storeName == configuredName }
+        self.clock = clock
     }
 
     public convenience init(
         kind: BurlyStoreKind,
-        at location: BurlyStoreLocation = .applicationDefault
+        at location: BurlyStoreLocation = .applicationDefault,
+        clock: any WallClock = SystemWallClock()
     ) throws {
-        self.init(container: try BurlyContainer.make(kind, at: location))
+        self.init(container: try BurlyContainer.make(kind, at: location), clock: clock)
     }
 
     /// Phone store: full history (§1 store shape). The public counterpart
@@ -52,16 +65,18 @@ public final class SwiftDataStore: BurlyStore {
     /// `.watch(at:)` are the two named, device-shaped entry points; use
     /// `init(kind:at:)` directly only when the kind is a runtime value.
     public static func phone(
-        at location: BurlyStoreLocation = .applicationDefault
+        at location: BurlyStoreLocation = .applicationDefault,
+        clock: any WallClock = SystemWallClock()
     ) throws -> SwiftDataStore {
-        try SwiftDataStore(kind: .phone, at: location)
+        try SwiftDataStore(kind: .phone, at: location, clock: clock)
     }
 
     /// Watch store: working set only (§1 store shape). See `.phone(at:)`.
     public static func watch(
-        at location: BurlyStoreLocation = .applicationDefault
+        at location: BurlyStoreLocation = .applicationDefault,
+        clock: any WallClock = SystemWallClock()
     ) throws -> SwiftDataStore {
-        try SwiftDataStore(kind: .watch, at: location)
+        try SwiftDataStore(kind: .watch, at: location, clock: clock)
     }
 
     // MARK: - Exercises
@@ -115,27 +130,28 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.duplicateID(routine.id)
         }
 
+        // Everything that can reject this create runs *before* the first
+        // insert (m1-06 review, M1). The old order — insert the parent,
+        // then resolve item references one at a time — left the inserted
+        // Routine and any already-inserted items pending in a long-lived
+        // context after the throw, where the next successful `save()` on
+        // any other method would silently commit them. `updateRoutine` was
+        // already written this way; now every create is.
+        let resolved = try preflightRoutineItems(routine, ownedBy: nil)
+
         let stored = Routine(
             id: routine.id,
             name: routine.name,
             orderIndex: routine.orderIndex,
-            updatedAt: routine.updatedAt,
+            // Store-owned (m1-06 review, m2): a locally-authored routine is
+            // dated by the store's clock, not by whatever the DTO carried.
+            // The replicated path that must preserve the author's timestamp
+            // is `applyRoutineSnapshot`.
+            updatedAt: clock.now,
             archivedAt: routine.archivedAt
         )
         context.insert(stored)
-
-        for item in routine.items {
-            let storedItem = RoutineItem(
-                id: item.id,
-                exercise: try resolveExercise(item.exerciseID),
-                order: item.order,
-                defaultSetCount: item.defaultSetCount,
-                restOverride: item.restOverride,
-                note: item.note
-            )
-            context.insert(storedItem)
-            stored.items.append(storedItem)
-        }
+        insertRoutineItems(routine.items, resolved: resolved, into: stored)
 
         try context.save()
     }
@@ -190,10 +206,11 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.notFound(routine.id)
         }
 
-        // Resolve every item's exercise reference before mutating anything:
-        // a rejected update must leave the stored routine untouched, not
+        // Resolve every item's exercise reference — and prove every item id
+        // is this routine's own or unowned — before mutating anything: a
+        // rejected update must leave the stored routine untouched, not
         // half-replaced with its old items already deleted.
-        let resolved = try routine.items.map { try resolveExercise($0.exerciseID) }
+        let resolved = try preflightRoutineItems(routine, ownedBy: stored)
 
         stored.name = routine.name
         stored.orderIndex = routine.orderIndex
@@ -202,27 +219,46 @@ public final class SwiftDataStore: BurlyStore {
         // — a caller (or a stale round-tripped DTO) cannot claim an edit
         // happened earlier or later than it actually did. See the protocol
         // doc on `updateRoutine`.
-        stored.updatedAt = Date()
+        stored.updatedAt = clock.now
         // `archivedAt` is deliberately not assigned here — see the
         // protocol doc on `updateRoutine`.
 
-        for item in stored.items {
-            context.delete(item)
-        }
-        stored.items.removeAll()
+        replaceRoutineItems(of: stored, with: routine.items, resolved: resolved)
 
-        for (item, exercise) in zip(routine.items, resolved) {
-            let storedItem = RoutineItem(
-                id: item.id,
-                exercise: exercise,
-                order: item.order,
-                defaultSetCount: item.defaultSetCount,
-                restOverride: item.restOverride,
-                note: item.note
+        try context.save()
+    }
+
+    public func applyRoutineSnapshot(_ routine: RoutineData) throws {
+        let stored = try model(Routine.self, id: routine.id)
+        let resolved = try preflightRoutineItems(routine, ownedBy: stored)
+
+        let target: Routine
+        if let stored {
+            target = stored
+        } else {
+            let created = Routine(
+                id: routine.id,
+                name: routine.name,
+                orderIndex: routine.orderIndex,
+                updatedAt: routine.updatedAt,
+                archivedAt: routine.archivedAt
             )
-            context.insert(storedItem)
-            stored.items.append(storedItem)
+            context.insert(created)
+            target = created
         }
+
+        target.name = routine.name
+        target.orderIndex = routine.orderIndex
+        // The whole point of this path (m1-06 review, m2): the *author's*
+        // timestamp and archive state are the payload, so they are copied
+        // verbatim. The store's clock is not consulted, and `archivedAt` is
+        // assigned here even though `updateRoutine` refuses to — a snapshot
+        // replaces the replica wholesale, including whether the author has
+        // archived it.
+        target.updatedAt = routine.updatedAt
+        target.archivedAt = routine.archivedAt
+
+        replaceRoutineItems(of: target, with: routine.items, resolved: resolved)
 
         try context.save()
     }
@@ -233,6 +269,12 @@ public final class SwiftDataStore: BurlyStore {
         guard try model(Session.self, id: session.id) == nil else {
             throw BurlyStoreError.duplicateID(session.id)
         }
+
+        // Same rule as `createRoutine` (m1-06 review, M1): every exercise
+        // reference resolves and every item/set id is proved unowned before
+        // the first insert, so a rejection cannot leave a partial graph
+        // pending for someone else's `save()` to commit.
+        let resolved = try preflightSessionGraph(session, ownedBy: nil)
 
         let stored = Session(
             id: session.id,
@@ -247,22 +289,7 @@ public final class SwiftDataStore: BurlyStore {
             notes: session.notes
         )
         context.insert(stored)
-
-        for item in session.items {
-            let storedItem = SessionItem(
-                id: item.id,
-                exercise: try resolveExercise(item.exerciseID),
-                order: item.order
-            )
-            context.insert(storedItem)
-            stored.items.append(storedItem)
-
-            for set in item.sets {
-                let storedSet = makeSetRecord(set)
-                context.insert(storedSet)
-                storedItem.sets.append(storedSet)
-            }
-        }
+        reconcileSessionGraph(stored, to: session, resolved: resolved)
 
         try context.save()
     }
@@ -312,9 +339,144 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.notFound(id)
         }
         let workoutID = session.healthKitWorkoutID
+        if let journal = try journalModel(sessionID: id) {
+            // `ActiveSessionJournal` references its session by plain UUID,
+            // not by relationship (nothing about a §1 entity may depend on
+            // this internal table), so SwiftData's cascade cannot reach it.
+            // Deleting it here is what keeps "no journal without a session"
+            // true — otherwise a discarded mid-session workout would leave
+            // a Resume pointer into nothing.
+            context.delete(journal)
+        }
         context.delete(session)
         try context.save()
         return workoutID
+    }
+
+    // MARK: - The in-flight session
+    //
+    // See the protocol doc for the contract. The implementation note that
+    // matters here: every method in this section computes everything that
+    // could throw *first*, mutates only after that, and saves exactly once.
+    // "One transaction" is not a comment — it is the single `context.save()`
+    // at the bottom of `saveActiveSession`, with nothing above it that can
+    // fail partway.
+
+    public func saveActiveSession(_ active: ActiveSession) throws {
+        let violations = active.invariantViolations()
+        guard violations.isEmpty else {
+            throw BurlyStoreError.invalidActiveSession(
+                sessionID: active.id,
+                violations: violations
+            )
+        }
+
+        let stored = try model(Session.self, id: active.session.id)
+        let resolved = try preflightSessionGraph(active.session, ownedBy: stored)
+        // Encoded before any mutation: a payload that will not encode must
+        // not leave a half-applied graph behind.
+        let payload = try JSONEncoder().encode(ActiveSessionScaffolding(active))
+        let journal = try journalModel(sessionID: active.id)
+
+        let target: Session
+        if let stored {
+            target = stored
+        } else {
+            let created = Session(
+                id: active.session.id,
+                routineID: active.session.routineID,
+                routineName: active.session.routineName,
+                startedAt: active.session.startedAt,
+                endedAt: active.session.endedAt,
+                state: active.session.state,
+                // The only call that ever writes `revision` on this path:
+                // the one that brings the session into existence. Every
+                // later `saveActiveSession` leaves the stored value alone
+                // (see `reconcileSessionGraph`).
+                revision: active.session.revision,
+                healthKitWorkoutID: active.session.healthKitWorkoutID,
+                origin: active.session.origin,
+                notes: active.session.notes
+            )
+            context.insert(created)
+            target = created
+        }
+        reconcileSessionGraph(target, to: active.session, resolved: resolved)
+
+        if active.session.state == .active {
+            if let journal {
+                journal.payload = payload
+                journal.updatedAt = clock.now
+            } else {
+                context.insert(
+                    ActiveSessionJournal(
+                        sessionID: active.id,
+                        payload: payload,
+                        updatedAt: clock.now
+                    )
+                )
+            }
+        } else if let journal {
+            // Finish, in the same save as the `.logged`/`endedAt` write:
+            // the session stops being in flight and its scaffolding stops
+            // existing at the same instant, so a crash can never leave a
+            // finished session still advertising itself to Resume.
+            context.delete(journal)
+        }
+
+        try context.save()
+    }
+
+    public func activeSession(id: UUID) throws -> ActiveSession? {
+        guard
+            let journal = try journalModel(sessionID: id),
+            let stored = try model(Session.self, id: id)
+        else { return nil }
+        return try makeActiveSession(stored, journal: journal)
+    }
+
+    public func resumableActiveSession() throws -> ActiveSession? {
+        // Fetch one, not all (m1-06 review, M4 slice). The journal table
+        // holds a row only while a session is in flight, so this is a
+        // single-row read even on a decade-deep phone store. The sort key
+        // only matters if a store somehow holds more than one journal —
+        // then "most recently written" is a defined answer rather than
+        // whatever SwiftData returned first.
+        var descriptor = FetchDescriptor<ActiveSessionJournal>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        guard let journal = try context.fetch(descriptor).first else { return nil }
+        // Predicate + `fetchLimit = 1`, via `model(_:id:)`.
+        guard
+            let stored = try model(Session.self, id: journal.sessionID),
+            stored.state == .active
+        else {
+            // A journal outliving its session, or naming one that is
+            // already `.logged`, is not resumable. Reads do not repair —
+            // the next `saveActiveSession` retires the row.
+            return nil
+        }
+        return try makeActiveSession(stored, journal: journal)
+    }
+
+    @discardableResult
+    public func applyPhoneEdit(_ session: SessionData) throws -> Int {
+        guard let stored = try model(Session.self, id: session.id) else {
+            throw BurlyStoreError.notFound(session.id)
+        }
+        let resolved = try preflightSessionGraph(session, ownedBy: stored)
+
+        reconcileSessionGraph(stored, to: session, resolved: resolved)
+        // The one line in this file that moves `revision`. §5's "incoming
+        // revision ≤ stored revision → drop silently" rule is only sound
+        // while that stays true, so the increment is deliberately not
+        // sourced from `session.revision`: a stale DTO cannot roll it back
+        // and a forged one cannot jump it forward.
+        stored.revision += 1
+
+        try context.save()
+        return stored.revision
     }
 
     // MARK: - Last-performance digests
@@ -329,18 +491,31 @@ public final class SwiftDataStore: BurlyStore {
         guard kind == .watch else {
             throw BurlyStoreError.operationRequiresWatchStore
         }
-        if let existing = try lastPerformanceModel(exerciseID: performance.exerciseID) {
-            existing.performedAt = performance.performedAt
-            existing.sets = performance.sets
-        } else {
-            context.insert(
-                ExerciseLastPerformance(
-                    exerciseID: performance.exerciseID,
-                    performedAt: performance.performedAt,
-                    sets: performance.sets
-                )
-            )
+        try validateLastPerformance([performance])
+        try upsert(performance)
+        try context.save()
+    }
+
+    public func applyDigest(
+        lastPerformance: [ExerciseLastPerformanceData],
+        ackedSessionIDs: [UUID]
+    ) throws {
+        guard kind == .watch else {
+            throw BurlyStoreError.operationRequiresWatchStore
         }
+        // Validate the whole payload before touching a row: a digest is one
+        // latest-wins fact, so a bad entry rejects the entries *and* the
+        // prune (m1-06 review, M2).
+        try validateLastPerformance(lastPerformance)
+
+        for entry in lastPerformance {
+            try upsert(entry)
+        }
+        try prune(ackedIDs: ackedSessionIDs)
+
+        // The one save. Before this line the process can die at any point
+        // and the watch keeps exactly the state the previous digest left;
+        // after it, both halves are durable together.
         try context.save()
     }
 
@@ -364,18 +539,7 @@ public final class SwiftDataStore: BurlyStore {
         guard kind == .watch else {
             throw BurlyStoreError.operationRequiresWatchStore
         }
-        for id in ackedIDs {
-            guard
-                let session = try model(Session.self, id: id),
-                session.state == .logged
-            else {
-                // Unknown id, or a still-`.active` session: leave it be.
-                // See the protocol doc — this is a timing fact, not an
-                // error, and it must not abort acks for the other ids.
-                continue
-            }
-            context.delete(session)
-        }
+        try prune(ackedIDs: ackedIDs)
         try context.save()
     }
 
@@ -446,6 +610,34 @@ public final class SwiftDataStore: BurlyStore {
         return try context.fetch(descriptor).first
     }
 
+    private func journalModel(sessionID: UUID) throws -> ActiveSessionJournal? {
+        var descriptor = FetchDescriptor<ActiveSessionJournal>(
+            predicate: #Predicate { $0.sessionID == sessionID }
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first
+    }
+
+    private func makeActiveSession(
+        _ stored: Session,
+        journal: ActiveSessionJournal
+    ) throws -> ActiveSession {
+        let scaffolding: ActiveSessionScaffolding
+        do {
+            scaffolding = try JSONDecoder().decode(
+                ActiveSessionScaffolding.self,
+                from: journal.payload
+            )
+        } catch {
+            throw BurlyStoreError.unreadableActiveSessionJournal(sessionID: stored.id)
+        }
+        return ActiveSession(
+            session: stored.snapshot(),
+            plans: scaffolding.plans,
+            restTimer: scaffolding.restTimer
+        )
+    }
+
     /// nil means "no exercise attached" (spec allows `exercise: Exercise?`).
     /// A non-nil id that isn't stored is a caller bug, not a nullable field.
     private func resolveExercise(_ id: UUID?) throws -> Exercise? {
@@ -454,6 +646,257 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.missingExercise(id)
         }
         return exercise
+    }
+
+    // MARK: - Preflight
+    //
+    // Every write path in this file runs its whole rejection surface before
+    // it touches a single row (m1-06 review, M1). The context outlives any
+    // one call and autosave is off, so a method that inserts first and
+    // validates second leaves its rejected rows *pending* — and the next
+    // successful `save()`, from an unrelated method, commits them. Preflight
+    // is what makes "a rejected call changed nothing" true rather than
+    // hopeful.
+
+    /// Resolves every routine item's exercise reference, in item order, and
+    /// proves no item id belongs to a routine other than `owner`.
+    private func preflightRoutineItems(
+        _ routine: RoutineData,
+        ownedBy owner: Routine?
+    ) throws -> [Exercise?] {
+        let owned = Set(owner?.items.map(\.id) ?? [])
+        var seen = Set<UUID>()
+        for item in routine.items {
+            guard seen.insert(item.id).inserted else {
+                throw BurlyStoreError.duplicateID(item.id)
+            }
+            guard owned.contains(item.id) == false else { continue }
+            if try model(RoutineItem.self, id: item.id) != nil {
+                throw BurlyStoreError.duplicateID(item.id)
+            }
+        }
+        return try routine.items.map { try resolveExercise($0.exerciseID) }
+    }
+
+    /// Resolves every session item's exercise reference, in item order, and
+    /// proves every item and set id in the payload is either already
+    /// `owner`'s or unowned.
+    ///
+    /// The id checks are not paranoia: `id` is `@Attribute(.unique)` on all
+    /// three entities, and SwiftData resolves a duplicate insert by
+    /// *merging* rather than failing (see `BurlyStoreError.duplicateID`).
+    /// Without this, a payload that reused another session's set id would
+    /// silently steal that row.
+    private func preflightSessionGraph(
+        _ session: SessionData,
+        ownedBy owner: Session?
+    ) throws -> [Exercise?] {
+        let ownedItems = Set(owner?.items.map(\.id) ?? [])
+        let ownedSets = Set(owner?.items.flatMap { $0.sets.map(\.id) } ?? [])
+
+        var seenItems = Set<UUID>()
+        var seenSets = Set<UUID>()
+        for item in session.items {
+            guard seenItems.insert(item.id).inserted else {
+                throw BurlyStoreError.duplicateID(item.id)
+            }
+            if ownedItems.contains(item.id) == false,
+               try model(SessionItem.self, id: item.id) != nil {
+                throw BurlyStoreError.duplicateID(item.id)
+            }
+            for set in item.sets {
+                guard seenSets.insert(set.id).inserted else {
+                    throw BurlyStoreError.duplicateID(set.id)
+                }
+                if ownedSets.contains(set.id) == false,
+                   try model(SetRecord.self, id: set.id) != nil {
+                    throw BurlyStoreError.duplicateID(set.id)
+                }
+            }
+        }
+        return try session.items.map { try resolveExercise($0.exerciseID) }
+    }
+
+    private func validateLastPerformance(
+        _ entries: [ExerciseLastPerformanceData]
+    ) throws {
+        var seen = Set<UUID>()
+        for entry in entries {
+            guard seen.insert(entry.exerciseID).inserted else {
+                // Two entries claiming latest-wins for one exercise: the
+                // payload does not say which one wins, so none of it lands.
+                throw BurlyStoreError.duplicateID(entry.exerciseID)
+            }
+            for snapshot in entry.sets
+            where snapshot.weightKg.isFinite == false || snapshot.weightKg < 0 {
+                throw BurlyStoreError.invalidLastPerformance(exerciseID: entry.exerciseID)
+            }
+        }
+    }
+
+    // MARK: - Row mutation (no saves; callers own the transaction)
+
+    private func insertRoutineItems(
+        _ items: [RoutineItemData],
+        resolved: [Exercise?],
+        into routine: Routine
+    ) {
+        for (item, exercise) in zip(items, resolved) {
+            let storedItem = RoutineItem(
+                id: item.id,
+                exercise: exercise,
+                order: item.order,
+                defaultSetCount: item.defaultSetCount,
+                restOverride: item.restOverride,
+                note: item.note
+            )
+            context.insert(storedItem)
+            routine.items.append(storedItem)
+        }
+    }
+
+    /// Wholesale item replacement — the protocol doc on `updateRoutine`
+    /// explains why routines diff by replacement rather than by id.
+    private func replaceRoutineItems(
+        of routine: Routine,
+        with items: [RoutineItemData],
+        resolved: [Exercise?]
+    ) {
+        for item in routine.items {
+            context.delete(item)
+        }
+        routine.items.removeAll()
+        insertRoutineItems(items, resolved: resolved, into: routine)
+    }
+
+    /// Brings `stored`'s graph to exactly `session`, reusing rows by id.
+    ///
+    /// Sessions reconcile by id rather than by replacement (the opposite of
+    /// routines) because their children *are* referenced across time: a
+    /// `SetRecord` written at tap time is history, and deleting and
+    /// reinserting it on every mid-session edit would churn rows the §2
+    /// crash-recovery story depends on.
+    ///
+    /// **`revision` is deliberately absent from this method.** Callers that
+    /// are allowed to move it do so themselves, in exactly one place each
+    /// (`applyPhoneEdit`); callers that are not, cannot.
+    private func reconcileSessionGraph(
+        _ stored: Session,
+        to session: SessionData,
+        resolved: [Exercise?]
+    ) {
+        stored.routineID = session.routineID
+        stored.routineName = session.routineName
+        stored.startedAt = session.startedAt
+        stored.endedAt = session.endedAt
+        stored.state = session.state
+        stored.healthKitWorkoutID = session.healthKitWorkoutID
+        stored.origin = session.origin
+        stored.notes = session.notes
+
+        let incomingIDs = Set(session.items.map(\.id))
+        var existing: [UUID: SessionItem] = [:]
+        var dropped: [SessionItem] = []
+        for item in stored.items {
+            if incomingIDs.contains(item.id) {
+                existing[item.id] = item
+            } else {
+                dropped.append(item)
+            }
+        }
+        stored.items.removeAll { incomingIDs.contains($0.id) == false }
+        for item in dropped {
+            context.delete(item)
+        }
+
+        for (item, exercise) in zip(session.items, resolved) {
+            let target: SessionItem
+            if let found = existing[item.id] {
+                found.exercise = exercise
+                found.order = item.order
+                target = found
+            } else {
+                let inserted = SessionItem(id: item.id, exercise: exercise, order: item.order)
+                context.insert(inserted)
+                stored.items.append(inserted)
+                target = inserted
+            }
+            reconcileSets(of: target, to: item.sets)
+        }
+    }
+
+    private func reconcileSets(of item: SessionItem, to sets: [SetRecordData]) {
+        let incomingIDs = Set(sets.map(\.id))
+        var existing: [UUID: SetRecord] = [:]
+        var dropped: [SetRecord] = []
+        for set in item.sets {
+            if incomingIDs.contains(set.id) {
+                existing[set.id] = set
+            } else {
+                dropped.append(set)
+            }
+        }
+        item.sets.removeAll { incomingIDs.contains($0.id) == false }
+        for set in dropped {
+            context.delete(set)
+        }
+
+        for set in sets {
+            if let found = existing[set.id] {
+                found.order = set.order
+                // Through `Weight`, like `makeSetRecord` — the kg-canonical
+                // guarantee (§1 acceptance #4) holds on updates too, not
+                // just on inserts.
+                found.weightKg = set.weight.kg
+                found.reps = set.reps
+                found.isWarmup = set.isWarmup
+                found.completedAt = set.completedAt
+            } else {
+                let inserted = makeSetRecord(set)
+                context.insert(inserted)
+                item.sets.append(inserted)
+            }
+        }
+    }
+
+    private func upsert(_ performance: ExerciseLastPerformanceData) throws {
+        if let existing = try lastPerformanceModel(exerciseID: performance.exerciseID) {
+            existing.performedAt = performance.performedAt
+            existing.sets = performance.sets
+            return
+        }
+        context.insert(
+            ExerciseLastPerformance(
+                exerciseID: performance.exerciseID,
+                performedAt: performance.performedAt,
+                sets: performance.sets
+            )
+        )
+    }
+
+    /// The §1 pruning rule, without the save — so `pruneDeliveredSessions`
+    /// and `applyDigest` share one definition of "delivered" and the latter
+    /// can fold it into a larger transaction.
+    private func prune(ackedIDs: [UUID]) throws {
+        for id in ackedIDs {
+            guard
+                let session = try model(Session.self, id: id),
+                session.state == .logged
+            else {
+                // Unknown id, or a still-`.active` session: leave it be.
+                // See the protocol doc — this is a timing fact, not an
+                // error, and it must not abort acks for the other ids.
+                continue
+            }
+            if let journal = try journalModel(sessionID: id) {
+                // Defensive: a `.logged` session should already have had
+                // its journal retired by Finish. If one survived, it goes
+                // with the session rather than lingering as a Resume
+                // pointer into a row that no longer exists.
+                context.delete(journal)
+            }
+            context.delete(session)
+        }
     }
 
     /// The only construction path for a stored set. It takes `Weight`, which

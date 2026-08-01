@@ -66,10 +66,42 @@ enum Fixture {
     }
 }
 
+/// A store clock the test drives. `now` is a `var` so a test can prove the
+/// difference between "the store stamped its own time" and "the store
+/// copied the DTO's" by moving time between calls.
+///
+/// `@unchecked Sendable` because `WallClock` requires `Sendable` (the
+/// BurlyCore engines that hold one are value types that cross isolation
+/// boundaries) and this one is a reference type with mutable state. Tests
+/// drive it from a single task; nothing here escapes.
+final class TestClock: WallClock, @unchecked Sendable {
+    var now: Date
+
+    init(_ now: Date = Fixture.epoch) {
+        self.now = now
+    }
+
+    /// Moves the clock forward and returns the new instant.
+    @discardableResult
+    func advance(by interval: TimeInterval) -> Date {
+        now = now.addingTimeInterval(interval)
+        return now
+    }
+}
+
 /// Fresh in-memory store per test. In-memory containers are isolated per
 /// `ModelContainer`, so tests never see each other's rows.
-func makeStore(_ kind: BurlyStoreKind = .phone) throws -> SwiftDataStore {
-    try SwiftDataStore(kind: kind, at: .inMemory)
+///
+/// The clock defaults to a `TestClock` pinned at `Fixture.epoch`: the
+/// store owns `Routine.updatedAt` on the local-authoring paths (m1-06
+/// review, m2), so without a fixed clock every `RoutineData` equality
+/// assertion in this target would compare a fixture timestamp against
+/// wall-clock now. Pass a clock explicitly when the test is *about* time.
+func makeStore(
+    _ kind: BurlyStoreKind = .phone,
+    clock: any WallClock = TestClock()
+) throws -> SwiftDataStore {
+    try SwiftDataStore(kind: kind, at: .inMemory, clock: clock)
 }
 
 /// A unique temp file URL for the cold-reload test, cleaned up by the caller.

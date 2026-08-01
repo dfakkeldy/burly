@@ -27,11 +27,18 @@ struct StoreSurfaceTests {
 
     @Test("updateRoutine persists a rename and an orderIndex change; the STORE sets updatedAt, not the caller's DTO")
     func updateRoutineRenamesReordersAndStoreSetsUpdatedAt() throws {
-        let store = try makeStore()
+        // An injected clock the test moves (m1-06 review, m2). The old
+        // version of this test bracketed the call with two `Date()` reads
+        // and asserted the stored value landed between them; a clock the
+        // test owns asserts the exact instant instead, and can also prove
+        // the *create* took a store-owned timestamp.
+        let clock = TestClock()
+        let store = try makeStore(clock: clock)
         let bench = Fixture.exercise(name: "Bench Press")
         var routine = Fixture.routine(name: "Push A", orderIndex: 0, over: [bench])
         try store.createExercise(bench)
         try store.createRoutine(routine)
+        #expect(try store.routine(id: routine.id)?.updatedAt == Fixture.epoch)
 
         routine.name = "Push A (renamed)"
         routine.orderIndex = 2
@@ -40,18 +47,17 @@ struct StoreSurfaceTests {
         // would come back stuck in the distant past.
         routine.updatedAt = .distantPast
 
-        let before = Date()
+        let editedAt = clock.advance(by: 3_600)
         try store.updateRoutine(routine)
-        let after = Date()
 
         let reloaded = try #require(try store.routine(id: routine.id))
         #expect(reloaded.name == "Push A (renamed)")
         #expect(reloaded.orderIndex == 2)
         // Proves STORE maintenance, not a pass-through of the stale DTO
-        // value: the stored `updatedAt` is newer than the stale input and
-        // falls within the wall-clock window the call actually ran in.
+        // value: the stored `updatedAt` is the store's own clock reading at
+        // the moment of the call, not the `.distantPast` the DTO carried.
         #expect(reloaded.updatedAt > routine.updatedAt)
-        #expect(reloaded.updatedAt >= before && reloaded.updatedAt <= after)
+        #expect(reloaded.updatedAt == editedAt)
     }
 
     @Test("updateRoutine persists a reordered/replaced item list, disk-backed across a cold reopen")

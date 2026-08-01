@@ -53,7 +53,11 @@ struct AckSeamIntegrationTests {
 
         // ---- write the working set, apply the ack, let the writer go out of scope ----
         do {
-            let store = try SwiftDataStore(kind: .watch, at: .file(url))
+            // Fixed store clock so the "routines are untouched by the
+            // prune" assertion below can compare whole `RoutineData`
+            // values: `createRoutine` stamps a store-owned `updatedAt`
+            // (m1-06 review, m2).
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: TestClock())
             try store.createExercise(bench)
             try store.createExercise(row)
             try store.createRoutine(routine)

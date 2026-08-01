@@ -51,7 +51,11 @@ struct RoundTripTests {
         let expectedRoutine: RoutineData
         let expectedSession: SessionData
         do {
-            let store = try SwiftDataStore(kind: .phone, at: .file(url))
+            // A fixed store clock so the `loadedRoutine == routine`
+            // assertion below still compares whole values: `createRoutine`
+            // stamps a store-owned `updatedAt` (m1-06 review, m2), and
+            // against the system clock that field alone would differ.
+            let store = try SwiftDataStore(kind: .phone, at: .file(url), clock: TestClock())
             try store.createExercise(bench)
             try store.createExercise(row)
             try store.createRoutine(routine)

@@ -22,6 +22,7 @@ struct MigrationPlanTests {
 
         let names = BurlySchemaV1.models.map { String(describing: $0) }.sorted()
         #expect(names == [
+            "ActiveSessionJournal",
             "CatalogSeedState",
             "Exercise",
             "ExerciseLastPerformance",
