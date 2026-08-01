@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-tests:
+    name: BurlyKit package tests
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run Swift package tests
+        working-directory: BurlyKit
+        run: swift test
+
+  sim-acceptance:
+    name: Simulator acceptance
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # GitHub's macos-26 image inventory documents Xcode 26.6 as the
+      # newest stable Xcode at this path. Fail with the installed paths in
+      # the log when the runner image changes so the pin can be reviewed.
+      - name: Select Xcode 26.6
+        run: |
+          XCODE_PATH=/Applications/Xcode_26.6.app
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo "::error::Expected newest stable Xcode at $XCODE_PATH; available Xcodes follow"
+            find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
+      - name: Resolve newest simulator specifications
+        id: simulator-spec
+        run: |
+          xcrun simctl list runtimes --json > "$RUNNER_TEMP/runtimes.json"
+          xcrun simctl list devicetypes --json > "$RUNNER_TEMP/devicetypes.json"
+          /usr/bin/python3 - "$RUNNER_TEMP/runtimes.json" "$RUNNER_TEMP/devicetypes.json" "$GITHUB_OUTPUT" <<'PYEOF'
+          import json
+          import re
+          import sys
+
+          runtimes_path, device_types_path, output_path = sys.argv[1:]
+
+          with open(runtimes_path) as file:
+              runtimes = json.load(file).get("runtimes", [])
+          with open(device_types_path) as file:
+              device_types = json.load(file).get("devicetypes", [])
+
+          def version_key(value):
+              return tuple(int(part) for part in re.findall(r"\d+", value))
+
+          def newest_runtime(platform):
+              marker = f".SimRuntime.{platform}-"
+              matches = [
+                  runtime
+                  for runtime in runtimes
+                  if runtime.get("isAvailable") is True
+                  and marker in runtime.get("identifier", "")
+              ]
+              if not matches:
+                  raise SystemExit(f"no available {platform} simulator runtime")
+              return max(matches, key=lambda runtime: version_key(runtime["version"]))
+
+          def newest_device_type(predicate, description):
+              matches = [device for device in device_types if predicate(device)]
+              if not matches:
+                  raise SystemExit(f"no {description} simulator device type")
+              return max(
+                  matches,
+                  key=lambda device: (version_key(device.get("name", "")), device["name"]),
+              )
+
+          ios_runtime = newest_runtime("iOS")
+          watch_runtime = newest_runtime("watchOS")
+          iphone_type = newest_device_type(
+              lambda device: device.get("name", "").startswith("iPhone"),
+              "iPhone",
+          )
+          watch_type = newest_device_type(
+              lambda device: device.get("name", "").startswith("Apple Watch")
+              and "46mm" in device.get("name", ""),
+              "46mm Apple Watch",
+          )
+
+          selected = {
+              "iphone_runtime": ios_runtime["identifier"],
+              "iphone_runtime_name": ios_runtime["name"],
+              "iphone_type": iphone_type["identifier"],
+              "iphone_type_name": iphone_type["name"],
+              "watch_runtime": watch_runtime["identifier"],
+              "watch_runtime_name": watch_runtime["name"],
+              "watch_type": watch_type["identifier"],
+              "watch_type_name": watch_type["name"],
+          }
+          with open(output_path, "a") as output:
+              for key, value in selected.items():
+                  print(f"{key}={value}", file=output)
+          for key, value in selected.items():
+              print(f"{key}: {value}")
+          PYEOF
+
+      - name: Create and pair acceptance simulators
+        run: |
+          IPHONE_UDID="$(xcrun simctl create \
+            "Burly iPhone" \
+            "${{ steps.simulator-spec.outputs.iphone_type }}" \
+            "${{ steps.simulator-spec.outputs.iphone_runtime }}")"
+          WATCH_UDID="$(xcrun simctl create \
+            "Burly Watch S11 46mm" \
+            "${{ steps.simulator-spec.outputs.watch_type }}" \
+            "${{ steps.simulator-spec.outputs.watch_runtime }}")"
+          xcrun simctl pair "$WATCH_UDID" "$IPHONE_UDID"
+          xcrun simctl list pairs
+
+      - name: Run simulator acceptance
+        env:
+          BURLY_LOCK_DIR: ${{ runner.temp }}/burly-sim.lock
+        run: Scripts/acceptance-sim.sh
+
+      - name: Upload acceptance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-acceptance-${{ github.run_id }}
+          path: Scripts/output/latest/**
+          if-no-files-found: warn
