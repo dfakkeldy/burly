@@ -11,11 +11,12 @@
 // where `title` is the workout/session name, `start_time`/`end_time` are
 // `YYYY-MM-DD HH:MM:SS` local-time strings shared by every row of a session,
 // `exercise_title` and `set_index` (1-based, per exercise) identify the set,
-// `set_type` is a Hevy set classification (this generator only emits
-// "normal"), and `weight_kg`/`reps` are the logged values (0 kg for
-// bodyweight-only exercises, per Burly's convention). m7 must diff this
-// against a real export and correct any column name, ordering, or type
-// mismatch before wiring up the real importer.
+// `set_type` reflects `FixtureSet.isWarmup` ("warmup" or "normal" — Burly v1
+// has no superset/dropset concept to encode), and `weight_kg`/`reps` are the
+// logged values (0 kg for bodyweight-only exercises, per Burly's
+// convention). m7 must diff this against a real export and correct any
+// column name, ordering, or type mismatch before wiring up the real
+// importer.
 //
 // Pure Swift, zero framework imports: CSV is just delimited text and does
 // not require Foundation.
@@ -27,30 +28,60 @@ public enum HevyCSVGenerator {
     /// with a header row first. Numeric fields use `.` decimal separators
     /// and integer-valued weights are rendered without a fractional part
     /// (e.g. `60`, not `60.0`) to match typical CSV export conventions.
-    public static func generate(sessions: [FixtureSession]) -> String {
+    ///
+    /// - Parameters:
+    ///   - sessions: The sessions to render, in the order given.
+    ///   - malformedRowRate: Opt-in probability (`[0, 1]`, default `0`) that
+    ///     any given data row is deliberately corrupted — either dropping a
+    ///     column (wrong column count) or replacing `weight_kg` with a
+    ///     non-numeric value — for exercising the future importer's error
+    ///     handling. `0` (the default) never mutates a row and never draws
+    ///     from `seed`, so existing callers see byte-identical output.
+    ///   - seed: Drives which rows are malformed and how, when
+    ///     `malformedRowRate > 0`. The same `(sessions, malformedRowRate,
+    ///     seed)` always produces the same output.
+    public static func generate(sessions: [FixtureSession], malformedRowRate: Double = 0, seed: UInt64 = 0) -> String {
         var lines: [String] = [header]
+        var rng: SeededGenerator? = malformedRowRate > 0 ? SeededGenerator(seed: seed) : nil
 
         for session in sessions {
             let startText = session.start.formatted
             let endText = session.end.formatted
             for exercise in session.exercises {
                 for (index, set) in exercise.sets.enumerated() {
-                    let row = [
+                    var fields = [
                         csvField(session.title),
                         startText,
                         endText,
                         csvField(exercise.title),
                         String(index + 1),
-                        "normal",
+                        set.isWarmup ? "warmup" : "normal",
                         formatWeight(set.weightKg),
                         String(set.reps)
-                    ].joined(separator: ",")
-                    lines.append(row)
+                    ]
+
+                    if rng != nil, Double.random(in: 0..<1, using: &rng!) < malformedRowRate {
+                        fields = malform(fields, using: &rng!)
+                    }
+
+                    lines.append(fields.joined(separator: ","))
                 }
             }
         }
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Deliberately corrupts a well-formed row for import-error-handling
+    /// tests: either drops the last column (wrong column count) or replaces
+    /// `weight_kg` (index 6) with a non-numeric placeholder.
+    private static func malform(_ fields: [String], using rng: inout SeededGenerator) -> [String] {
+        if Bool.random(using: &rng) {
+            return Array(fields.dropLast())
+        }
+        var mutated = fields
+        mutated[6] = "N/A"
+        return mutated
     }
 
     private static func formatWeight(_ weight: Double) -> String {
