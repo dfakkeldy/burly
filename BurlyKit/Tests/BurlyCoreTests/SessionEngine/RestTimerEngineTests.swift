@@ -331,6 +331,84 @@ struct RestTimerEngineTests {
         #expect(engine.tick(&state).isEmpty)
     }
 
+    /// Runs one rest to `endPlus` seconds past the 0 mark, reporting a
+    /// screen wake at `wakeAt` seconds past it, and returns every haptic
+    /// emitted. `wakeFirst` decides only which of the two calls at the wake
+    /// instant happens first — the answer must not depend on it.
+    private func repeatRun(
+        wakeAt: TimeInterval,
+        wakeFirst: Bool,
+        settleAt: TimeInterval
+    ) -> [HapticEvent] {
+        let clock = ManualClock()
+        let engine = makeEngine(clock: clock, warningEnabled: false)
+        var state: RestTimerState?
+        var log = HapticLog()
+        engine.start(&state, itemOverride: 90)
+
+        clock.advance(90 + wakeAt)
+        if wakeFirst {
+            engine.noteScreenWake(&state)
+            log.record(contentsOf: engine.tick(&state))
+        } else {
+            log.record(contentsOf: engine.tick(&state))
+            engine.noteScreenWake(&state)
+        }
+
+        if settleAt > wakeAt {
+            clock.advance(settleAt - wakeAt)
+            log.record(contentsOf: engine.tick(&state))
+        }
+        return log.events
+    }
+
+    @Test("A wake inside the +5 s window suppresses the repeat, whichever call lands first")
+    func wakeInsideWindowSuppressesRepeatInEitherOrder() {
+        let wakeFirst = repeatRun(wakeAt: 2, wakeFirst: true, settleAt: 6)
+        let tickFirst = repeatRun(wakeAt: 2, wakeFirst: false, settleAt: 6)
+
+        #expect(wakeFirst == tickFirst)
+        #expect(wakeFirst == [.restTimerFinished])
+    }
+
+    @Test("A wake after the +5 s window suppresses nothing, whichever call lands first")
+    func lateWakeDoesNotSuppressRepeatInEitherOrder() {
+        // The old screen-woke boolean got this wrong in exactly one
+        // ordering: `tick` first fired the repeat, `noteScreenWake` first
+        // swallowed it, for the same instant and the same lifter.
+        let wakeFirst = repeatRun(wakeAt: 6, wakeFirst: true, settleAt: 6)
+        let tickFirst = repeatRun(wakeAt: 6, wakeFirst: false, settleAt: 6)
+
+        #expect(wakeFirst == tickFirst)
+        #expect(wakeFirst == [.restTimerFinished, .restTimerFinishedRepeat])
+    }
+
+    @Test("A wake in the last second before the deadline still suppresses, in both orders")
+    func wakeJustInsideWindowSuppressesInEitherOrder() {
+        let wakeFirst = repeatRun(wakeAt: 4, wakeFirst: true, settleAt: 6)
+        let tickFirst = repeatRun(wakeAt: 4, wakeFirst: false, settleAt: 6)
+
+        #expect(wakeFirst == tickFirst)
+        #expect(wakeFirst == [.restTimerFinished])
+    }
+
+    @Test("Only the first wake of a rest is recorded, so a later one cannot un-suppress the repeat")
+    func firstWakeWins() {
+        let clock = ManualClock()
+        let engine = makeEngine(clock: clock, warningEnabled: false)
+        var state: RestTimerState?
+        engine.start(&state, itemOverride: 90)
+
+        clock.advance(30)
+        engine.noteScreenWake(&state)
+        let firstWake = state?.screenWokeAt
+        clock.advance(70)                    // end + 10, past the deadline
+        engine.noteScreenWake(&state)
+
+        #expect(state?.screenWokeAt == firstWake)
+        #expect(engine.tick(&state) == [.restTimerFinished])
+    }
+
     @Test("A suspension gap past 0+5 s emits the finish and its repeat in one evaluation, and no stale warning")
     func suspensionGapEmitsBothMarksAndNoWarning() {
         let clock = ManualClock()
@@ -370,5 +448,55 @@ struct RestTimerEngineTests {
         var state: RestTimerState?
         #expect(makeEngine(clock: clock).tick(&state).isEmpty)
         #expect(state == nil)
+    }
+
+    // MARK: - The state's own range invariant
+
+    private static let epoch = Date(timeIntervalSince1970: 1_800_000_000)
+
+    @Test("The initialiser clamps an out-of-range duration onto the §3 grid", arguments: [
+        (1.0, 15.0), (10_000.0, 300.0)
+    ])
+    func initClampsDuration(raw: TimeInterval, expected: TimeInterval) {
+        let state = RestTimerState(startedAt: Self.epoch, duration: raw)
+
+        #expect(state.duration == expected)
+        #expect(state.endDate == Self.epoch.addingTimeInterval(expected))
+    }
+
+    @Test("Decoding clamps an out-of-range duration too, rather than refusing the session", arguments: [
+        (1.0, 15.0), (10_000.0, 300.0)
+    ])
+    func decodeClampsDuration(raw: TimeInterval, expected: TimeInterval) throws {
+        // Hand-built JSON: a store written before the clamp existed, or one
+        // that was corrupted. §3 chooses resilience — a wrong countdown
+        // beats a session that will not reload mid-workout.
+        let json = """
+        {"startedAt":\(Self.epoch.timeIntervalSinceReferenceDate),\
+        "endDate":\(Self.epoch.addingTimeInterval(raw).timeIntervalSinceReferenceDate),\
+        "warningFired":false,"finishedFired":false,"repeatFired":false}
+        """
+
+        let decoded = try JSONDecoder().decode(RestTimerState.self, from: Data(json.utf8))
+
+        #expect(decoded.startedAt == Self.epoch)
+        #expect(decoded.duration == expected)
+        #expect(decoded.screenWokeAt == nil)
+    }
+
+    @Test("An in-range timer and its recorded screen wake survive a round trip untouched")
+    func inRangeStateRoundTripsWithItsWake() throws {
+        let clock = ManualClock()
+        let engine = makeEngine(clock: clock)
+        var state: RestTimerState?
+        engine.start(&state, itemOverride: 120)
+        clock.advance(30)
+        engine.noteScreenWake(&state)
+
+        let restored = try roundTripJSON(state!)
+
+        #expect(restored == state)
+        #expect(restored.duration == 120)
+        #expect(restored.screenWokeAt == clock.now)
     }
 }

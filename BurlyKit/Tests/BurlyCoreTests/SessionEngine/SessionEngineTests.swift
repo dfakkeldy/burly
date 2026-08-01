@@ -133,24 +133,134 @@ struct SessionEngineTests {
         #expect(engine.weightEdit.isArmed == false)
     }
 
-    @Test("Double Tap reports logsSet without arming, and the engine logs on that report")
-    func doubleTapLogsWithoutArming() throws {
+    // MARK: - Double Tap
+
+    @Test("Double Tap is one call: it logs the set with current values and never arms")
+    func doubleTapLogsInOneCall() throws {
         let ids = SequentialIDs()
         let clock = ManualClock()
         var engine = makeEngine(ids: ids, clock: clock)
         let itemID = engine.session.items[0].id
         engine.prefillWeight(Weight(kg: 60))
 
-        let effect = engine.handleWeightEdit(.doubleTap)
-        #expect(effect.logsSet)
-        #expect(engine.weightEdit.isArmed == false)
-
-        if effect.logsSet {
-            try engine.logSet(itemID: itemID, weight: engine.weightEdit.weight, reps: 8, makeID: ids.make)
-        }
+        // No `logsSet` wiring at the call site — §2 calls Double Tap the
+        // primary action, so the engine performs it.
+        let outcome = try engine.handleDoubleTap(itemID: itemID, reps: 8, makeID: ids.make)
 
         #expect(engine.session.loggedSetCount(itemID) == 1)
-        #expect(engine.session.item(itemID)?.sets.first?.weightKg == 60)
+        #expect(outcome.set.weightKg == 60)          // the control's current value
+        #expect(outcome.set.reps == 8)
+        #expect(outcome.haptics == [.setLogged])
+        #expect(engine.weightEdit.isArmed == false)
+        #expect(engine.restRemaining == 90)
+    }
+
+    @Test("Double Tap from an armed control locks it and returns both haptics in one outcome")
+    func doubleTapFromArmedLocksAndLogs() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        let itemID = engine.session.items[0].id
+        engine.prefillWeight(Weight(kg: 60))
+        engine.handleWeightEdit(.longPressArm)
+        engine.handleWeightEdit(.adjust(steps: 2))
+
+        let outcome = try engine.handleDoubleTap(itemID: itemID, reps: 8, makeID: ids.make)
+
+        #expect(outcome.haptics == [.weightEditLocked, .setLogged])
+        #expect(outcome.set.weightKg == 62.5)
+        #expect(engine.weightEdit.isArmed == false)
+        #expect(engine.session.loggedSetCount(itemID) == 1)
+    }
+
+    @Test("Repeated Double Taps log repeatedly and never accumulate into an armed control")
+    func repeatedDoubleTapsLogAndNeverArm() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock, setCounts: [3], restOverrides: [nil])
+        let itemID = engine.session.items[0].id
+        engine.prefillWeight(Weight(kg: 40))
+
+        for _ in 0..<5 {
+            try engine.handleDoubleTap(itemID: itemID, reps: 10, makeID: ids.make)
+            clock.advance(30)
+            #expect(engine.weightEdit.isArmed == false)
+        }
+
+        #expect(engine.session.loggedSetCount(itemID) == 5)
+    }
+
+    @Test("A refused Double Tap logs nothing and leaves the control exactly as it was")
+    func refusedDoubleTapIsAtomic() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        let itemID = engine.session.items[0].id
+        engine.handleWeightEdit(.longPressArm)
+        let armed = engine.weightEdit
+
+        #expect(throws: SessionMutationError.invalidReps(0)) {
+            try engine.handleDoubleTap(itemID: itemID, reps: 0, makeID: ids.make)
+        }
+
+        #expect(engine.weightEdit == armed)
+        #expect(engine.weightEdit.isArmed)
+        #expect(engine.session.allSets.isEmpty)
+    }
+
+    // MARK: - Atomicity
+
+    @Test("A refused log leaves the guarded control untouched and loses no haptic")
+    func refusedLogDoesNotHalfCommit() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        let itemID = engine.session.items[0].id
+        let ghost = ids.next()
+
+        engine.handleWeightEdit(.longPressArm)
+        #expect(engine.weightEdit.isArmed)
+        let armed = engine.weightEdit
+
+        // A set with no reps is not a set …
+        #expect(throws: SessionMutationError.invalidReps(0)) {
+            try engine.logSet(itemID: itemID, weight: Weight(kg: 60), reps: 0, makeID: ids.make)
+        }
+        #expect(engine.weightEdit == armed)
+
+        // … and neither is one against an item that is not there.
+        #expect(throws: SessionMutationError.unknownItem(ghost)) {
+            try engine.logSet(itemID: ghost, weight: Weight(kg: 60), reps: 8, makeID: ids.make)
+        }
+        #expect(engine.weightEdit == armed)
+
+        // Nothing partial happened anywhere: still armed, no set, no rest.
+        #expect(engine.weightEdit.isArmed)
+        #expect(engine.session.allSets.isEmpty)
+        #expect(engine.session.restTimer == nil)
+
+        // And the lock haptic those failures did not consume is still owed:
+        // the next real log emits it, as it always would have.
+        let outcome = try engine.logSet(itemID: itemID, weight: Weight(kg: 60), reps: 8, makeID: ids.make)
+        #expect(outcome.haptics == [.weightEditLocked, .setLogged])
+    }
+
+    @Test("A log refused because the session is finished changes nothing either")
+    func refusedLogOnFinishedSessionIsAtomic() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        let itemID = engine.session.items[0].id
+        try engine.finish()
+        engine.handleWeightEdit(.longPressArm)
+        let armed = engine.weightEdit
+
+        #expect(throws: SessionMutationError.sessionNotActive) {
+            try engine.logSet(itemID: itemID, weight: Weight(kg: 60), reps: 8, makeID: ids.make)
+        }
+
+        #expect(engine.weightEdit == armed)
+        #expect(engine.session.allSets.isEmpty)
     }
 
     @Test("Prefill walks §2's ladder as a session progresses")
@@ -190,15 +300,48 @@ struct SessionEngineTests {
         try engine.addSet(toItem: first)
         try engine.removeEmptySet(fromItem: first)
         try engine.skipExercise(itemID: engine.session.items[1].id)
-        try engine.swapExercise(itemID: first, toExerciseID: ids.next())
+        // `first` has a set logged, so this swap splits it in two.
+        let swapped = try engine.swapExercise(
+            itemID: first, toExerciseID: ids.next(), makeID: ids.make
+        )
         let added = try engine.addExercise(exerciseID: ids.next(), makeID: ids.make)
         try engine.moveItemUp(itemID: added)
         let placeholder = try engine.addPlaceholderExercise(makeID: ids.make)
 
         #expect(engine.session.isWellFormed)
         #expect(engine.session.loggedSetCount(first) == 1)
+        #expect(engine.session.loggedSetCount(swapped) == 0)
         #expect(placeholder.exercise.needsNaming)
-        #expect(engine.session.items.map(\.order) == [0, 1, 2, 3, 4])
+        #expect(engine.session.items.count == 6)
+        #expect(engine.session.items.map(\.order) == [0, 1, 2, 3, 4, 5])
+    }
+
+    @Test("Finishing while the weight is armed returns the lock haptic instead of swallowing it")
+    func finishReturnsTheLockHaptic() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        try engine.logSet(
+            itemID: engine.session.items[0].id, weight: Weight(kg: 60), reps: 8, makeID: ids.make
+        )
+        engine.handleWeightEdit(.longPressArm)
+
+        // §2: "every lock/unlock transition is a distinct haptic" — Finish
+        // is not allowed to be the one silent transition.
+        #expect(try engine.finish() == [.weightEditLocked])
+        #expect(engine.weightEdit.isArmed == false)
+    }
+
+    @Test("Finishing with the weight already locked returns no haptic")
+    func finishWithLockedWeightIsSilent() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        try engine.logSet(
+            itemID: engine.session.items[0].id, weight: Weight(kg: 60), reps: 8, makeID: ids.make
+        )
+
+        #expect(try engine.finish().isEmpty)
     }
 
     @Test("Finish closes the session, clears the timer, and locks the weight")
@@ -211,8 +354,12 @@ struct SessionEngineTests {
         engine.handleWeightEdit(.longPressArm)
         clock.advance(45)
 
-        try engine.finish()
+        let haptics = try engine.finish()
 
+        // Nothing ticked during those 45 s, so the idle auto-lock had never
+        // been evaluated and its haptic was still owed. Finish evaluates it
+        // and hands it back rather than dropping it on the floor.
+        #expect(haptics == [.weightEditLocked])
         #expect(engine.session.session.state == .logged)
         #expect(engine.session.session.endedAt == clock.now)
         #expect(engine.session.restTimer == nil)

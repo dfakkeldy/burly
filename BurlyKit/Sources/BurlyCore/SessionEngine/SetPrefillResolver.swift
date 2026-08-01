@@ -10,12 +10,24 @@
 // plausible-looking guess (§2 acceptance #5: "absent digest renders empty
 // ghosts (no crash, no stale data)").
 //
-// The digest guard matters more than it looks: `ExerciseLastPerformance`
-// is keyed by exercise, and a session item's exercise can change under it
+// ## Both rungs are scoped to one exercise
+//
+// Rung 1 is keyed by exercise explicitly: `ExerciseLastPerformance` is a
+// per-exercise digest, and an item's exercise can change under it
 // mid-session (`SessionMutator.swapExercise`). Resolving against a digest
 // for the *previous* exercise would prefill a barbell row's numbers into a
-// lat pulldown. The resolver therefore takes the item's exercise id and
-// ignores any digest that does not match.
+// lat pulldown, so the resolver takes the item's exercise id and ignores
+// any digest that does not match.
+//
+// Rung 2 is scoped by its caller: `loggedSets` must be the sets of one
+// item, and every set under an item belongs to that item's exercise —
+// `SetRecord` carries no exercise of its own, it is attributed by the item
+// holding it. `SessionMutator.swapExercise` is what keeps that true: a swap
+// on a part-logged item splits it rather than re-pointing it, so the sets
+// left behind stay under the exercise they were performed for and can never
+// reach this function as "the previous set" for a different one.
+
+// MARK: -
 //
 // Imports Foundation for `UUID` only.
 import Foundation
@@ -56,7 +68,10 @@ public enum SetPrefillResolver {
     ///     exercise is ignored.
     ///   - setIndex: the index of the set about to be logged — normally
     ///     `loggedSets.count`.
-    ///   - loggedSets: sets already logged against this item this session.
+    ///   - loggedSets: sets already logged against **this item** this
+    ///     session, and never any other item's. They are the rung-2
+    ///     fallback, and a `SetRecord` has no exercise of its own to check
+    ///     against, so their attribution is the caller's to keep honest.
     ///   - lastPerformance: the phone-pushed digest (§5), if any.
     public static func prefill(
         exerciseID: UUID?,

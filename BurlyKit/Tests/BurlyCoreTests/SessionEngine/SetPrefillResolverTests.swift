@@ -80,7 +80,7 @@ struct SetPrefillResolverTests {
         #expect(prefill.isEmpty)
     }
 
-    @Test("A digest for a different exercise is ignored — swapping mid-session cannot leak stale numbers")
+    @Test("A digest for a different exercise is ignored (rung 1, in isolation)")
     func digestForAnotherExerciseIsIgnored() {
         let other = UUID(uuidString: "00000000-0000-0000-0000-0000000000BB")!
         let digest = Fixture.digest(exerciseID: other, weightsKg: [60, 65], reps: [10, 8])
@@ -94,6 +94,45 @@ struct SetPrefillResolverTests {
 
         #expect(prefill == .empty)
         #expect(SetPrefillResolver.ghost(exerciseID: exerciseID, setIndex: 0, lastPerformance: digest) == nil)
+    }
+
+    @Test("The real dangerous sequence: log heavy for one exercise, swap, and nothing leaks into the next")
+    func swappingMidExerciseCannotLeakThePreviousExercisesWeight() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = SessionEngine(
+            session: SessionBuilder.session(
+                from: Fixture.routine(ids: ids, setCounts: [3], restOverrides: [nil]),
+                clock: clock,
+                makeID: ids.make
+            ),
+            clock: clock
+        )
+        let itemA = engine.session.items[0].id
+        let exerciseA = engine.session.item(itemA)!.exerciseID!
+
+        // A heavy working set of exercise A. Rung 2 now offers it back for
+        // A's next set, which is correct — for A.
+        try engine.logSet(itemID: itemA, weight: Weight(kg: 100), reps: 5, makeID: ids.make)
+        #expect(engine.prefill(forItem: itemA, lastPerformance: nil).weight == Weight(kg: 100))
+
+        // Mid-exercise swap to B: the bar is being unloaded, and 100 kg is
+        // emphatically not the number to seed the new exercise with.
+        let itemB = try engine.swapExercise(
+            itemID: itemA, toExerciseID: ids.next(), makeID: ids.make
+        )
+
+        #expect(engine.prefill(forItem: itemB, lastPerformance: nil) == .empty)
+
+        // Not even with A's digest in hand — it is keyed to A's exercise.
+        let digestForA = Fixture.digest(exerciseID: exerciseA, weightsKg: [100], reps: [5])
+        #expect(engine.prefill(forItem: itemB, lastPerformance: digestForA) == .empty)
+
+        // And A's set is still A's set, under A's exercise.
+        #expect(engine.session.item(itemA)?.exerciseID == exerciseA)
+        #expect(engine.session.item(itemA)?.sets.map(\.weightKg) == [100])
+        #expect(engine.session.item(itemB)?.sets.isEmpty == true)
+        #expect(engine.session.item(itemB)?.exerciseID != exerciseA)
     }
 
     @Test("An item with no exercise (unnamed placeholder before assignment) prefills empty")

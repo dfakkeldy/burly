@@ -195,23 +195,138 @@ struct SessionMutatorTests {
 
     // MARK: - Swap
 
-    @Test("swap exercise replaces the exercise in place, preserving item id, order, plan, and sets")
-    func swapIsInPlace() throws {
-        let started = try startedSession()
-        var active = started.session
-        let ids = started.ids
+    @Test("swap with nothing logged yet replaces the exercise in place")
+    func swapWithNothingLoggedIsInPlace() throws {
+        let ids = SequentialIDs()
+        var active = SessionBuilder.session(
+            from: Fixture.routine(ids: ids), clock: ManualClock(), makeID: ids.make
+        )
         let itemID = active.items[1].id
         let before = active
         let replacement = ids.next()
 
-        try SessionMutator.swapExercise(itemID: itemID, toExerciseID: replacement, in: &active)
+        let working = try SessionMutator.swapExercise(
+            itemID: itemID, toExerciseID: replacement, in: &active, makeID: ids.make
+        )
 
+        // Nothing was performed here yet, so the slot is still scaffolding
+        // and can simply become a different exercise.
+        #expect(working == itemID)
+        #expect(active.items.count == before.items.count)
         #expect(active.item(itemID)?.exerciseID == replacement)
-        #expect(active.item(itemID)?.id == before.item(itemID)?.id)
         #expect(active.item(itemID)?.order == 1)
-        #expect(active.item(itemID)?.sets == before.item(itemID)?.sets)
         #expect(active.plan(itemID) == before.plan(itemID))
         #expect(active.allSets == before.allSets)
+        #expect(active.isWellFormed)
+    }
+
+    @Test("swap after logging splits: the logged sets keep their original exercise")
+    func swapAfterLoggingSplitsAttribution() throws {
+        let started = try startedSession()
+        var active = started.session
+        let ids = started.ids
+        let itemID = active.items[1].id            // 4 planned, 1 logged
+        let before = active
+        let originalExercise = before.item(itemID)!.exerciseID
+        let performedSets = before.item(itemID)!.sets
+        let replacement = ids.next()
+
+        let working = try SessionMutator.swapExercise(
+            itemID: itemID, toExerciseID: replacement, in: &active, makeID: ids.make
+        )
+
+        // Required up front so a regression to the in-place overwrite fails
+        // here, cleanly, instead of trapping on an index further down.
+        try #require(active.items.count == 4)
+        try #require(working != itemID)
+
+        // The performed half is frozen exactly as it happened. This is the
+        // whole point: those reps were done for `originalExercise`, and no
+        // swap may quietly re-file them as something else.
+        #expect(active.item(itemID)?.exerciseID == originalExercise)
+        #expect(active.item(itemID)?.exerciseID != replacement)
+        #expect(active.item(itemID)?.sets == performedSets)
+        #expect(active.item(itemID)?.order == 1)
+        // Its plan shrinks to what it holds, so no empty slot is left
+        // inviting more sets under the exercise the lifter just left.
+        #expect(active.plannedSetCount(itemID) == 1)
+        #expect(active.hasEmptySetSlot(itemID) == false)
+
+        // The replacement arrives as a new item, directly after, carrying
+        // the slots that were still outstanding.
+        #expect(working != itemID)
+        #expect(active.index(ofItem: working) == 2)
+        #expect(active.item(working)?.exerciseID == replacement)
+        #expect(active.item(working)?.sets.isEmpty == true)
+        #expect(active.plannedSetCount(working) == 3)   // 4 planned − 1 logged
+        #expect(active.plan(working)?.restOverride == before.plan(itemID)?.restOverride)
+        #expect(active.plan(working)?.isSkipped == false)
+
+        // Everything else is where it was, and no set anywhere was touched.
+        #expect(active.items.count == 4)
+        #expect(active.items.map(\.order) == [0, 1, 2, 3])
+        #expect(active.items[0].id == before.items[0].id)
+        #expect(active.items[3].id == before.items[2].id)
+        #expect(active.allSets == before.allSets)
+        #expect(active.isWellFormed)
+    }
+
+    @Test("A split still gives the replacement a slot when the old exercise used every planned set")
+    func swapSplitAlwaysGivesReplacementOneSlot() throws {
+        let started = try startedSession()
+        var active = started.session
+        let ids = started.ids
+        let clock = started.clock
+        let itemID = active.items[2].id            // 2 planned, 1 logged
+        try SessionMutator.logSet(
+            itemID: itemID, weight: Weight(kg: 20), reps: 10,
+            in: &active, clock: clock, makeID: ids.make
+        )
+        #expect(active.hasEmptySetSlot(itemID) == false)
+
+        let working = try SessionMutator.swapExercise(
+            itemID: itemID, toExerciseID: ids.next(), in: &active, makeID: ids.make
+        )
+
+        #expect(active.plannedSetCount(itemID) == 2)   // frozen at what it holds
+        #expect(active.plannedSetCount(working) == 1)  // I4's floor, not zero
+        #expect(active.loggedSetCount(working) == 0)
+        #expect(active.isWellFormed)
+    }
+
+    @Test("Swapping twice on a part-logged exercise leaves one frozen half per exercise performed")
+    func repeatedSwapsChainWithoutLosingAttribution() throws {
+        let started = try startedSession()
+        var active = started.session
+        let ids = started.ids
+        let clock = started.clock
+        let itemA = active.items[0].id             // 3 planned, 1 logged
+        let exerciseA = active.item(itemA)!.exerciseID
+        let exerciseB = ids.next()
+        let exerciseC = ids.next()
+
+        let itemB = try SessionMutator.swapExercise(
+            itemID: itemA, toExerciseID: exerciseB, in: &active, makeID: ids.make
+        )
+        try SessionMutator.logSet(
+            itemID: itemB, weight: Weight(kg: 55), reps: 6,
+            in: &active, clock: clock, makeID: ids.make
+        )
+        let itemC = try SessionMutator.swapExercise(
+            itemID: itemB, toExerciseID: exerciseC, in: &active, makeID: ids.make
+        )
+
+        try #require(active.items.count == 5)
+
+        // Three items, three exercises, each holding only its own work.
+        #expect(active.item(itemA)?.exerciseID == exerciseA)
+        #expect(active.item(itemB)?.exerciseID == exerciseB)
+        #expect(active.item(itemC)?.exerciseID == exerciseC)
+        #expect(active.item(itemA)?.sets.map(\.weightKg) == [40])
+        #expect(active.item(itemB)?.sets.map(\.weightKg) == [55])
+        #expect(active.item(itemC)?.sets.isEmpty == true)
+        #expect(Array(active.items.map(\.id).prefix(3)) == [itemA, itemB, itemC])
+        #expect(active.items.map(\.order) == [0, 1, 2, 3, 4])
         #expect(active.isWellFormed)
     }
 

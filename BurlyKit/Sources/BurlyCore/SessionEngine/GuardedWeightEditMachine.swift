@@ -162,9 +162,16 @@ public struct GuardedWeightEditMachine: Sendable {
     }
 
     /// Seconds until the armed control auto-locks; `nil` while locked.
+    ///
+    /// Clamped into `0...idleTimeout`: a wall clock that ran *backwards*
+    /// (NTP correction, manual date change) would otherwise report an
+    /// arm that lives for hours. See `applyIdleExpiry` — the next event to
+    /// touch the state re-anchors it, and this read agrees with that in
+    /// advance rather than promising a window the machine will not honour.
     public func timeUntilAutoLock(_ state: WeightEditState) -> TimeInterval? {
         guard state.lock == .armed, let last = state.lastActivityAt else { return nil }
-        return Swift.max(0, configuration.idleTimeout - clock.now.timeIntervalSince(last))
+        let idle = Swift.max(0, clock.now.timeIntervalSince(last))
+        return Swift.max(0, configuration.idleTimeout - idle)
     }
 
     @discardableResult
@@ -234,8 +241,21 @@ public struct GuardedWeightEditMachine: Sendable {
     }
 
     /// Locks if the idle window has lapsed; reports whether it did.
+    ///
+    /// A wall clock can move backwards — NTP correcting a drifted watch, or
+    /// the lifter changing the date — and `lastActivityAt` is a wall-clock
+    /// instant, so an arm can find itself stamped in the future. Left alone
+    /// that arms the control for however far back the clock jumped, which
+    /// is precisely the accidental-edit window §2 exists to close. So a
+    /// future anchor is re-anchored to `now` on sight: the arm is not
+    /// cancelled (the lifter did just arm it), it simply restarts its 3 s
+    /// from the instant the machine noticed.
     private func applyIdleExpiry(_ state: inout WeightEditState, now: Date) -> Bool {
         guard state.lock == .armed, let last = state.lastActivityAt else { return false }
+        guard now >= last else {
+            state.setLastActivityAt(now)
+            return false
+        }
         guard now.timeIntervalSince(last) >= configuration.idleTimeout else { return false }
         state.setLock(.locked)
         state.setLastActivityAt(nil)

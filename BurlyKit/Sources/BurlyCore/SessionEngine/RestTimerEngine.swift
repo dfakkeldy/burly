@@ -69,10 +69,21 @@ public enum RestDuration {
 /// `startedAt` and `endDate` are wall-clock instants; everything else is a
 /// latch recording that a haptic already fired, so that replaying `tick()`
 /// any number of times can never double-fire.
+///
+/// ## The duration is always in range
+///
+/// §3 fixes rest at 15 s–5 min in 15 s steps. Both the public initialiser
+/// and `init(from:)` **clamp** to that grid rather than trapping or
+/// throwing: this value comes back off disk mid-workout, and a decoder that
+/// refuses a corrupt duration would cost the lifter the whole session's
+/// resume for a field that has an obviously correct nearest answer. A
+/// 10 000 s timer restored as 300 s is a wrong countdown; a session that
+/// will not reload is lost data.
 public struct RestTimerState: Sendable, Equatable, Hashable, Codable {
     public private(set) var startedAt: Date
 
-    /// The one source of truth for the countdown (§3).
+    /// The one source of truth for the countdown (§3). Always
+    /// `startedAt + RestDuration.clamped(_:)`.
     public private(set) var endDate: Date
 
     /// True once the 10 s warning fired *or* was deliberately suppressed
@@ -85,18 +96,49 @@ public struct RestTimerState: Sendable, Equatable, Hashable, Codable {
     /// True once the single +5 s repeat fired (or was ruled out).
     public private(set) var repeatFired: Bool
 
-    /// Whether the screen woke at any point during this rest. §3 repeats
-    /// the 0-mark pattern once at +5 s only "if screen never woke" — the
-    /// scope of "never" is this timer, reset on every start.
-    public private(set) var screenWoke: Bool
+    /// When the screen first woke during this rest, `nil` if it never did.
+    ///
+    /// An *instant*, not a flag, and that is the whole point. §3 repeats
+    /// the 0-mark pattern at +5 s only "if screen never woke", so the
+    /// repeat decision is a question about a window of time — and a bare
+    /// `Bool` can only answer "has a wake been reported to me yet", which
+    /// depends on whether `noteScreenWake` or `tick` happened to be called
+    /// first. With the instant recorded, `evaluate` compares it against the
+    /// window and gets the same answer in either order. First wake wins:
+    /// later ones cannot move it out of the window.
+    public private(set) var screenWokeAt: Date?
+
+    /// Whether the screen woke at any point during this rest.
+    public var screenWoke: Bool { screenWokeAt != nil }
 
     public init(startedAt: Date, duration: TimeInterval) {
         self.startedAt = startedAt
-        self.endDate = startedAt.addingTimeInterval(duration)
+        self.endDate = startedAt.addingTimeInterval(RestDuration.clamped(duration))
         self.warningFired = false
         self.finishedFired = false
         self.repeatFired = false
-        self.screenWoke = false
+        self.screenWokeAt = nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case startedAt, endDate, warningFired, finishedFired, repeatFired, screenWokeAt
+    }
+
+    /// Decodes, then re-derives `endDate` through the §3 clamp so a stored
+    /// out-of-range duration cannot outlive the store.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let startedAt = try container.decode(Date.self, forKey: .startedAt)
+        let endDate = try container.decode(Date.self, forKey: .endDate)
+
+        self.startedAt = startedAt
+        self.endDate = startedAt.addingTimeInterval(
+            RestDuration.clamped(endDate.timeIntervalSince(startedAt))
+        )
+        self.warningFired = try container.decode(Bool.self, forKey: .warningFired)
+        self.finishedFired = try container.decode(Bool.self, forKey: .finishedFired)
+        self.repeatFired = try container.decode(Bool.self, forKey: .repeatFired)
+        self.screenWokeAt = try container.decodeIfPresent(Date.self, forKey: .screenWokeAt)
     }
 
     /// Total rest length, i.e. `endDate - startedAt`. Moves with +15/−15.
@@ -129,7 +171,14 @@ public struct RestTimerState: Sendable, Equatable, Hashable, Codable {
     fileprivate mutating func setWarningFired(_ value: Bool) { warningFired = value }
     fileprivate mutating func setFinishedFired(_ value: Bool) { finishedFired = value }
     fileprivate mutating func setRepeatFired(_ value: Bool) { repeatFired = value }
-    fileprivate mutating func setScreenWoke(_ value: Bool) { screenWoke = value }
+
+    /// Records the first wake of this rest; later wakes are ignored so the
+    /// stored instant is always the earliest, i.e. the one most likely to
+    /// fall inside the repeat window.
+    fileprivate mutating func noteScreenWoke(at instant: Date) {
+        guard screenWokeAt == nil else { return }
+        screenWokeAt = instant
+    }
 }
 
 // MARK: - Configuration
@@ -261,11 +310,13 @@ public struct RestTimerEngine: Sendable {
         state = nil
     }
 
-    /// The screen woke during this rest, so the +5 s repeat is not needed
-    /// (§3).
+    /// The screen woke during this rest (§3). Records *when*, so whether
+    /// the +5 s repeat is still due is decided by `evaluate` against the
+    /// repeat window — not by whether this call happened to land before or
+    /// after the `tick` that evaluates it.
     public func noteScreenWake(_ state: inout RestTimerState?) {
         guard var timer = state else { return }
-        timer.setScreenWoke(true)
+        timer.noteScreenWoke(at: clock.now)
         state = timer
     }
 
@@ -313,13 +364,19 @@ public struct RestTimerEngine: Sendable {
                 haptics.append(.restTimerFinished)
             }
 
-            if !timer.repeatFired,
-               now >= timer.endDate.addingTimeInterval(configuration.missedRepeatDelay) {
+            let repeatDeadline = timer.endDate.addingTimeInterval(configuration.missedRepeatDelay)
+            if !timer.repeatFired, now >= repeatDeadline {
                 timer.setRepeatFired(true)
                 // Latched either way: the repeat window is past, so it can
                 // never fire later. It only *sounds* if the screen stayed
-                // dark for the whole rest.
-                if !timer.screenWoke {
+                // dark for the whole window — a wake recorded at or before
+                // the deadline means the lifter already saw the timer end,
+                // and a wake after it is not a reason to withhold a haptic
+                // that was already due. Comparing instants rather than
+                // reading a flag is what makes this independent of whether
+                // `noteScreenWake` or `tick` was called first.
+                let sawItEndInTime = (timer.screenWokeAt.map { $0 <= repeatDeadline }) ?? false
+                if !sawItEndInTime {
                     haptics.append(.restTimerFinishedRepeat)
                 }
             }

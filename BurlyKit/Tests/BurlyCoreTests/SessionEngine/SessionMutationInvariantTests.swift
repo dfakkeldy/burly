@@ -18,20 +18,60 @@ struct SessionMutationInvariantTests {
         case addSet, removeEmptySet, logSet, skip, swap, addExercise, addPlaceholder, moveUp, moveDown
     }
 
-    /// Applies a random mutation and returns a label for diagnostics.
-    /// Refusals (`SessionMutationError`) are legitimate outcomes — the
-    /// point is that a refusal leaves the session untouched, which the
-    /// caller checks by comparing against the pre-step snapshot.
+    /// What one generated step did, against what the generator already knew
+    /// it should do.
+    private struct StepOutcome {
+        /// Whether the generator, looking at the session *before* the call,
+        /// could tell the operation was valid.
+        var shouldSucceed: Bool
+        var didSucceed: Bool
+        var error: (any Error)?
+    }
+
+    /// Applies a random mutation, having first worked out whether it can
+    /// legitimately be refused.
+    ///
+    /// The generator knows the session it is mutating, so for most steps it
+    /// knows the answer in advance: adding a set to an item that exists
+    /// cannot fail, and moving an item that is not at the edge cannot fail.
+    /// Treating every `SessionMutationError` as an acceptable outcome would
+    /// let this whole suite pass over an engine that refused *everything* —
+    /// the invariants hold beautifully on a session nothing can touch. So
+    /// each step is predicted, and the prediction is asserted.
     private func apply(
         _ step: Step,
         to session: inout ActiveSession,
         rng: inout SplitMix64,
         ids: SequentialIDs,
         clock: ManualClock
-    ) -> Bool {
+    ) -> StepOutcome {
         let itemID = session.items.isEmpty
             ? ids.next()
             : session.items[Int.random(in: 0..<session.items.count, using: &rng)].id
+        let index = session.index(ofItem: itemID)
+        let planned = session.plannedSetCount(itemID)
+        let logged = session.loggedSetCount(itemID)
+
+        // Predicted before the call, from state the generator can see. No
+        // RNG is drawn here, so the generated sequence is unchanged.
+        let shouldSucceed: Bool
+        switch step {
+        case .addSet, .logSet, .skip, .swap:
+            // The session is always `.active` in this suite (no step
+            // finishes it), so existence of the item is the only question.
+            // Reps are drawn from 1...15, so `logSet` is never invalid.
+            shouldSucceed = index != nil
+        case .removeEmptySet:
+            shouldSucceed = index != nil && planned > logged && planned > 1
+        case .addExercise, .addPlaceholder:
+            // Always appended or inserted at an in-range index below.
+            shouldSucceed = true
+        case .moveUp:
+            shouldSucceed = (index ?? 0) > 0
+        case .moveDown:
+            shouldSucceed = index.map { $0 < session.items.count - 1 } ?? false
+        }
+
         do {
             switch step {
             case .addSet:
@@ -51,7 +91,9 @@ struct SessionMutationInvariantTests {
             case .skip:
                 try SessionMutator.skipExercise(itemID: itemID, in: &session)
             case .swap:
-                try SessionMutator.swapExercise(itemID: itemID, toExerciseID: ids.next(), in: &session)
+                try SessionMutator.swapExercise(
+                    itemID: itemID, toExerciseID: ids.next(), in: &session, makeID: ids.make
+                )
             case .addExercise:
                 try SessionMutator.addExercise(
                     exerciseID: ids.next(),
@@ -67,9 +109,9 @@ struct SessionMutationInvariantTests {
             case .moveDown:
                 try SessionMutator.moveItemDown(itemID: itemID, in: &session)
             }
-            return true
+            return StepOutcome(shouldSucceed: shouldSucceed, didSucceed: true, error: nil)
         } catch {
-            return false
+            return StepOutcome(shouldSucceed: shouldSucceed, didSucceed: false, error: error)
         }
     }
 
@@ -88,7 +130,7 @@ struct SessionMutationInvariantTests {
         for stepIndex in 0..<30 {
             let step = Step.allCases[Int.random(in: 0..<Step.allCases.count, using: &rng)]
             let before = session
-            let applied = apply(step, to: &session, rng: &rng, ids: ids, clock: clock)
+            let outcome = apply(step, to: &session, rng: &rng, ids: ids, clock: clock)
             clock.advance(TimeInterval(Int.random(in: 1...90, using: &rng)))
 
             let violations = session.invariantViolations()
@@ -97,7 +139,19 @@ struct SessionMutationInvariantTests {
                 "seed \(seed) step \(stepIndex) (\(step)): \(violations.joined(separator: "; "))"
             )
 
-            if !applied {
+            // An operation the generator knows is valid must be performed,
+            // and one it knows is invalid must be refused. Only genuine
+            // refusals count as refusals.
+            #expect(
+                outcome.didSucceed == outcome.shouldSucceed,
+                """
+                seed \(seed) step \(stepIndex): \(step) should have \
+                \(outcome.shouldSucceed ? "succeeded" : "been refused") but was \
+                \(outcome.didSucceed ? "performed" : "refused with \(String(describing: outcome.error))")
+                """
+            )
+
+            if !outcome.didSucceed {
                 // A refused mutation must be a no-op, not a partial edit.
                 #expect(session == before, "seed \(seed) step \(stepIndex): refused \(step) mutated the session")
                 continue

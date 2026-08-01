@@ -20,6 +20,11 @@
 // - **A logged session is closed.** After `finish`, the session is
 //   `.logged` and immutable on the watch (§2 Finish, §6 gives the phone
 //   the editor). Every mutator rejects it.
+// - **Set attribution is immutable too.** A `SetRecord` names no exercise;
+//   it is attributed by the item that holds it. So nothing here may
+//   re-point an item that already has sets under it — `swapExercise`
+//   splits such an item in two rather than rewriting what its logged sets
+//   claim to be.
 //
 // Imports Foundation for `UUID`/`TimeInterval` only.
 import Foundation
@@ -90,6 +95,27 @@ public enum SessionMutator {
 
     // MARK: - Logging
 
+    /// Every reason `logSet` could refuse, checked without touching
+    /// anything.
+    ///
+    /// Split out so a caller that has *other* state to move as part of
+    /// logging — `SessionEngine`, whose auto-lock fires a haptic — can find
+    /// out first and stay atomic. Without it the only way to learn that a
+    /// log would fail is to have already half-performed it.
+    public static func validateLogSet(
+        itemID: UUID,
+        reps: Int,
+        in session: ActiveSession
+    ) throws {
+        try requireActive(session)
+        guard session.index(ofItem: itemID) != nil, session.plans[itemID] != nil else {
+            throw SessionMutationError.unknownItem(itemID)
+        }
+        guard reps > 0 else {
+            throw SessionMutationError.invalidReps(reps)
+        }
+    }
+
     /// Writes a `SetRecord` (§2 Logging: "writes SetRecord immediately").
     ///
     /// `completedAt` comes from the injected clock. The set is appended
@@ -106,12 +132,9 @@ public enum SessionMutator {
         clock: any WallClock,
         makeID: () -> UUID = UUID.init
     ) throws -> SetRecordData {
-        try requireActive(session)
+        try validateLogSet(itemID: itemID, reps: reps, in: session)
         guard let index = session.index(ofItem: itemID), var plan = session.plans[itemID] else {
             throw SessionMutationError.unknownItem(itemID)
-        }
-        guard reps > 0 else {
-            throw SessionMutationError.invalidReps(reps)
         }
 
         let record = SetRecordData(
@@ -146,24 +169,68 @@ public enum SessionMutator {
         session.plans[itemID] = plan
     }
 
-    /// §2 "swap exercise" (catalog picker).
+    /// §2 "swap exercise" (catalog picker). **Splits on swap** when the
+    /// exercise being replaced already has sets logged against it.
     ///
-    /// The swap happens **in place**: same item id, same position, same
-    /// plan, same sets. §2's acceptance criterion is that mutations
-    /// "preserve set data", and the lifter who swaps mid-exercise did the
-    /// work already logged — dropping it to keep the exercise attribution
-    /// tidy would delete real reps, which is the worse failure. (The phone
-    /// can re-attribute later, §6.)
+    /// Two cases, and the difference is set attribution:
+    ///
+    /// - **Nothing logged yet** — the item is still pure scaffolding, so
+    ///   the swap is in place: same item id, same position, same plan.
+    /// - **Sets already logged** — the item is *history*. Overwriting its
+    ///   `exerciseID` would silently re-file three sets of bench press as
+    ///   curls, and nothing downstream could ever tell: a `SetRecord`
+    ///   carries no exercise of its own, it is attributed by the item that
+    ///   holds it. So the logged item is frozen exactly as performed (its
+    ///   exercise and its sets untouched, its plan shrunk to the sets it
+    ///   actually holds so no empty slot invites more logging under the old
+    ///   exercise), and the replacement arrives as a **new item directly
+    ///   after it**, carrying the set slots that were still outstanding.
+    ///
+    /// Both halves are real: "3 sets of bench, then I moved to the machine
+    /// for the last 2" is what happened, and it is what gets recorded.
+    ///
+    /// - Returns: the item the lifter is now working — the same item for an
+    ///   in-place swap, the newly inserted one for a split.
+    @discardableResult
     public static func swapExercise(
         itemID: UUID,
         toExerciseID exerciseID: UUID?,
-        in session: inout ActiveSession
-    ) throws {
+        in session: inout ActiveSession,
+        makeID: () -> UUID = UUID.init
+    ) throws -> UUID {
         try requireActive(session)
-        guard let index = session.index(ofItem: itemID) else {
+        guard let index = session.index(ofItem: itemID), let plan = session.plans[itemID] else {
             throw SessionMutationError.unknownItem(itemID)
         }
-        session.session.items[index].exerciseID = exerciseID
+
+        let loggedCount = session.session.items[index].sets.count
+        guard loggedCount > 0 else {
+            session.session.items[index].exerciseID = exerciseID
+            return itemID
+        }
+
+        // Freeze the performed half. I4 holds: `loggedCount >= 1` here, so
+        // `plannedSetCount == max(1, sets.count)` exactly.
+        var frozen = plan
+        frozen.plannedSetCount = loggedCount
+        session.plans[itemID] = frozen
+
+        // The replacement inherits the outstanding slots and this slot's
+        // rest override — the lifter set that rest for this point in the
+        // session, not for the exercise that just left it.
+        let remainingSlots = max(1, plan.plannedSetCount - loggedCount)
+        let newItemID = makeID()
+        session.session.items.insert(
+            SessionItemData(id: newItemID, exerciseID: exerciseID, order: index + 1, sets: []),
+            at: index + 1
+        )
+        session.plans[newItemID] = ItemPlan(
+            plannedSetCount: remainingSlots,
+            restOverride: plan.restOverride,
+            isSkipped: false
+        )
+        renumberItems(&session)
+        return newItemID
     }
 
     /// §2 "add exercise". Appends by default; `at:` inserts and renumbers.

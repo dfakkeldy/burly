@@ -172,6 +172,54 @@ struct GuardedWeightEditMachineTests {
         #expect(effect.haptics == [.weightEditLocked])
     }
 
+    @Test("A wall clock that jumps backwards cannot hold the arm open past 3 s")
+    func clockRollbackReAnchorsTheIdleWindow() {
+        let armedAt = Date(timeIntervalSince1970: 100)
+        let clock = ManualClock(armedAt)
+        let machine = makeMachine(clock: clock)
+        var state = WeightEditState(weight: Weight(kg: 60))
+        machine.handle(.longPressArm, &state)
+
+        // NTP drags the watch ten seconds into the past, so the arm is now
+        // stamped in the future. Naively subtracting would keep the weight
+        // editable for 13 s — the accidental-edit window §2 exists to close.
+        clock.set(armedAt.addingTimeInterval(-10))
+
+        #expect(machine.timeUntilAutoLock(state)! <= 3)
+
+        // The first evaluation re-anchors rather than locking: the lifter
+        // did just arm it, so the window restarts, it does not vanish.
+        #expect(machine.handle(.idleTick, &state).haptics.isEmpty)
+        #expect(state.lock == .armed)
+        #expect(machine.timeUntilAutoLock(state) == 3)
+
+        // …and the auto-lock then fires 3 *real* seconds later.
+        clock.set(armedAt.addingTimeInterval(-7))
+        #expect(machine.handle(.idleTick, &state).haptics == [.weightEditLocked])
+        #expect(state.lock == .locked)
+    }
+
+    @Test("A backwards clock cannot stop a late adjust from being refused either")
+    func clockRollbackStillExpiresWithoutTicks() {
+        let armedAt = Date(timeIntervalSince1970: 100)
+        let clock = ManualClock(armedAt)
+        let machine = makeMachine(clock: clock)
+        var state = WeightEditState(weight: Weight(kg: 60))
+        machine.handle(.longPressArm, &state)
+
+        // Rolled back, then 3 s of real time pass with no tick at all.
+        clock.set(armedAt.addingTimeInterval(-10))
+        machine.handle(.idleTick, &state)
+        clock.advance(3)
+
+        let effect = machine.handle(.adjust(steps: 4), &state)
+
+        #expect(state.lock == .locked)
+        #expect(state.weight.kg == 60)
+        #expect(effect.weightChanged == false)
+        #expect(effect.haptics == [.weightEditLocked])
+    }
+
     @Test("Logging the set auto-locks with a haptic and reports logsSet")
     func logSetLocks() {
         let clock = ManualClock()
