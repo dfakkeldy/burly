@@ -1,0 +1,229 @@
+name: Release
+
+# TAG-TRIGGERED ONLY. This job archives, signs, and uploads to App
+# Store Connect using GH Actions secrets (ASC_KEY_ID / ASC_ISSUER_ID /
+# ASC_PRIVATE_KEY). It must never run on pull_request -- a fork PR must
+# never be able to see or exfiltrate these secrets. The tag-only
+# trigger below already excludes pull_request, and the explicit
+# `if: github.event_name == 'push'` guard on the job is belt-and-braces
+# in case this workflow is ever copy/pasted into a file with a broader
+# `on:` block.
+on:
+  push:
+    tags:
+      - 'burly-m*'
+      - 'burly-rc*'
+      - 'v*'
+
+concurrency:
+  # Scoped to the ref (the tag) rather than the workflow, so pushing a
+  # second tag doesn't cancel an in-flight upload for a different tag.
+  # A duplicate push of the SAME tag (rare -- tags are meant to be
+  # immutable) is allowed to cancel-in-progress; re-running is safe
+  # because App Store Connect de-dupes by build number.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  testflight-upload:
+    name: Archive & upload to TestFlight
+    if: github.event_name == 'push'
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full history for tag annotation lookup
+
+      # Same pin as ci.yml, for the same reason and with the same
+      # fail-loud behavior if the runner image changes.
+      - name: Select Xcode 26.6
+        run: |
+          XCODE_PATH=/Applications/Xcode_26.6.app
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo "::error::Expected newest stable Xcode at $XCODE_PATH; available Xcodes follow"
+            find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
+      # Version numbering scheme (documented here, the only place it's
+      # decided):
+      #   MARKETING_VERSION comes from the tag name:
+      #     burly-m<N>        -> 0.<N+1>.0   (m0 -> 0.1.0, m1 -> 0.2.0, ...)
+      #     burly-rc<N>       -> 0.9.<N>     (RC candidates patch-bump off
+      #                                       the M8 baseline; bare
+      #                                       "burly-rc" == burly-rc1)
+      #     v<X.Y[.Z]>        -> X.Y[.Z]     (the release train's actual
+      #                                       App Store submission)
+      #   CURRENT_PROJECT_VERSION (the build number) is always
+      #   `github.run_number` -- monotonically increasing across every
+      #   workflow run in this repo, which satisfies App Store Connect's
+      #   "build number must increase" rule without any local state or
+      #   git-history parsing.
+      #   Both values are passed as xcodebuild command-line build
+      #   setting overrides (see Archive step) rather than edited into
+      #   the checked-out pbxproj, so the repo's committed baseline
+      #   (0.1.0 / build 1) never drifts from what a plain `git clone` +
+      #   local archive would produce.
+      - name: Resolve release version from tag
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          BUILD_NUMBER="${{ github.run_number }}"
+
+          if [[ "$TAG" =~ ^burly-m([0-9]+)$ ]]; then
+            MILESTONE="${BASH_REMATCH[1]}"
+            MARKETING_VERSION="0.$((MILESTONE + 1)).0"
+          elif [[ "$TAG" =~ ^burly-rc([0-9]+)?$ ]]; then
+            RC="${BASH_REMATCH[1]:-1}"
+            MARKETING_VERSION="0.9.${RC}"
+          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+(\.[0-9]+)?)$ ]]; then
+            MARKETING_VERSION="${BASH_REMATCH[1]}"
+          else
+            echo "::error::Tag '$TAG' does not match a known release pattern (burly-m<N>, burly-rc<N>, v<semver>)"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "marketing_version=$MARKETING_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Resolved $TAG -> MARKETING_VERSION=$MARKETING_VERSION CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+
+      # See Scripts/release-notes.sh for the full what's-new sourcing
+      # design. Short version: the dispatcher writes the milestone
+      # digest headline into the ANNOTATION of the tag it pushes; CI
+      # cannot reach the private planning repo, so the tag annotation is
+      # the only channel available at build time. This step just
+      # extracts it to a file/artifact/job-summary so the dispatcher's
+      # post-upload step (which sets TestFlight "What to Test" via
+      # asc-mcp once the build finishes processing) doesn't have to
+      # re-derive it later.
+      - name: Extract what's-new from tag annotation
+        id: whats-new
+        run: |
+          set -euo pipefail
+          Scripts/release-notes.sh "${{ steps.version.outputs.tag }}" | tee "$RUNNER_TEMP/whats-new.txt"
+          {
+            echo "## What's new (from tag annotation)"
+            echo '```'
+            cat "$RUNNER_TEMP/whats-new.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Written with a restrictive umask so the key is never
+      # world/group-readable even for the brief window it exists on
+      # disk, and removed unconditionally in the cleanup step below
+      # regardless of whether later steps succeed.
+      - name: Write App Store Connect API key
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "${{ secrets.ASC_PRIVATE_KEY }}" > "$RUNNER_TEMP/asc/asc.p8"
+
+      # Cloud signing: no certs, profiles, or keychains are provisioned
+      # on the runner. -allowProvisioningUpdates + the ASC API key let
+      # xcodebuild negotiate signing directly with the Apple Developer
+      # website for both the BurlyPhone and (as its embedded/paired
+      # dependency) BurlyWatch targets, which both use
+      # CODE_SIGN_STYLE = Automatic in the project.
+      - name: Archive BurlyPhone
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project Burly.xcodeproj \
+            -scheme BurlyPhone \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            MARKETING_VERSION="${{ steps.version.outputs.marketing_version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_number }}" \
+            | tee "$RUNNER_TEMP/archive.log"
+
+      # method "app-store-connect" + destination "upload" makes
+      # -exportArchive do the export AND the upload in one step -- this
+      # is the first-party replacement for the old `altool --upload-app`
+      # / fastlane pilot/deliver flow. Confirmed present in the Xcode
+      # 26.6 toolchain this workflow pins (xcrun --find altool and
+      # notarytool both resolve under the same Xcode 26.6 install used
+      # for local verification; -exportArchive's destination=upload key
+      # is part of xcodebuild itself, not a separate binary).
+      - name: Write export options
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+              <key>destination</key>
+              <string>upload</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+              <key>uploadSymbols</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Export & upload to App Store Connect
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            | tee "$RUNNER_TEMP/export.log"
+
+      # Belt-and-braces: runs even if archive/export failed above, and
+      # even though $RUNNER_TEMP itself is wiped at the end of the job
+      # regardless. The key must not survive to the next step's cache
+      # or to a debugging shell an operator might attach later in the
+      # same job.
+      - name: Remove ASC private key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc/asc.p8"
+
+      # Log tail only, and only the two xcodebuild logs -- never the
+      # exportOptions plist (no secrets in it) or anything under
+      # $RUNNER_TEMP/asc. GitHub Actions also masks the literal secret
+      # values anywhere they'd appear in logs, but the real key
+      # material (the .p8 file contents) is never printed by any step
+      # above -- only referenced by path.
+      - name: Prepare build log tail for upload
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/log-tail"
+          for f in archive export; do
+            if [[ -f "$RUNNER_TEMP/$f.log" ]]; then
+              tail -n 500 "$RUNNER_TEMP/$f.log" > "$RUNNER_TEMP/log-tail/$f.tail.log"
+            fi
+          done
+
+      - name: Upload build log tail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-build-log-${{ steps.version.outputs.tag }}-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/log-tail/*.tail.log
+            ${{ runner.temp }}/whats-new.txt
+          if-no-files-found: warn
+          retention-days: 30
