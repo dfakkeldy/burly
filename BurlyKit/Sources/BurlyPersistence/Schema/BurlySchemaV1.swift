@@ -9,6 +9,17 @@
 // targets get stores from `SwiftDataStore.phone`/`.watch`/`init(kind:at:)`
 // (public) instead — `BurlyContainer` itself is internal too (m1-04 review:
 // `ModelContainer` must never appear in a public signature of this module).
+//
+// **This enum owns its models.** Each one is declared in its own file under
+// Models/ as `extension BurlySchemaV1 { @Model final class … }`, so `models`
+// below resolves to *this version's* types rather than to shared top-level
+// classes a later version could edit out from under it (m1-06 review,
+// finding M3). Schema/CurrentSchema.swift carries the typealias block that
+// lets the rest of the module go on saying plain `Exercise`, and spells out
+// the v2 procedure.
+//
+// Once v1 ships, the declarations in Models/ are **frozen**: v2 gets its own
+// nested copies in its own file, and this file is never edited again.
 
 import Foundation
 import SwiftData
@@ -19,11 +30,12 @@ enum BurlySchemaV1: VersionedSchema {
     /// Every §1 entity, in spec order, plus two pieces of module-internal
     /// bookkeeping placed next to what they serve: the §9 seed-version
     /// metadata immediately after Exercise, and the in-flight session
-    /// journal immediately after Session. One schema serves both devices;
-    /// the phone/watch difference is *content* policy (which rows exist, and
-    /// the watch's post-ack pruning — §1 store shape, §5 outbox), not a
-    /// different entity set. Two schemas would mean two migration ladders
-    /// to keep in step for no gain.
+    /// journal immediately after Session. Unqualified because they are
+    /// members of this enum. One schema serves both devices; the phone/watch
+    /// difference is *content* policy (which rows exist, and the watch's
+    /// post-ack pruning — §1 store shape, §5 outbox), not a different entity
+    /// set. Two schemas would mean two migration ladders to keep in step for
+    /// no gain.
     static var models: [any PersistentModel.Type] {
         [
             Exercise.self,

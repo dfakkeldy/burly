@@ -10,6 +10,14 @@
 //   schemas → [BurlySchemaV1.self, BurlySchemaV2.self]
 //   stages  → [migrateV1toV2]        // .lightweight or .custom
 // Never reorder or remove an entry; the ladder is append-only.
+//
+// That append is only cheap because each version owns its model types —
+// v1's are declared inside `BurlySchemaV1`, so writing `BurlySchemaV2`
+// cannot change what v1 means. Schema/CurrentSchema.swift has the full v2
+// procedure; `MigrationPlanTests`' migration spike runs that procedure
+// against a v1 store file on disk, so "v2 is an append" is measured rather
+// than asserted. The spike's v2 lives in the test target only: this list
+// stays `[BurlySchemaV1]` with no stages until a real v2 ships.
 
 import Foundation
 import SwiftData
