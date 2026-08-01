@@ -47,3 +47,7 @@ fastlane/test_output
 iOSInjectionProject/
 
 .DS_Store
+
+# Acceptance script output (screenshots, .xcresult bundles) -- regenerated
+# by Scripts/acceptance-sim.sh on every run, never a source artifact.
+Scripts/output/
