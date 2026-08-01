@@ -1,0 +1,533 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5C4D02B0B27345809E2FBFD1 /* BurlyPhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E94F4B7B6FA4037A68BB744 /* BurlyPhoneApp.swift */; };
+		F8EE48CBF8C843AA97BE0128 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0597FDE626764989A1D8D4B8 /* ContentView.swift */; };
+		6F52ED6B92E84F5A91C21E41 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C51BD6EEF9104C888FE46F50 /* Assets.xcassets */; };
+		2CB27701E02A4C12AF71EFA0 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AAD12240990445278C58B1D9 /* Preview Assets.xcassets */; };
+		21394FE9483946108F6D713B /* BurlyWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB914BD26132469AA50A68C0 /* BurlyWatchApp.swift */; };
+		D982F5DFA53A44C4A6BE516A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF27525A87E947E58AE0661E /* ContentView.swift */; };
+		C4E96BE62F8E404DB6919BF7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FAD4CBAF4F7848EC9884D20B /* Assets.xcassets */; };
+		061C4452F20A4F59BE782222 /* BurlyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 061C4452F20A4F59BE782221 /* BurlyCore */; };
+		63F1411979294503B6FABF5D /* BurlyWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 9076CB9866A84E649B54AC73 /* BurlyWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E1DC942A929E4DB581077772 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ED730C4C49CC48408F83C169 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6D555DA0AF7E44BB8D2FB70A;
+			remoteInfo = "BurlyWatch Watch App";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		75A2CE20DB2A4B2AABB65AD6 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				63F1411979294503B6FABF5D /* BurlyWatch Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		173AA9D85E7E4AB4AE010F4C /* BurlyPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BurlyPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9E94F4B7B6FA4037A68BB744 /* BurlyPhoneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BurlyPhoneApp.swift; sourceTree = "<group>"; };
+		0597FDE626764989A1D8D4B8 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		C51BD6EEF9104C888FE46F50 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AAD12240990445278C58B1D9 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		9076CB9866A84E649B54AC73 /* BurlyWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BurlyWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB914BD26132469AA50A68C0 /* BurlyWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BurlyWatchApp.swift; sourceTree = "<group>"; };
+		DF27525A87E947E58AE0661E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		FAD4CBAF4F7848EC9884D20B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BC50E0F835F54B3CA6758C35 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				061C4452F20A4F59BE782222 /* BurlyCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CD6761757AAB49E09A7B40F8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		BC0BCA9D08A0466DB0D4538F = {
+			isa = PBXGroup;
+			children = (
+				61F526EB41F94E349855D0E1 /* BurlyPhone */,
+				0A50D17F708344B4802303F6 /* BurlyWatch Watch App */,
+				5600FABC32A54AE7A3508872 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5600FABC32A54AE7A3508872 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				173AA9D85E7E4AB4AE010F4C /* BurlyPhone.app */,
+				9076CB9866A84E649B54AC73 /* BurlyWatch Watch App.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		61F526EB41F94E349855D0E1 /* BurlyPhone */ = {
+			isa = PBXGroup;
+			children = (
+				9E94F4B7B6FA4037A68BB744 /* BurlyPhoneApp.swift */,
+				0597FDE626764989A1D8D4B8 /* ContentView.swift */,
+				C51BD6EEF9104C888FE46F50 /* Assets.xcassets */,
+				27C97A5861114CF784774D7E /* Preview Content */,
+			);
+			path = BurlyPhone;
+			sourceTree = "<group>";
+		};
+		27C97A5861114CF784774D7E /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				AAD12240990445278C58B1D9 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		0A50D17F708344B4802303F6 /* BurlyWatch Watch App */ = {
+			isa = PBXGroup;
+			children = (
+				AB914BD26132469AA50A68C0 /* BurlyWatchApp.swift */,
+				DF27525A87E947E58AE0661E /* ContentView.swift */,
+				FAD4CBAF4F7848EC9884D20B /* Assets.xcassets */,
+			);
+			path = "BurlyWatch Watch App";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		05D936D3032544E489BD9F4A /* BurlyPhone */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A5C30CA76FC4A749655C6BE /* Build configuration list for PBXNativeTarget "BurlyPhone" */;
+			buildPhases = (
+				FD84EAA688D14FCD9844F723 /* Sources */,
+				50F63893D9B94982BD5A00B6 /* Resources */,
+				BC50E0F835F54B3CA6758C35 /* Frameworks */,
+				75A2CE20DB2A4B2AABB65AD6 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				54A882C5D7AB42CA873E762D /* PBXTargetDependency */,
+			);
+			name = BurlyPhone;
+			packageProductDependencies = (
+				061C4452F20A4F59BE782221 /* BurlyCore */,
+			);
+			productName = BurlyPhone;
+			productReference = 173AA9D85E7E4AB4AE010F4C /* BurlyPhone.app */;
+			productType = "com.apple.product-type.application";
+		};
+		6D555DA0AF7E44BB8D2FB70A /* BurlyWatch Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C442654C667F45168A488982 /* Build configuration list for PBXNativeTarget "BurlyWatch Watch App" */;
+			buildPhases = (
+				0B3F7B0F4FAD4DB09C724319 /* Sources */,
+				83E7B2E57FBA4B5794507E60 /* Resources */,
+				CD6761757AAB49E09A7B40F8 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "BurlyWatch Watch App";
+			productName = "BurlyWatch Watch App";
+			productReference = 9076CB9866A84E649B54AC73 /* BurlyWatch Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		ED730C4C49CC48408F83C169 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1620;
+				LastUpgradeCheck = 1620;
+				TargetAttributes = {
+					05D936D3032544E489BD9F4A = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					6D555DA0AF7E44BB8D2FB70A = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = DD5F572A53424BE9A559D491 /* Build configuration list for PBXProject "Burly" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = BC0BCA9D08A0466DB0D4538F;
+			packageReferences = (
+				C3A9574127B749D08F525FAD /* XCLocalSwiftPackageReference "BurlyKit" */,
+			);
+			productRefGroup = 5600FABC32A54AE7A3508872 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				05D936D3032544E489BD9F4A /* BurlyPhone */,
+				6D555DA0AF7E44BB8D2FB70A /* BurlyWatch Watch App */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		50F63893D9B94982BD5A00B6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2CB27701E02A4C12AF71EFA0 /* Preview Assets.xcassets in Resources */,
+				6F52ED6B92E84F5A91C21E41 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		83E7B2E57FBA4B5794507E60 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C4E96BE62F8E404DB6919BF7 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FD84EAA688D14FCD9844F723 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F8EE48CBF8C843AA97BE0128 /* ContentView.swift in Sources */,
+				5C4D02B0B27345809E2FBFD1 /* BurlyPhoneApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0B3F7B0F4FAD4DB09C724319 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D982F5DFA53A44C4A6BE516A /* ContentView.swift in Sources */,
+				21394FE9483946108F6D713B /* BurlyWatchApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		54A882C5D7AB42CA873E762D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6D555DA0AF7E44BB8D2FB70A /* BurlyWatch Watch App */;
+			targetProxy = E1DC942A929E4DB581077772 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		328733598C7B4385BE2B4794 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		706DE3B101D849B18D7D460E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6C8277B39E7441489CC433DA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"BurlyPhone/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.burly.lifting;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		54DEB7DFD9DA49C39CED451F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"BurlyPhone/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.burly.lifting;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		12060268F24C4F65A27B4B00 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.burly.lifting;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.burly.lifting.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		27F39F2A75374E67B45E09EE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.burly.lifting;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.burly.lifting.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		DD5F572A53424BE9A559D491 /* Build configuration list for PBXProject "Burly" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				328733598C7B4385BE2B4794 /* Debug */,
+				706DE3B101D849B18D7D460E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A5C30CA76FC4A749655C6BE /* Build configuration list for PBXNativeTarget "BurlyPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6C8277B39E7441489CC433DA /* Debug */,
+				54DEB7DFD9DA49C39CED451F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C442654C667F45168A488982 /* Build configuration list for PBXNativeTarget "BurlyWatch Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				12060268F24C4F65A27B4B00 /* Debug */,
+				27F39F2A75374E67B45E09EE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		C3A9574127B749D08F525FAD /* XCLocalSwiftPackageReference "BurlyKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = BurlyKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		061C4452F20A4F59BE782221 /* BurlyCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BurlyCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = ED730C4C49CC48408F83C169 /* Project object */;
+}
