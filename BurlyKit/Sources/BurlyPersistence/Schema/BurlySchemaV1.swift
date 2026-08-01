@@ -6,7 +6,9 @@
 //
 // Internal, not public: `models` is an array of the module-internal `@Model`
 // classes, and nothing outside BurlyPersistence needs the schema. App
-// targets get containers from `BurlyContainer` (public) instead.
+// targets get stores from `SwiftDataStore.phone`/`.watch`/`init(kind:at:)`
+// (public) instead — `BurlyContainer` itself is internal too (m1-04 review:
+// `ModelContainer` must never appear in a public signature of this module).
 
 import Foundation
 import SwiftData

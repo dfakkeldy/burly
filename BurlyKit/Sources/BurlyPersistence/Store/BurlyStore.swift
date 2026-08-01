@@ -51,17 +51,40 @@ public protocol BurlyStore: AnyObject {
     /// or `.missingExercise` if an item names an exercise that isn't stored.
     func createRoutine(_ routine: RoutineData) throws
     func routine(id: UUID) throws -> RoutineData?
-    /// Sorted by `orderIndex` (the user's manual order, §9).
+    /// Sorted by `orderIndex` (the user's manual order, §9), then by `id`
+    /// to make the order deterministic when two routines tie on
+    /// `orderIndex`. Ties are permitted: the store does not enforce
+    /// uniqueness on `orderIndex`, and reindexing peers when one routine's
+    /// index changes — closing gaps, making room for an insert — is caller
+    /// policy (see `updateRoutine`), not something this method or
+    /// `updateRoutine` does on the store's own initiative.
     func routines(includingArchived: Bool) throws -> [RoutineData]
+    /// Also bumps `updatedAt` to `date` — archiving is a mutation of the
+    /// stored routine like any other, so it takes the same store-maintained-
+    /// metadata treatment `updateRoutine` does (m1-04 review).
     func archiveRoutine(id: UUID, at date: Date) throws
     /// Cascades to RoutineItems only. Exercises and past Sessions survive.
     func deleteRoutine(id: UUID) throws
-    /// Overwrites `name`, `orderIndex`, `items`, and `updatedAt` — the
-    /// §6/§9 edit path (rename, drag-reorder the routine list via
-    /// `orderIndex`, add/remove/reorder `RoutineItem`s). Items are replaced
-    /// wholesale rather than merged by id: they carry no identity anything
-    /// else references (§1: only `Exercise` is referenced across time), so
-    /// a full replace is simpler and no less correct than a diff.
+    /// Overwrites `name`, `orderIndex`, and `items` — the §6/§9 edit path
+    /// (rename, drag-reorder the routine list via `orderIndex`,
+    /// add/remove/reorder `RoutineItem`s). Items are replaced wholesale
+    /// rather than merged by id: they carry no identity anything else
+    /// references (§1: only `Exercise` is referenced across time), so a
+    /// full replace is simpler and no less correct than a diff.
+    ///
+    /// `orderIndex` may collide with another stored routine's — that's
+    /// permitted (see `routines(includingArchived:)`). This method reindexes
+    /// nothing beyond the one routine named: if a caller means "insert at
+    /// position 2, shift everything after it," walking and rewriting the
+    /// peers' `orderIndex` values is the caller's job, one `updateRoutine`
+    /// call per routine touched. The store has no concept of "the whole
+    /// list's order" to rebalance on its own.
+    ///
+    /// `updatedAt` is store-maintained (m1-04 review): the stored value is
+    /// set from the store's own clock at the moment of the call, never
+    /// copied from `routine.updatedAt` — a caller cannot backdate or
+    /// postdate an edit by handing the store a DTO with a stale or
+    /// forged timestamp.
     ///
     /// Deliberately does not touch `archivedAt` — archive state is
     /// `archiveRoutine`'s alone, so an edit can never accidentally

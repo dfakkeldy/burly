@@ -20,15 +20,20 @@ public final class SwiftDataStore: BurlyStore {
     /// Which device this store belongs to (§1 store shape: phone vs. watch
     /// content differ). Inferred from the container's configuration name
     /// rather than threaded through as a separate stored argument, so every
-    /// construction path — the `kind:` convenience initializer below, or a
-    /// bare `container:` built via `BurlyContainer.phone`/`.watch`/`.make`
-    /// — reports the same, correct kind without callers having to repeat it.
-    /// `nil` only when the container's configuration name doesn't match a
-    /// known `BurlyStoreKind` (e.g. a container assembled by hand, bypassing
-    /// `BurlyContainer`); treated as "not watch" by kind-gated operations.
+    /// construction path — `.phone(at:)`, `.watch(at:)`, the `kind:`
+    /// convenience initializer, or the internal `container:` initializer
+    /// tests reach via `@testable` — reports the same, correct kind without
+    /// callers having to repeat it. `nil` only when the container's
+    /// configuration name doesn't match a known `BurlyStoreKind` (e.g. a
+    /// container assembled by hand, bypassing `BurlyContainer`); treated as
+    /// "not watch" by kind-gated operations.
     private let kind: BurlyStoreKind?
 
-    public init(container: ModelContainer) {
+    /// Internal — see BurlyContainer.swift's boundary doc: `ModelContainer`
+    /// must never appear in a public signature of this module. Construct a
+    /// store publicly through `.phone(at:)` / `.watch(at:)` /
+    /// `init(kind:at:)` instead.
+    init(container: ModelContainer) {
         self.context = ModelContext(container)
         self.context.autosaveEnabled = false
         let configuredName = container.configurations.first?.name
@@ -40,6 +45,23 @@ public final class SwiftDataStore: BurlyStore {
         at location: BurlyStoreLocation = .applicationDefault
     ) throws {
         self.init(container: try BurlyContainer.make(kind, at: location))
+    }
+
+    /// Phone store: full history (§1 store shape). The public counterpart
+    /// of the old (now-internal) `BurlyContainer.phone` — this and
+    /// `.watch(at:)` are the two named, device-shaped entry points; use
+    /// `init(kind:at:)` directly only when the kind is a runtime value.
+    public static func phone(
+        at location: BurlyStoreLocation = .applicationDefault
+    ) throws -> SwiftDataStore {
+        try SwiftDataStore(kind: .phone, at: location)
+    }
+
+    /// Watch store: working set only (§1 store shape). See `.phone(at:)`.
+    public static func watch(
+        at location: BurlyStoreLocation = .applicationDefault
+    ) throws -> SwiftDataStore {
+        try SwiftDataStore(kind: .watch, at: location)
     }
 
     // MARK: - Exercises
@@ -126,8 +148,19 @@ public final class SwiftDataStore: BurlyStore {
         let all = try context.fetch(
             FetchDescriptor<Routine>(sortBy: [SortDescriptor(\.orderIndex)])
         )
+        // `orderIndex` ties are permitted (see the protocol doc on
+        // `updateRoutine`) and `SortDescriptor` alone doesn't promise a
+        // stable order across them. Break ties on `id` — compared as a
+        // string, since `UUID` isn't `Comparable` — so the fetch order is
+        // fully deterministic instead of merely "whatever SwiftData or
+        // Swift's sort happened to leave it as."
         return all
             .filter { includingArchived || $0.archivedAt == nil }
+            .sorted { lhs, rhs in
+                lhs.orderIndex != rhs.orderIndex
+                    ? lhs.orderIndex < rhs.orderIndex
+                    : lhs.id.uuidString < rhs.id.uuidString
+            }
             .map { $0.snapshot() }
     }
 
@@ -136,6 +169,11 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.notFound(id)
         }
         routine.archivedAt = date
+        // Store-maintained mutation metadata (m1-04 review): archiving is a
+        // mutation of the stored routine, so it bumps `updatedAt` too — the
+        // same `date` already given for `archivedAt`, not a second,
+        // independently-sourced clock reading for the same event.
+        routine.updatedAt = date
         try context.save()
     }
 
@@ -159,7 +197,12 @@ public final class SwiftDataStore: BurlyStore {
 
         stored.name = routine.name
         stored.orderIndex = routine.orderIndex
-        stored.updatedAt = routine.updatedAt
+        // Store-maintained mutation metadata (m1-04 review): `updatedAt` is
+        // set from the store's own clock, not copied from `routine.updatedAt`
+        // — a caller (or a stale round-tripped DTO) cannot claim an edit
+        // happened earlier or later than it actually did. See the protocol
+        // doc on `updateRoutine`.
+        stored.updatedAt = Date()
         // `archivedAt` is deliberately not assigned here — see the
         // protocol doc on `updateRoutine`.
 

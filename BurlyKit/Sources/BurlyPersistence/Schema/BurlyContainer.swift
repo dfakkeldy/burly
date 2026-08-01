@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Container factories — the only public way to obtain a Burly ModelContainer.
+// Container factories — module-internal. `ModelContainer` exposes a public
+// `.erase()` (and `.deleteAllData()`), a bulk hard-delete that bypasses
+// `BurlyStore` entirely — the same class of bypass §1 acceptance #3 already
+// forbids for a single Exercise ("impossible via the store API surface").
+// If these factories were `public`, any caller could reach past the store
+// and wipe everything in one call. So: **`ModelContainer` must never appear
+// in a public signature of this module.** `BurlyContainer` stays internal;
+// the public store-construction surface is `SwiftDataStore.phone(at:)` /
+// `.watch(at:)` / `.init(kind:at:)` (Store/SwiftDataStore.swift), none of
+// which name `ModelContainer`. See Tests/BurlyPersistenceTests/
+// ContainerBoundaryTests.swift for the test that pins this from outside
+// the module (plain `import BurlyPersistence`, no `@testable`, no
+// `import SwiftData`).
 //
 // Both device configurations are built through `BurlyMigrationPlan`
 // (§1 acceptance #5). They share one `BurlySchemaV1`; what differs is the
@@ -37,15 +49,19 @@ public enum BurlyStoreLocation: Sendable {
     case inMemory
 }
 
+/// Public: thrown across the store-level factories (`SwiftDataStore.phone`/
+/// `.watch`/`.init(kind:at:)`), so callers need to be able to name and
+/// compare it even though `BurlyContainer` itself is internal.
 public enum BurlyContainerError: Error, Equatable {
     /// Application Support was unavailable or the Burly subdirectory could
     /// not be created.
     case defaultStoreDirectoryUnavailable
 }
 
-public enum BurlyContainer {
+/// Internal — see the file doc above for why this can never be `public`.
+enum BurlyContainer {
     /// Phone container: full history (§1 store shape).
-    public static func phone(
+    static func phone(
         at location: BurlyStoreLocation = .applicationDefault
     ) throws -> ModelContainer {
         try make(.phone, at: location)
@@ -55,13 +71,13 @@ public enum BurlyContainer {
     /// are `.active` or awaiting a sync ack, and the last-performance
     /// digests (§1 store shape). The entity set is the same; the watch's
     /// sync layer is what keeps it small.
-    public static func watch(
+    static func watch(
         at location: BurlyStoreLocation = .applicationDefault
     ) throws -> ModelContainer {
         try make(.watch, at: location)
     }
 
-    public static func make(
+    static func make(
         _ kind: BurlyStoreKind,
         at location: BurlyStoreLocation = .applicationDefault
     ) throws -> ModelContainer {

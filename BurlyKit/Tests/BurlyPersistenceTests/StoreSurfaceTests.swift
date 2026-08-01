@@ -25,8 +25,8 @@ struct StoreSurfaceTests {
 
     // MARK: - updateRoutine
 
-    @Test("updateRoutine persists a rename, an orderIndex change, and a bumped updatedAt")
-    func updateRoutineRenamesReordersAndBumpsUpdatedAt() throws {
+    @Test("updateRoutine persists a rename and an orderIndex change; the STORE sets updatedAt, not the caller's DTO")
+    func updateRoutineRenamesReordersAndStoreSetsUpdatedAt() throws {
         let store = try makeStore()
         let bench = Fixture.exercise(name: "Bench Press")
         var routine = Fixture.routine(name: "Push A", orderIndex: 0, over: [bench])
@@ -35,13 +35,23 @@ struct StoreSurfaceTests {
 
         routine.name = "Push A (renamed)"
         routine.orderIndex = 2
-        routine.updatedAt = Fixture.epoch.addingTimeInterval(3_600)
+        // A deliberately stale timestamp in the DTO — if the store trusted
+        // this instead of maintaining `updatedAt` itself, the reloaded value
+        // would come back stuck in the distant past.
+        routine.updatedAt = .distantPast
+
+        let before = Date()
         try store.updateRoutine(routine)
+        let after = Date()
 
         let reloaded = try #require(try store.routine(id: routine.id))
         #expect(reloaded.name == "Push A (renamed)")
         #expect(reloaded.orderIndex == 2)
-        #expect(reloaded.updatedAt == Fixture.epoch.addingTimeInterval(3_600))
+        // Proves STORE maintenance, not a pass-through of the stale DTO
+        // value: the stored `updatedAt` is newer than the stale input and
+        // falls within the wall-clock window the call actually ran in.
+        #expect(reloaded.updatedAt > routine.updatedAt)
+        #expect(reloaded.updatedAt >= before && reloaded.updatedAt <= after)
     }
 
     @Test("updateRoutine persists a reordered/replaced item list, disk-backed across a cold reopen")
@@ -68,7 +78,9 @@ struct StoreSurfaceTests {
                 RoutineItemData(exerciseID: bench.id, order: 1),
                 RoutineItemData(exerciseID: curl.id, order: 2)
             ]
-            edited.updatedAt = Fixture.epoch.addingTimeInterval(120)
+            // A stale DTO timestamp, same rationale as the in-memory test
+            // above: the store must not carry this through to disk.
+            edited.updatedAt = .distantPast
             try store.updateRoutine(edited)
         }
 
@@ -76,7 +88,9 @@ struct StoreSurfaceTests {
         let reloaded = try #require(try reopened.routine(id: routine.id))
         #expect(reloaded.items.map(\.exerciseID) == [row.id, bench.id, curl.id])
         #expect(reloaded.items.map(\.order) == [0, 1, 2])
-        #expect(reloaded.updatedAt == Fixture.epoch.addingTimeInterval(120))
+        // The store-maintained `updatedAt` survives the cold reopen and is
+        // not the stale value the DTO carried.
+        #expect(reloaded.updatedAt > .distantPast)
 
         // The old RoutineItem rows were genuinely replaced, not merely
         // appended to — three items in, three items out, no leftovers.
