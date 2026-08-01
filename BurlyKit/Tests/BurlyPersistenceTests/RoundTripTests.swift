@@ -135,6 +135,54 @@ struct RoundTripTests {
         #expect(try store.session(id: session.id) == session)
     }
 
+    @Test("archived Exercise and Routine survive a cold reload with archivedAt intact, still excluded from default lists, still fetchable by id")
+    func archivedEntitiesSurviveColdLoad() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let bench = Fixture.exercise(name: "Bench Press")
+        let live = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
+        let routine = Fixture.routine(name: "Old Push A", over: [bench])
+        let session = Fixture.session(from: routine)
+        let itemID = try #require(session.items.first?.id)
+
+        let exerciseArchivedAt = Fixture.epoch.addingTimeInterval(60)
+        let routineArchivedAt = Fixture.epoch.addingTimeInterval(120)
+
+        do {
+            let store = try SwiftDataStore(kind: .phone, at: .file(url))
+            try store.createExercise(bench)
+            try store.createExercise(live)
+            try store.createRoutine(routine)
+            try store.createSession(session)
+            try store.logSet(
+                SetRecordData(order: 0, weight: Weight(kg: 60), reps: 8, completedAt: Fixture.epoch),
+                toSessionItem: itemID
+            )
+            try store.archiveExercise(id: bench.id, at: exerciseArchivedAt)
+            try store.archiveRoutine(id: routine.id, at: routineArchivedAt)
+        }
+
+        let reloaded = try SwiftDataStore(kind: .phone, at: .file(url))
+
+        // Archived, but not gone: fetchable by id with archivedAt intact.
+        #expect(try reloaded.exercise(id: bench.id)?.archivedAt == exerciseArchivedAt)
+        #expect(try reloaded.routine(id: routine.id)?.archivedAt == routineArchivedAt)
+
+        // Excluded from the default (picker) lists, present with includingArchived.
+        #expect(try reloaded.exercises(includingArchived: false).map(\.id) == [live.id])
+        #expect(try reloaded.exercises(includingArchived: true).map(\.id).sorted() == [bench.id, live.id].sorted())
+        #expect(try reloaded.routines(includingArchived: false).isEmpty)
+        #expect(try reloaded.routines(includingArchived: true).map(\.id) == [routine.id])
+
+        // History through the archived exercise/routine is untouched.
+        let stored = try #require(try reloaded.session(id: session.id))
+        #expect(stored.routineID == routine.id)
+        #expect(stored.routineName == routine.name)
+        #expect(stored.items[0].exerciseID == bench.id)
+        #expect(stored.items[0].sets.count == 1)
+    }
+
     @Test("§1 #4 — a weight entered in pounds is stored as kg and reads back as kg")
     func poundsNeverReachTheStore() throws {
         let url = try makeTemporaryStoreURL()

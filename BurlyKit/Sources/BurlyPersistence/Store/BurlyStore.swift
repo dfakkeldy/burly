@@ -56,6 +56,21 @@ public protocol BurlyStore: AnyObject {
     func archiveRoutine(id: UUID, at date: Date) throws
     /// Cascades to RoutineItems only. Exercises and past Sessions survive.
     func deleteRoutine(id: UUID) throws
+    /// Overwrites `name`, `orderIndex`, `items`, and `updatedAt` — the
+    /// §6/§9 edit path (rename, drag-reorder the routine list via
+    /// `orderIndex`, add/remove/reorder `RoutineItem`s). Items are replaced
+    /// wholesale rather than merged by id: they carry no identity anything
+    /// else references (§1: only `Exercise` is referenced across time), so
+    /// a full replace is simpler and no less correct than a diff.
+    ///
+    /// Deliberately does not touch `archivedAt` — archive state is
+    /// `archiveRoutine`'s alone, so an edit can never accidentally
+    /// un-archive (or archive) a routine as a side effect. Throws
+    /// `.notFound` if `routine.id` isn't stored, or `.missingExercise` if
+    /// an item names an exercise that isn't stored — validated before any
+    /// row is touched, so a rejected update leaves the stored routine
+    /// exactly as it was.
+    func updateRoutine(_ routine: RoutineData) throws
 
     // MARK: - Sessions
 
@@ -65,6 +80,13 @@ public protocol BurlyStore: AnyObject {
     func session(id: UUID) throws -> SessionData?
     /// Reverse-chronological by `startedAt` (§6 history surface).
     func sessions() throws -> [SessionData]
+    /// Sessions in `state`, reverse-chronological like `sessions()`. A
+    /// plain read available on either store kind — unlike
+    /// `loggedSessionsAwaitingAck` below, this carries no watch-only ack
+    /// framing. §2's relaunch-into-Resume path (find the `.active`
+    /// session) and §7's stats (all `.logged` sessions) both want a bare
+    /// state filter.
+    func sessions(state: SessionState) throws -> [SessionData]
     /// The §2 hot path: one set, written and saved immediately at tap time
     /// (architecture doc's crash-recovery layer 1).
     func logSet(_ set: SetRecordData, toSessionItem sessionItemID: UUID) throws

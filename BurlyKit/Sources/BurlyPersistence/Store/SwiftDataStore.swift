@@ -147,6 +147,43 @@ public final class SwiftDataStore: BurlyStore {
         try context.save()
     }
 
+    public func updateRoutine(_ routine: RoutineData) throws {
+        guard let stored = try model(Routine.self, id: routine.id) else {
+            throw BurlyStoreError.notFound(routine.id)
+        }
+
+        // Resolve every item's exercise reference before mutating anything:
+        // a rejected update must leave the stored routine untouched, not
+        // half-replaced with its old items already deleted.
+        let resolved = try routine.items.map { try resolveExercise($0.exerciseID) }
+
+        stored.name = routine.name
+        stored.orderIndex = routine.orderIndex
+        stored.updatedAt = routine.updatedAt
+        // `archivedAt` is deliberately not assigned here — see the
+        // protocol doc on `updateRoutine`.
+
+        for item in stored.items {
+            context.delete(item)
+        }
+        stored.items.removeAll()
+
+        for (item, exercise) in zip(routine.items, resolved) {
+            let storedItem = RoutineItem(
+                id: item.id,
+                exercise: exercise,
+                order: item.order,
+                defaultSetCount: item.defaultSetCount,
+                restOverride: item.restOverride,
+                note: item.note
+            )
+            context.insert(storedItem)
+            stored.items.append(storedItem)
+        }
+
+        try context.save()
+    }
+
     // MARK: - Sessions
 
     public func createSession(_ session: SessionData) throws {
@@ -197,6 +234,19 @@ public final class SwiftDataStore: BurlyStore {
                 sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
             )
         )
+        .map { $0.snapshot() }
+    }
+
+    public func sessions(state: SessionState) throws -> [SessionData] {
+        // Filtering in Swift, not in the predicate: same rationale as
+        // `loggedSessionsAwaitingAck` — enum equality in `#Predicate` is a
+        // well-known SwiftData sharp edge, and history is small (§ arch).
+        try context.fetch(
+            FetchDescriptor<Session>(
+                sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+            )
+        )
+        .filter { $0.state == state }
         .map { $0.snapshot() }
     }
 

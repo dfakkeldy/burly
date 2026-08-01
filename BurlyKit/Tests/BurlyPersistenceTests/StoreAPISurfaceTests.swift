@@ -224,6 +224,65 @@ struct StoreAPISurfaceTests {
         #expect(try store.sessions().map(\.id) == [newer.id, older.id])
     }
 
+    @Test("an already-archived exercise can still be referenced by a brand-new routine — archival hides pickers, it doesn't quarantine the exercise")
+    func archivedExerciseCanStillBeReferencedByANewRoutine() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        try store.createExercise(bench)
+        try store.archiveExercise(id: bench.id, at: Fixture.epoch)
+
+        // A Hevy-import or a routine built from history can still name an
+        // archived exercise — history integrity is about the past, and
+        // archival only hides the exercise from *pickers* (§1).
+        let routine = Fixture.routine(name: "Legacy day", over: [bench])
+        try store.createRoutine(routine)
+        #expect(try store.routine(id: routine.id)?.items.first?.exerciseID == bench.id)
+
+        let session = Fixture.session(from: routine)
+        let itemID = try #require(session.items.first?.id)
+        try store.createSession(session)
+        try store.logSet(
+            SetRecordData(order: 0, weight: Weight(kg: 60), reps: 10, completedAt: Fixture.epoch),
+            toSessionItem: itemID
+        )
+
+        let stored = try #require(try store.session(id: session.id))
+        #expect(stored.items[0].exerciseID == bench.id)
+        #expect(stored.items[0].sets.count == 1)
+        // Still archived, still hidden from the default picker.
+        #expect(try store.exercises(includingArchived: false).isEmpty)
+    }
+
+    @Test("logSet keeps working on a session item whose exercise is archived mid-session")
+    func logSetStillWorksAfterItsExerciseIsArchivedMidSession() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        let routine = Fixture.routine(over: [bench])
+        let session = Fixture.session(from: routine)
+        let itemID = try #require(session.items.first?.id)
+
+        try store.createExercise(bench)
+        try store.createRoutine(routine)
+        try store.createSession(session)
+        try store.logSet(
+            SetRecordData(order: 0, weight: Weight(kg: 60), reps: 10, completedAt: Fixture.epoch),
+            toSessionItem: itemID
+        )
+
+        // Archived between the first and second set — e.g. the phone
+        // archived the exercise mid-sync while the watch session runs on.
+        try store.archiveExercise(id: bench.id, at: Fixture.epoch.addingTimeInterval(60))
+
+        try store.logSet(
+            SetRecordData(order: 1, weight: Weight(kg: 62.5), reps: 8, completedAt: Fixture.epoch.addingTimeInterval(120)),
+            toSessionItem: itemID
+        )
+
+        let stored = try #require(try store.session(id: session.id))
+        #expect(stored.items[0].sets.count == 2)
+        #expect(stored.items[0].exerciseID == bench.id)
+    }
+
     @Test("a 0 kg set is the bodyweight convention, stored and read back as 0")
     func bodyweightIsZeroKilograms() throws {
         let store = try makeStore()
