@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import SwiftUI
+import BurlyCore
 
 struct ContentView: View {
     var body: some View {
@@ -9,6 +11,9 @@ struct ContentView: View {
                 .font(.headline)
         }
         .padding()
+        .onAppear {
+            _ = BurlyCore.placeholder
+        }
     }
 }
 

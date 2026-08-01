@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // BurlyCore
 // Pure Swift domain layer for Burly. No framework imports.
 

@@ -33,7 +33,6 @@ playground.xcworkspace
 .swiftpm/
 Packages/
 Package.pins
-Package.resolved
 
 # CocoaPods
 Pods/
