@@ -4,10 +4,10 @@
 //
 // ## Layout
 //
-// - `Models/` — the seven `@Model` final classes for §1's entities. All
-//   **internal**: `@Model` classes are not Sendable and must not cross a
-//   module or actor boundary. `BurlyCore`'s `…Data` value types are what
-//   callers see.
+// - `Models/` — the seven `@Model` final classes for §1's entities plus the
+//   §9 catalog seed-version metadata model. All **internal**: `@Model`
+//   classes are not Sendable and must not cross a module or actor boundary.
+//   `BurlyCore`'s `…Data` value types are what callers see.
 // - `Schema/` — `BurlySchemaV1` (`VersionedSchema`), `BurlyMigrationPlan`
 //   (`SchemaMigrationPlan`, empty at v1), and `BurlyContainer`, the
 //   module-internal factory every container is built through, so v2 is an

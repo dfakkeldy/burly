@@ -24,7 +24,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "BurlyCore"
+            name: "BurlyCore",
+            resources: [
+                .process("Resources/catalog-seed-v1.json")
+            ]
         ),
         .target(
             name: "BurlyPersistence",

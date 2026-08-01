@@ -1,0 +1,955 @@
+{
+  "seedVersion": 1,
+  "exercises": [
+    {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "name": "Barbell Bench Press",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000002",
+      "name": "Dumbbell Bench Press",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000003",
+      "name": "Incline Barbell Bench Press",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000004",
+      "name": "Incline Dumbbell Bench Press",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000005",
+      "name": "Decline Barbell Bench Press",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000006",
+      "name": "Chest Dip",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000007",
+      "name": "Dumbbell Fly",
+      "muscleGroups": [
+        "chest"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000008",
+      "name": "Cable Crossover",
+      "muscleGroups": [
+        "chest"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000009",
+      "name": "Push-Up",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000010",
+      "name": "Machine Chest Press",
+      "muscleGroups": [
+        "chest",
+        "triceps",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000011",
+      "name": "Pec Deck",
+      "muscleGroups": [
+        "chest"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000012",
+      "name": "Close-Grip Push-Up",
+      "muscleGroups": [
+        "triceps",
+        "chest",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000013",
+      "name": "Barbell Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000014",
+      "name": "Pendlay Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000015",
+      "name": "Chest-Supported Dumbbell Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000016",
+      "name": "Seated Cable Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000017",
+      "name": "T-Bar Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000018",
+      "name": "Inverted Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000019",
+      "name": "One-Arm Dumbbell Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000020",
+      "name": "Machine Row",
+      "muscleGroups": [
+        "upperBack",
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000021",
+      "name": "Face Pull",
+      "muscleGroups": [
+        "upperBack",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000022",
+      "name": "Reverse Dumbbell Fly",
+      "muscleGroups": [
+        "upperBack",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000023",
+      "name": "Pull-Up",
+      "muscleGroups": [
+        "lats",
+        "biceps",
+        "upperBack"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000024",
+      "name": "Chin-Up",
+      "muscleGroups": [
+        "lats",
+        "biceps",
+        "upperBack"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000025",
+      "name": "Lat Pulldown",
+      "muscleGroups": [
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000026",
+      "name": "Neutral-Grip Pulldown",
+      "muscleGroups": [
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000027",
+      "name": "Straight-Arm Pulldown",
+      "muscleGroups": [
+        "lats",
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000028",
+      "name": "Kneeling One-Arm Pulldown",
+      "muscleGroups": [
+        "lats",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000029",
+      "name": "Barbell Overhead Press",
+      "muscleGroups": [
+        "shoulders",
+        "triceps",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000030",
+      "name": "Dumbbell Shoulder Press",
+      "muscleGroups": [
+        "shoulders",
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000031",
+      "name": "Arnold Press",
+      "muscleGroups": [
+        "shoulders",
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000032",
+      "name": "Push Press",
+      "muscleGroups": [
+        "shoulders",
+        "triceps",
+        "quads",
+        "glutes",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000033",
+      "name": "Landmine Press",
+      "muscleGroups": [
+        "shoulders",
+        "chest",
+        "triceps",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000034",
+      "name": "Dumbbell Lateral Raise",
+      "muscleGroups": [
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000035",
+      "name": "Cable Lateral Raise",
+      "muscleGroups": [
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000036",
+      "name": "Machine Lateral Raise",
+      "muscleGroups": [
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000037",
+      "name": "Upright Row",
+      "muscleGroups": [
+        "shoulders",
+        "upperBack",
+        "biceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000038",
+      "name": "Rear Delt Cable Fly",
+      "muscleGroups": [
+        "shoulders",
+        "upperBack"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000039",
+      "name": "Barbell Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000040",
+      "name": "Dumbbell Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000041",
+      "name": "Hammer Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000042",
+      "name": "Incline Dumbbell Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000043",
+      "name": "Preacher Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000044",
+      "name": "Cable Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000045",
+      "name": "Concentration Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000046",
+      "name": "Reverse Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000047",
+      "name": "EZ-Bar Skull Crusher",
+      "muscleGroups": [
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000048",
+      "name": "Cable Triceps Pushdown",
+      "muscleGroups": [
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000049",
+      "name": "Overhead Cable Triceps Extension",
+      "muscleGroups": [
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000050",
+      "name": "Dumbbell Triceps Extension",
+      "muscleGroups": [
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000051",
+      "name": "Close-Grip Bench Press",
+      "muscleGroups": [
+        "triceps",
+        "chest",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000052",
+      "name": "Bench Dip",
+      "muscleGroups": [
+        "triceps",
+        "chest",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000053",
+      "name": "JM Press",
+      "muscleGroups": [
+        "triceps",
+        "chest",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000054",
+      "name": "Triceps Kickback",
+      "muscleGroups": [
+        "triceps"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000055",
+      "name": "Wrist Curl",
+      "muscleGroups": [
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000056",
+      "name": "Reverse Wrist Curl",
+      "muscleGroups": [
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000057",
+      "name": "Farmer's Carry",
+      "muscleGroups": [
+        "forearms",
+        "upperBack",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000058",
+      "name": "Plate Pinch",
+      "muscleGroups": [
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000059",
+      "name": "Dead Hang",
+      "muscleGroups": [
+        "forearms",
+        "lats"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000060",
+      "name": "Wrist Roller",
+      "muscleGroups": [
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000061",
+      "name": "Zottman Curl",
+      "muscleGroups": [
+        "biceps",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000062",
+      "name": "Towel Pull-Up",
+      "muscleGroups": [
+        "lats",
+        "biceps",
+        "forearms",
+        "upperBack"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000063",
+      "name": "Back Squat",
+      "muscleGroups": [
+        "quads",
+        "glutes",
+        "hamstrings",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000064",
+      "name": "Front Squat",
+      "muscleGroups": [
+        "quads",
+        "glutes",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000065",
+      "name": "Goblet Squat",
+      "muscleGroups": [
+        "quads",
+        "glutes",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000066",
+      "name": "Hack Squat",
+      "muscleGroups": [
+        "quads",
+        "glutes"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000067",
+      "name": "Leg Press",
+      "muscleGroups": [
+        "quads",
+        "glutes"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000068",
+      "name": "Bulgarian Split Squat",
+      "muscleGroups": [
+        "quads",
+        "glutes",
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000069",
+      "name": "Walking Lunge",
+      "muscleGroups": [
+        "quads",
+        "glutes",
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000070",
+      "name": "Step-Up",
+      "muscleGroups": [
+        "quads",
+        "glutes",
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000071",
+      "name": "Leg Extension",
+      "muscleGroups": [
+        "quads"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000072",
+      "name": "Sissy Squat",
+      "muscleGroups": [
+        "quads"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000073",
+      "name": "Romanian Deadlift",
+      "muscleGroups": [
+        "hamstrings",
+        "glutes",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000074",
+      "name": "Conventional Deadlift",
+      "muscleGroups": [
+        "hamstrings",
+        "glutes",
+        "upperBack",
+        "lats",
+        "forearms",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000075",
+      "name": "Sumo Deadlift",
+      "muscleGroups": [
+        "glutes",
+        "hamstrings",
+        "quads",
+        "forearms",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000076",
+      "name": "Good Morning",
+      "muscleGroups": [
+        "hamstrings",
+        "glutes",
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000077",
+      "name": "Seated Leg Curl",
+      "muscleGroups": [
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000078",
+      "name": "Lying Leg Curl",
+      "muscleGroups": [
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000079",
+      "name": "Nordic Hamstring Curl",
+      "muscleGroups": [
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000080",
+      "name": "Glute-Ham Raise",
+      "muscleGroups": [
+        "hamstrings",
+        "glutes"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000081",
+      "name": "Barbell Hip Thrust",
+      "muscleGroups": [
+        "glutes",
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000082",
+      "name": "Glute Bridge",
+      "muscleGroups": [
+        "glutes",
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000083",
+      "name": "Cable Pull-Through",
+      "muscleGroups": [
+        "glutes",
+        "hamstrings"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000084",
+      "name": "Cable Kickback",
+      "muscleGroups": [
+        "glutes"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000085",
+      "name": "Standing Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000086",
+      "name": "Seated Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000087",
+      "name": "Leg Press Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000088",
+      "name": "Donkey Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000089",
+      "name": "Single-Leg Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000090",
+      "name": "Smith Machine Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000091",
+      "name": "Dumbbell Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000092",
+      "name": "Barbell Calf Raise",
+      "muscleGroups": [
+        "calves"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000093",
+      "name": "Plank",
+      "muscleGroups": [
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000094",
+      "name": "Side Plank",
+      "muscleGroups": [
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000095",
+      "name": "Hanging Leg Raise",
+      "muscleGroups": [
+        "core",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000096",
+      "name": "Ab Wheel Rollout",
+      "muscleGroups": [
+        "core",
+        "lats"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000097",
+      "name": "Cable Crunch",
+      "muscleGroups": [
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000098",
+      "name": "Pallof Press",
+      "muscleGroups": [
+        "core",
+        "shoulders"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000099",
+      "name": "Russian Twist",
+      "muscleGroups": [
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000100",
+      "name": "Reverse Crunch",
+      "muscleGroups": [
+        "core"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000101",
+      "name": "Barbell Shrug",
+      "muscleGroups": [
+        "upperBack",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000102",
+      "name": "Dumbbell Shrug",
+      "muscleGroups": [
+        "upperBack",
+        "forearms"
+      ]
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000103",
+      "name": "Trap Bar Deadlift",
+      "muscleGroups": [
+        "hamstrings",
+        "glutes",
+        "quads",
+        "upperBack",
+        "lats",
+        "forearms",
+        "core"
+      ]
+    }
+  ],
+  "hevyAliases": {
+    "Bench Press (Barbell)": "10000000-0000-4000-8000-000000000001",
+    "Bench Press (Dumbbell)": "10000000-0000-4000-8000-000000000002",
+    "Incline Bench Press (Barbell)": "10000000-0000-4000-8000-000000000003",
+    "Incline Bench Press (Dumbbell)": "10000000-0000-4000-8000-000000000004",
+    "Decline Bench Press (Barbell)": "10000000-0000-4000-8000-000000000005",
+    "Chest Dip (Weighted)": "10000000-0000-4000-8000-000000000006",
+    "Chest Fly (Dumbbell)": "10000000-0000-4000-8000-000000000007",
+    "Cable Fly Crossovers": "10000000-0000-4000-8000-000000000008",
+    "Push Up": "10000000-0000-4000-8000-000000000009",
+    "Chest Press (Machine)": "10000000-0000-4000-8000-000000000010",
+    "Chest Fly (Machine)": "10000000-0000-4000-8000-000000000011",
+    "Close Grip Push Up": "10000000-0000-4000-8000-000000000012",
+    "Bent Over Row (Barbell)": "10000000-0000-4000-8000-000000000013",
+    "Pendlay Row (Barbell)": "10000000-0000-4000-8000-000000000014",
+    "Chest Supported Row (Dumbbell)": "10000000-0000-4000-8000-000000000015",
+    "Seated Cable Row - Bar Grip": "10000000-0000-4000-8000-000000000016",
+    "T Bar Row": "10000000-0000-4000-8000-000000000017",
+    "Bodyweight Row": "10000000-0000-4000-8000-000000000018",
+    "Row (Dumbbell)": "10000000-0000-4000-8000-000000000019",
+    "Seated Row (Machine)": "10000000-0000-4000-8000-000000000020",
+    "Face Pull (Cable)": "10000000-0000-4000-8000-000000000021",
+    "Reverse Fly (Dumbbell)": "10000000-0000-4000-8000-000000000022",
+    "Pull Up": "10000000-0000-4000-8000-000000000023",
+    "Chin Up": "10000000-0000-4000-8000-000000000024",
+    "Lat Pulldown (Cable)": "10000000-0000-4000-8000-000000000025",
+    "Lat Pulldown - Close Grip": "10000000-0000-4000-8000-000000000026",
+    "Pullover (Cable)": "10000000-0000-4000-8000-000000000027",
+    "Single Arm Lat Pulldown": "10000000-0000-4000-8000-000000000028",
+    "Shoulder Press (Barbell)": "10000000-0000-4000-8000-000000000029",
+    "Shoulder Press (Dumbbell)": "10000000-0000-4000-8000-000000000030",
+    "Arnold Press (Dumbbell)": "10000000-0000-4000-8000-000000000031",
+    "Push Press (Barbell)": "10000000-0000-4000-8000-000000000032",
+    "Shoulder Press (Landmine)": "10000000-0000-4000-8000-000000000033",
+    "Lateral Raise (Dumbbell)": "10000000-0000-4000-8000-000000000034",
+    "Lateral Raise (Cable)": "10000000-0000-4000-8000-000000000035",
+    "Lateral Raise (Machine)": "10000000-0000-4000-8000-000000000036",
+    "Upright Row (Barbell)": "10000000-0000-4000-8000-000000000037",
+    "Rear Delt Reverse Fly (Cable)": "10000000-0000-4000-8000-000000000038",
+    "Bicep Curl (Barbell)": "10000000-0000-4000-8000-000000000039",
+    "Bicep Curl (Dumbbell)": "10000000-0000-4000-8000-000000000040",
+    "Hammer Curl (Dumbbell)": "10000000-0000-4000-8000-000000000041",
+    "Incline Curl (Dumbbell)": "10000000-0000-4000-8000-000000000042",
+    "Preacher Curl (Barbell)": "10000000-0000-4000-8000-000000000043",
+    "Bicep Curl (Cable)": "10000000-0000-4000-8000-000000000044",
+    "Concentration Curl (Dumbbell)": "10000000-0000-4000-8000-000000000045",
+    "Reverse Curl (Barbell)": "10000000-0000-4000-8000-000000000046",
+    "Skullcrusher (EZ Bar)": "10000000-0000-4000-8000-000000000047",
+    "Triceps Pushdown": "10000000-0000-4000-8000-000000000048",
+    "Triceps Extension (Cable)": "10000000-0000-4000-8000-000000000049",
+    "Triceps Extension (Dumbbell)": "10000000-0000-4000-8000-000000000050",
+    "Bench Press - Close Grip (Barbell)": "10000000-0000-4000-8000-000000000051",
+    "Triceps Dip": "10000000-0000-4000-8000-000000000052",
+    "JM Press (Barbell)": "10000000-0000-4000-8000-000000000053",
+    "Triceps Kickback (Dumbbell)": "10000000-0000-4000-8000-000000000054",
+    "Wrist Curl (Barbell)": "10000000-0000-4000-8000-000000000055",
+    "Reverse Wrist Curl (Barbell)": "10000000-0000-4000-8000-000000000056",
+    "Farmers Walk": "10000000-0000-4000-8000-000000000057",
+    "Plate Pinch Hold": "10000000-0000-4000-8000-000000000058",
+    "Passive Hang": "10000000-0000-4000-8000-000000000059",
+    "Wrist Roller": "10000000-0000-4000-8000-000000000060",
+    "Zottman Curl (Dumbbell)": "10000000-0000-4000-8000-000000000061",
+    "Pull Up (Towel)": "10000000-0000-4000-8000-000000000062",
+    "Squat (Barbell)": "10000000-0000-4000-8000-000000000063",
+    "Front Squat (Barbell)": "10000000-0000-4000-8000-000000000064",
+    "Goblet Squat (Kettlebell)": "10000000-0000-4000-8000-000000000065",
+    "Hack Squat (Machine)": "10000000-0000-4000-8000-000000000066",
+    "Leg Press (Machine)": "10000000-0000-4000-8000-000000000067",
+    "Bulgarian Split Squat (Dumbbell)": "10000000-0000-4000-8000-000000000068",
+    "Lunge (Dumbbell)": "10000000-0000-4000-8000-000000000069",
+    "Step Up (Dumbbell)": "10000000-0000-4000-8000-000000000070",
+    "Leg Extension (Machine)": "10000000-0000-4000-8000-000000000071",
+    "Sissy Squat (Bodyweight)": "10000000-0000-4000-8000-000000000072",
+    "Romanian Deadlift (Barbell)": "10000000-0000-4000-8000-000000000073",
+    "Deadlift (Barbell)": "10000000-0000-4000-8000-000000000074",
+    "Sumo Deadlift (Barbell)": "10000000-0000-4000-8000-000000000075",
+    "Good Morning (Barbell)": "10000000-0000-4000-8000-000000000076",
+    "Leg Curl (Seated)": "10000000-0000-4000-8000-000000000077",
+    "Leg Curl (Lying)": "10000000-0000-4000-8000-000000000078",
+    "Nordic Hamstring Curl (Bodyweight)": "10000000-0000-4000-8000-000000000079",
+    "Glute Ham Raise": "10000000-0000-4000-8000-000000000080",
+    "Hip Thrust (Barbell)": "10000000-0000-4000-8000-000000000081",
+    "Glute Bridge (Barbell)": "10000000-0000-4000-8000-000000000082",
+    "Pull Through (Cable)": "10000000-0000-4000-8000-000000000083",
+    "Glute Kickback (Cable)": "10000000-0000-4000-8000-000000000084",
+    "Calf Raise (Standing)": "10000000-0000-4000-8000-000000000085",
+    "Calf Raise (Seated)": "10000000-0000-4000-8000-000000000086",
+    "Calf Press (Machine)": "10000000-0000-4000-8000-000000000087",
+    "Donkey Calf Raise (Bodyweight)": "10000000-0000-4000-8000-000000000088",
+    "Calf Raise (Single Leg)": "10000000-0000-4000-8000-000000000089",
+    "Calf Raise (Smith Machine)": "10000000-0000-4000-8000-000000000090",
+    "Calf Raise (Dumbbell)": "10000000-0000-4000-8000-000000000091",
+    "Calf Raise (Barbell)": "10000000-0000-4000-8000-000000000092",
+    "Plank (Bodyweight)": "10000000-0000-4000-8000-000000000093",
+    "Side Plank (Bodyweight)": "10000000-0000-4000-8000-000000000094",
+    "Leg Raise (Hanging)": "10000000-0000-4000-8000-000000000095",
+    "Ab Wheel": "10000000-0000-4000-8000-000000000096",
+    "Crunch (Cable)": "10000000-0000-4000-8000-000000000097",
+    "Pallof Press (Cable)": "10000000-0000-4000-8000-000000000098",
+    "Russian Twist (Weighted)": "10000000-0000-4000-8000-000000000099",
+    "Crunch (Reverse)": "10000000-0000-4000-8000-000000000100",
+    "Shrug (Barbell)": "10000000-0000-4000-8000-000000000101",
+    "Shrug (Dumbbell)": "10000000-0000-4000-8000-000000000102",
+    "Deadlift (Trap Bar)": "10000000-0000-4000-8000-000000000103"
+  }
+}
