@@ -28,7 +28,20 @@ public struct Weight: Sendable, Equatable, Hashable, Codable {
     public let kg: Double
 
     /// Constructs directly from a kilogram value — the canonical path.
+    ///
+    /// Traps if `kg` is not finite or is negative (m1-06 review, finding
+    /// M5). Every programmatic call site in this codebase already holds a
+    /// value that satisfies these invariants — a clamped crown adjustment,
+    /// a compile-time constant, an already-validated round-trip — so a
+    /// value that doesn't is a caller bug, not untrusted data, and a loud
+    /// crash beats silently poisoning equality/sorting/volume/PR/chart math
+    /// downstream (see the file doc above). The one boundary where `kg`
+    /// really is untrusted — Decodable, and BurlyPersistence's stored-
+    /// column read-back — never reaches this initializer; it goes through
+    /// the throwing `init(validatingKg:)` below instead.
     public init(kg: Double) {
+        precondition(kg.isFinite, "Weight(kg:) requires a finite value, got \(kg)")
+        precondition(kg >= 0, "Weight(kg:) requires a non-negative value, got \(kg)")
         self.kg = kg
     }
 
@@ -36,8 +49,12 @@ public struct Weight: Sendable, Equatable, Hashable, Codable {
     /// exact international avoirdupois pound (1 lb = 0.45359237 kg). The
     /// conversion happens once, here, at construction — never deferred,
     /// and never re-derived from a rounded display value.
+    ///
+    /// Delegates to `init(kg:)` for the converted value, so it traps under
+    /// the same policy (see `init(kg:)`) if `pounds` itself was not finite
+    /// or negative.
     public init(pounds: Double) {
-        self.kg = pounds * Self.kilogramsPerPound
+        self.init(kg: pounds * Self.kilogramsPerPound)
     }
 
     /// Display-layer conversion, computed fresh on every read at full
@@ -54,16 +71,46 @@ public struct Weight: Sendable, Equatable, Hashable, Codable {
 
     /// The 0 kg bodyweight convention (see file doc above).
     public static let bodyweight = Weight(kg: 0)
+
+    private enum CodingKeys: String, CodingKey {
+        case kg
+    }
+
+    /// Custom decoder (m1-06 review, finding M5): synthesized `Decodable`
+    /// would decode `kg` as a bare, unvalidated `Double`, which is exactly
+    /// the untrusted-data boundary `init(kg:)`'s precondition does *not*
+    /// cover (a precondition traps a programmer bug; it must never be the
+    /// thing standing between a hostile JSON payload and a crash). Routing
+    /// through `Weight(validatingKg:)` closes that hole for `Weight`'s own
+    /// wire format, the same way `SetRecordData`/`SetSnapshot`'s custom
+    /// decoders already close it for their embedded `weightKg`. `encode(to:)`
+    /// is left to synthesis — the `CodingKeys` above give it the same "kg"
+    /// wire shape this type has always had.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawKg = try container.decode(Double.self, forKey: .kg)
+        do {
+            self = try Weight(validatingKg: rawKg)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .kg,
+                in: container,
+                debugDescription: "kg must be a finite, non-negative number (decoded \(rawKg))."
+            )
+        }
+    }
 }
 
 /// Thrown by `Weight(validatingKg:)` when a raw `Double` cannot represent a
-/// physical weight. Every trusted construction path (`init(kg:)`,
-/// `init(pounds:)`, the `Measurement<UnitMass>` initializer) already hands
-/// this type values that satisfy these invariants by construction — this
-/// error only exists for the one boundary where `weightKg` arrives as an
-/// untrusted raw `Double` instead: Decodable. See `SetRecordData` and
-/// `SetSnapshot`'s custom `init(from:)` for where this becomes a
-/// `DecodingError.dataCorrupted`.
+/// physical weight. Every trusted, non-throwing construction path
+/// (`init(kg:)`, `init(pounds:)`, the `Measurement<UnitMass>` initializer)
+/// instead *traps* on a value that fails these invariants — a programmer
+/// bug, not data — so this error exists only for the boundaries where
+/// `weightKg`/`kg` legitimately arrives as an untrusted raw `Double`:
+/// `Weight`'s own Decodable (above), `SetRecordData`/`SetSnapshot`'s custom
+/// `init(from:)` (both become `DecodingError.dataCorrupted`), and
+/// BurlyPersistence's `SetRecord.snapshot()` reading a stored column back
+/// (becomes `BurlyStoreError.corruptedWeight`).
 public enum WeightValidationError: Error, Equatable {
     case negative(Double)
     case notFinite(Double)

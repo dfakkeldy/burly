@@ -25,10 +25,19 @@
 //
 // ## Threading
 //
-// Conformers are not `Sendable` and neither is `ModelContext`. Create and
-// use a store from one isolation domain (the app's `@MainActor` in practice);
-// to hand data across an actor boundary, pass the value types this API
-// returns, never the store.
+// `SwiftDataStore` does not declare `Sendable`, but that is not the backstop
+// it might look like (m1-06 review, finding m3): the current SDK's
+// `ModelContext` is itself `@unchecked Sendable`, and `@Model` classes now
+// pick up `Sendable` from the macro, so the type system does not actually
+// stop a store — or a model object read from one — from being handed
+// across an actor boundary. What contains this is caller-owned discipline
+// plus the sealed API surface above (no `@Model` type ever appears in a
+// `BurlyStore` signature), not a compiler-enforced guarantee. Create and
+// use a store from one isolation domain (the app's `@MainActor` in
+// practice); to hand data across an actor boundary, pass the value types
+// this API returns, never the store. A dedicated confinement mechanism
+// (`@MainActor` or a `ModelActor`) is a later-milestone decision, not made
+// here.
 
 import Foundation
 import BurlyCore

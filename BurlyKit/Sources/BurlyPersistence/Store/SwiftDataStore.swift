@@ -304,7 +304,7 @@ public final class SwiftDataStore: BurlyStore {
                 sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
             )
         )
-        .map { $0.snapshot() }
+        .map { try $0.snapshot() }
     }
 
     public func sessions(state: SessionState) throws -> [SessionData] {
@@ -317,7 +317,7 @@ public final class SwiftDataStore: BurlyStore {
             )
         )
         .filter { $0.state == state }
-        .map { $0.snapshot() }
+        .map { try $0.snapshot() }
     }
 
     public func logSet(_ set: SetRecordData, toSessionItem sessionItemID: UUID) throws {
@@ -532,7 +532,7 @@ public final class SwiftDataStore: BurlyStore {
         // edge alongside optional-Date predicates.
         return try context.fetch(FetchDescriptor<Session>())
             .filter { $0.state == .logged }
-            .map { $0.snapshot() }
+            .map { try $0.snapshot() }
     }
 
     public func pruneDeliveredSessions(ackedIDs: [UUID]) throws {
