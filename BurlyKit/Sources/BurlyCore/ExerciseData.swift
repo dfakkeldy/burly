@@ -43,4 +43,23 @@ public struct ExerciseData: Sendable, Equatable, Hashable, Codable, Identifiable
         self.needsNaming = needsNaming
         self.archivedAt = archivedAt
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, muscleGroups, origin, needsNaming, archivedAt
+    }
+
+    /// Custom decoder for §1 default symmetry (m1-06 review, finding m1):
+    /// synthesized `Decodable` would fail a payload that omits
+    /// `needsNaming` instead of defaulting it to `false` like the
+    /// memberwise initializer does — mirrors `RoutineData`'s decoder for
+    /// `items`.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        muscleGroups = try container.decode([MuscleGroup].self, forKey: .muscleGroups)
+        origin = try container.decode(ExerciseOrigin.self, forKey: .origin)
+        needsNaming = try container.decodeIfPresent(Bool.self, forKey: .needsNaming) ?? false
+        archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
+    }
 }

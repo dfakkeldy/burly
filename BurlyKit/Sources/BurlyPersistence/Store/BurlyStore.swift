@@ -25,10 +25,19 @@
 //
 // ## Threading
 //
-// Conformers are not `Sendable` and neither is `ModelContext`. Create and
-// use a store from one isolation domain (the app's `@MainActor` in practice);
-// to hand data across an actor boundary, pass the value types this API
-// returns, never the store.
+// `SwiftDataStore` does not declare `Sendable`, but that is not the backstop
+// it might look like (m1-06 review, finding m3): the current SDK's
+// `ModelContext` is itself `@unchecked Sendable`, and `@Model` classes now
+// pick up `Sendable` from the macro, so the type system does not actually
+// stop a store — or a model object read from one — from being handed
+// across an actor boundary. What contains this is caller-owned discipline
+// plus the sealed API surface above (no `@Model` type ever appears in a
+// `BurlyStore` signature), not a compiler-enforced guarantee. Create and
+// use a store from one isolation domain (the app's `@MainActor` in
+// practice); to hand data across an actor boundary, pass the value types
+// this API returns, never the store. A dedicated confinement mechanism
+// (`@MainActor` or a `ModelActor`) is a later-milestone decision, not made
+// here.
 
 import Foundation
 import BurlyCore
@@ -262,9 +271,11 @@ public protocol BurlyStore: AnyObject {
     /// entry, single save; for a whole §5 `digest` payload use
     /// `applyDigest(lastPerformance:ackedSessionIDs:)`, which is atomic
     /// across the entries *and* the prune. Throws
-    /// `.operationRequiresWatchStore` on a phone-kind store, or
-    /// `.invalidLastPerformance` if a set snapshot carries a negative,
-    /// NaN, or infinite `weightKg`.
+    /// `.operationRequiresWatchStore` on a phone-kind store. There is no
+    /// `weightKg` validation to throw here (m1-06 review, fix round B): a
+    /// `[SetSnapshot]` cannot carry a negative, NaN, or infinite `weightKg`
+    /// by the time it reaches the store — see `Weight`'s doc for why every
+    /// construction path is already closed at that boundary.
     func upsertLastPerformance(_ performance: ExerciseLastPerformanceData) throws
 
     /// §5 `digest` apply, as **one transaction** (m1-06 review, M2).
@@ -280,10 +291,12 @@ public protocol BurlyStore: AnyObject {
     /// same context save, or nothing happens at all.
     ///
     /// Validation runs over the whole payload first. A duplicate
-    /// `exerciseID` (`.duplicateID`) or an out-of-range `weightKg`
-    /// (`.invalidLastPerformance`) rejects the entire digest, entries and
-    /// prune alike — a half-applied latest-wins payload is not a state the
-    /// phone ever described.
+    /// `exerciseID` (`.duplicateID`) — two entries claiming latest-wins for
+    /// the same exercise, which the payload cannot resolve on its own —
+    /// rejects the entire digest, entries and prune alike: a half-applied
+    /// latest-wins payload is not a state the phone ever described.
+    /// `weightKg` is not a separate validation concern here; it cannot be
+    /// invalid on arrival (see `upsertLastPerformance`'s doc).
     ///
     /// Pruning follows `pruneDeliveredSessions(ackedIDs:)`'s rule exactly:
     /// an id naming an `.active` session, or no session at all, is skipped

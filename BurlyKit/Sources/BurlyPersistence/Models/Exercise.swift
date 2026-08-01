@@ -3,8 +3,19 @@
 //
 // `@Model` classes are deliberately **internal** to BurlyPersistence
 // (architecture doc: "domain↔storage mapping behind a small protocol").
-// They are not Sendable and must never cross a module or actor boundary;
-// `BurlyCore.ExerciseData` is what callers see.
+// That module-internal access, plus `BurlyStore`'s public surface never
+// naming an `@Model` type in a signature (see BurlyStore.swift), is what
+// actually seals them inside this module — `BurlyCore.ExerciseData` is
+// what callers see.
+//
+// This is *not* a Sendable-driven compiler backstop (m1-06 review, finding
+// m3): the current SDK's `@Model` macro attaches `Sendable` to every model
+// class, so nothing in the type system would stop a value of this type
+// from crossing an actor boundary if one ever escaped the sealed API
+// above. Containment is the module boundary itself, not non-Sendability;
+// isolation discipline for a store in use is caller-owned (see
+// BurlyStore.swift's Threading note). A dedicated confinement mechanism
+// is a later-milestone decision, not made here.
 
 import Foundation
 import SwiftData

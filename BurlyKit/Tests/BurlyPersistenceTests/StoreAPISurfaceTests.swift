@@ -283,6 +283,165 @@ struct StoreAPISurfaceTests {
         #expect(stored.items[0].exerciseID == bench.id)
     }
 
+    /// m1-06 review, finding M5, cold-store read-back probe: `Weight`'s
+    /// finite/non-negative invariant is unenforced once a value is a plain
+    /// `Double` column on disk, so a corrupted row (out-of-band write, bad
+    /// migration, disk corruption) must fail closed on read-back rather
+    /// than handing a poisoned `Weight` back into equality/sorting/volume/
+    /// PR/chart math. There is no store-API path that can write an invalid
+    /// value — every write goes through `Weight`, which now either
+    /// validates (Decodable) or traps (programmatic) — so this test reaches
+    /// past the store the same way `denyRuleIsNotEnforcedBySwiftData` does,
+    /// to simulate the row already being corrupt before the store ever
+    /// reads it.
+    @Test("a corrupted stored weightKg column fails closed on a genuine cold reload instead of poisoning the returned Weight")
+    func corruptedStoredWeightFailsClosedOnColdReload() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let bench = Fixture.exercise(name: "Bench Press")
+        let routine = Fixture.routine(over: [bench])
+        let session = Fixture.session(from: routine)
+        let itemID = try #require(session.items.first?.id)
+        let setID = UUID()
+
+        do {
+            let store = try SwiftDataStore(kind: .phone, at: .file(url))
+            try store.createExercise(bench)
+            try store.createRoutine(routine)
+            try store.createSession(session)
+            try store.logSet(
+                SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
+                toSessionItem: itemID
+            )
+        }
+
+        // Corrupt the stored column directly — negative, so the thrown
+        // error's payload is a normal `Equatable` comparison (unlike NaN,
+        // which is never equal to itself).
+        do {
+            let container = try BurlyContainer.phone(at: .file(url))
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            var descriptor = FetchDescriptor<SetRecord>(predicate: #Predicate { $0.id == setID })
+            descriptor.fetchLimit = 1
+            let stored = try #require(try context.fetch(descriptor).first)
+            stored.weightKg = -1
+            try context.save()
+        }
+
+        // Cold reload: brand-new container over the same file.
+        let reloaded = try SwiftDataStore(kind: .phone, at: .file(url))
+        #expect(throws: BurlyStoreError.corruptedWeight(id: setID, underlying: .negative(-1))) {
+            try reloaded.session(id: session.id)
+        }
+        // The whole session fails closed — a caller cannot see the other,
+        // uncorrupted sessions' worth of a partially-decoded graph and
+        // mistake it for the truth.
+        #expect(throws: BurlyStoreError.self) {
+            try reloaded.sessions()
+        }
+    }
+
+    /// Sweeps the hostile-value classes that actually *survive* a genuine
+    /// SwiftData round-trip (see `storedNaNHealsToZeroOnColdReload` below
+    /// for the one that doesn't) through the same read-back path, using one
+    /// shared in-memory container so each case gets a fresh `ModelContext`
+    /// fetch (a real read-back through SwiftData's storage layer, not a
+    /// cached object) without the cost of a file per case.
+    @Test(
+        "every weightKg class that survives storage fails closed on read-back, not just negative",
+        arguments: [Double.infinity, -.infinity, -1.0]
+    )
+    func everyInvalidWeightClassFailsClosedOnReadBack(corruptKg: Double) throws {
+        let container = try BurlyContainer.phone(at: .inMemory)
+        let bench = Fixture.exercise(name: "Bench Press")
+        let routine = Fixture.routine(over: [bench])
+        let session = Fixture.session(from: routine)
+        let itemID = try #require(session.items.first?.id)
+        let setID = UUID()
+
+        let store = SwiftDataStore(container: container)
+        try store.createExercise(bench)
+        try store.createRoutine(routine)
+        try store.createSession(session)
+        try store.logSet(
+            SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
+            toSessionItem: itemID
+        )
+
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        var descriptor = FetchDescriptor<SetRecord>(predicate: #Predicate { $0.id == setID })
+        descriptor.fetchLimit = 1
+        let stored = try #require(try context.fetch(descriptor).first)
+        stored.weightKg = corruptKg
+        try context.save()
+
+        let reloaded = SwiftDataStore(container: container)
+        do {
+            _ = try reloaded.session(id: session.id)
+            Issue.record("expected BurlyStoreError.corruptedWeight for weightKg = \(corruptKg)")
+        } catch BurlyStoreError.corruptedWeight(let id, let underlying) {
+            #expect(id == setID)
+            switch underlying {
+            case .negative(let value):
+                #expect(value == corruptKg)
+            case .notFinite(let value):
+                #expect(value.isInfinite == corruptKg.isInfinite)
+            }
+        }
+    }
+
+    /// A stored `NaN` is the one hostile value that never reaches
+    /// `SetRecord.snapshot()`'s validation at all: SwiftData's SQLite
+    /// backing store cannot represent `NaN` in a `REAL` column, and it
+    /// reads back as `0.0` (bodyweight) on a genuine cold reload — verified
+    /// here rather than assumed, because it changes what "fails closed"
+    /// needs to mean for this specific class. This is not a gap in
+    /// `BurlyStoreError.corruptedWeight`: a value that cannot survive
+    /// storage as `NaN` cannot poison anything downstream as `NaN` either.
+    /// Negative and infinite values *do* survive (see the sweep above) and
+    /// are exactly what the validation exists to catch.
+    @Test("a stored NaN weightKg heals to 0.0 (bodyweight) on a genuine cold reload, rather than surviving as NaN")
+    func storedNaNHealsToZeroOnColdReload() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let bench = Fixture.exercise(name: "Bench Press")
+        let routine = Fixture.routine(over: [bench])
+        let session = Fixture.session(from: routine)
+        let itemID = try #require(session.items.first?.id)
+        let setID = UUID()
+
+        do {
+            let store = try SwiftDataStore(kind: .phone, at: .file(url))
+            try store.createExercise(bench)
+            try store.createRoutine(routine)
+            try store.createSession(session)
+            try store.logSet(
+                SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
+                toSessionItem: itemID
+            )
+        }
+
+        do {
+            let container = try BurlyContainer.phone(at: .file(url))
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            var descriptor = FetchDescriptor<SetRecord>(predicate: #Predicate { $0.id == setID })
+            descriptor.fetchLimit = 1
+            let stored = try #require(try context.fetch(descriptor).first)
+            stored.weightKg = .nan
+            try context.save()
+        }
+
+        // Cold reload: brand-new container over the same file.
+        let reloaded = try SwiftDataStore(kind: .phone, at: .file(url))
+        let stored = try #require(try reloaded.session(id: session.id))
+        #expect(stored.items[0].sets[0].weightKg == 0)
+    }
+
     @Test("a 0 kg set is the bodyweight convention, stored and read back as 0")
     func bodyweightIsZeroKilograms() throws {
         let store = try makeStore()

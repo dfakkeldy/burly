@@ -57,31 +57,48 @@ extension Routine {
 }
 
 extension SetRecord {
-    func snapshot() -> SetRecordData {
-        SetRecordData(
-            id: id,
-            order: order,
-            weight: Weight(kg: weightKg),
-            reps: reps,
-            isWarmup: isWarmup,
-            completedAt: completedAt
-        )
+    /// Validates the stored `weightKg` column on read-back instead of
+    /// trusting it (m1-06 review, finding M5): it is a plain `Double`
+    /// column, so `Weight`'s finite/non-negative invariant is otherwise
+    /// unenforced once a value is on disk — a hostile-data boundary no
+    /// different in kind from Decodable, just reached by a different route.
+    /// Throws `BurlyStoreError.corruptedWeight` instead of ever handing a
+    /// poisoned `Weight` back into equality, sorting, volume, PR, or chart
+    /// math; never traps, since a corrupted row is data, not a caller bug.
+    func snapshot() throws -> SetRecordData {
+        do {
+            return SetRecordData(
+                id: id,
+                order: order,
+                weight: try Weight(validatingKg: weightKg),
+                reps: reps,
+                isWarmup: isWarmup,
+                completedAt: completedAt
+            )
+        } catch let error as WeightValidationError {
+            throw BurlyStoreError.corruptedWeight(id: id, underlying: error)
+        }
     }
 }
 
 extension SessionItem {
-    func snapshot() -> SessionItemData {
+    /// `throws` only because a `SetRecord` under it can fail the read-back
+    /// validation above; the error propagates unchanged.
+    func snapshot() throws -> SessionItemData {
         SessionItemData(
             id: id,
             exerciseID: exercise?.id,
             order: order,
-            sets: sets.sorted { $0.order < $1.order }.map { $0.snapshot() }
+            sets: try sets.sorted { $0.order < $1.order }.map { try $0.snapshot() }
         )
     }
 }
 
 extension Session {
-    func snapshot() -> SessionData {
+    /// `throws` only because a `SessionItem`/`SetRecord` under it can fail
+    /// the read-back validation in `SetRecord.snapshot()`; the error
+    /// propagates unchanged.
+    func snapshot() throws -> SessionData {
         SessionData(
             id: id,
             routineID: routineID,
@@ -92,7 +109,7 @@ extension Session {
             revision: revision,
             healthKitWorkoutID: healthKitWorkoutID,
             origin: origin,
-            items: items.sorted { $0.order < $1.order }.map { $0.snapshot() },
+            items: try items.sorted { $0.order < $1.order }.map { try $0.snapshot() },
             notes: notes
         )
     }
