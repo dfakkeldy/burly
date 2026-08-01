@@ -9,15 +9,15 @@
 //   module or actor boundary. `BurlyCore`'s `…Data` value types are what
 //   callers see.
 // - `Schema/` — `BurlySchemaV1` (`VersionedSchema`), `BurlyMigrationPlan`
-//   (`SchemaMigrationPlan`, empty at v1), and `BurlyContainer`, the only
-//   public way to make a container. Every container is built through the
-//   plan so v2 is an append (§1 acceptance #5).
+//   (`SchemaMigrationPlan`, empty at v1), and `BurlyContainer`, the
+//   module-internal factory every container is built through, so v2 is an
+//   append (§1 acceptance #5).
 // - `Store/` — `BurlyStore`, the small protocol the architecture doc puts in
 //   front of this module, plus the SwiftData implementation and the
 //   model→value mapping. Swapping SwiftData out means reimplementing
 //   `BurlyStore`; nothing else in the app changes.
 //
-// ## The two structural guarantees
+// ## The three structural guarantees
 //
 // - **No hard-delete of an Exercise.** `BurlyStore` has no such method, so
 //   the call cannot be written (§1 acceptance #3). `Exercise`'s
@@ -26,6 +26,14 @@
 // - **kg is the only weight ever stored.** The store accepts weights only as
 //   `BurlyCore.Weight`, which is kg-canonical by construction; lb is a
 //   display-layer conversion (§1 acceptance #4).
+// - **No public path yields a raw `ModelContainer`.** `ModelContainer`
+//   exposes `.erase()`/`.deleteAllData()` — a bulk hard-delete of
+//   *everything*, the whole-store version of the bypass the first
+//   guarantee above forbids for one Exercise. `BurlyContainer` is
+//   module-internal; the public store-construction surface is
+//   `SwiftDataStore.phone(at:)` / `.watch(at:)` / `init(kind:at:)`, none of
+//   which name `ModelContainer` (m1-04 review). See
+//   Tests/BurlyPersistenceTests/ContainerBoundaryTests.swift.
 
 import BurlyCore
 
