@@ -127,52 +127,50 @@ struct DigestTransactionTests {
 
     // MARK: - Atomicity
 
-    @Test("one invalid entry rejects the WHOLE digest: no entry is upserted and no session is pruned")
+    // m1-06 review, fix round B: this suite used to inject the "bad entry"
+    // below via `SetSnapshot(weight: Weight(kg: .nan/.infinity/-20), ...)`.
+    // That construction is no longer possible to write — `Weight`'s own
+    // non-throwing initializers now trap on a non-finite or negative value
+    // (finding M5), and `SetSnapshot`'s custom `Decodable` already throws
+    // before producing one from a hostile payload. There is no longer any
+    // way for an in-memory `[SetSnapshot]` to carry an invalid `weightKg`,
+    // so `BurlyStoreError.invalidLastPerformance` and the store-side check
+    // that threw it were removed as dead code (see `validateLastPerformance`
+    // in SwiftDataStore.swift) rather than kept as an untestable no-op.
+    // `Weight`'s unrepresentability of invalid values is pinned by
+    // BurlyCoreTests/WeightTests.swift and DomainDecodingTests.swift
+    // instead. The atomicity property these tests exist to pin — one bad
+    // entry rejects the *whole* digest, including a valid entry that came
+    // before it, with no residue for a later save to commit — is still
+    // real and still worth pinning, so the tests below now trigger it with
+    // the one entry-level failure that remains reachable: two entries
+    // claiming latest-wins for the same exercise (`.duplicateID`).
+
+    @Test("one bad entry rejects the WHOLE digest: no entry is upserted and no session is pruned")
     func oneBadEntryRejectsEverything() throws {
         let store = try makeStore(.watch)
         let seeded = try seededWatchStore(store)
 
-        // `Weight`'s non-validating initializer is still reachable
-        // programmatically (m1-06 review, M5 — owned elsewhere), so a
-        // digest assembled from a bad decode can carry this. The digest
-        // boundary refuses it rather than poisoning volume/PR maths and the
-        // ghost row with a NaN.
-        let poisoned = ExerciseLastPerformanceData(
-            exerciseID: seeded.row.id,
-            performedAt: Fixture.epoch,
-            sets: [SetSnapshot(weight: Weight(kg: .nan), reps: 5)]
-        )
-
-        #expect(throws: BurlyStoreError.invalidLastPerformance(exerciseID: seeded.row.id)) {
+        // The ambiguous pair (two `row` entries) is what fails; `bench` is
+        // an entirely valid entry ahead of it in the array. All-or-nothing
+        // means `bench` must not land either.
+        #expect(throws: BurlyStoreError.duplicateID(seeded.row.id)) {
             try store.applyDigest(
-                lastPerformance: [digestEntry(for: seeded.bench.id, kg: 100), poisoned],
+                lastPerformance: [
+                    digestEntry(for: seeded.bench.id, kg: 100),
+                    digestEntry(for: seeded.row.id, kg: 70),
+                    digestEntry(for: seeded.row.id, kg: 75)
+                ],
                 ackedSessionIDs: [seeded.logged.id]
             )
         }
 
-        // All-or-nothing: the valid entry that came *before* the bad one in
-        // the array did not land, and the ack did not prune.
+        // All-or-nothing: the valid entry that came *before* the bad pair
+        // in the array did not land, and the ack did not prune.
         #expect(try store.lastPerformance(exerciseID: seeded.bench.id) == nil)
         #expect(try store.lastPerformance(exerciseID: seeded.row.id) == nil)
         #expect(try store.session(id: seeded.logged.id) != nil)
         #expect(try store.loggedSessionsAwaitingAck().map(\.id) == [seeded.logged.id])
-    }
-
-    @Test("a negative weight in a digest entry is refused on the same all-or-nothing terms")
-    func negativeWeightRejectsTheDigest() throws {
-        let store = try makeStore(.watch)
-        let seeded = try seededWatchStore(store)
-        let negative = ExerciseLastPerformanceData(
-            exerciseID: seeded.bench.id,
-            performedAt: Fixture.epoch,
-            sets: [SetSnapshot(weight: Weight(kg: -20), reps: 5)]
-        )
-
-        #expect(throws: BurlyStoreError.invalidLastPerformance(exerciseID: seeded.bench.id)) {
-            try store.applyDigest(lastPerformance: [negative], ackedSessionIDs: [seeded.logged.id])
-        }
-        #expect(try store.lastPerformance(exerciseID: seeded.bench.id) == nil)
-        #expect(try store.session(id: seeded.logged.id) != nil)
     }
 
     @Test("two entries for the same exercise are ambiguous under latest-wins, so the digest is refused whole")
@@ -197,15 +195,14 @@ struct DigestTransactionTests {
     func rejectedDigestLeavesNoResidue() throws {
         let store = try makeStore(.watch)
         let seeded = try seededWatchStore(store)
-        let poisoned = ExerciseLastPerformanceData(
-            exerciseID: seeded.row.id,
-            performedAt: Fixture.epoch,
-            sets: [SetSnapshot(weight: Weight(kg: .infinity), reps: 5)]
-        )
 
-        #expect(throws: BurlyStoreError.invalidLastPerformance(exerciseID: seeded.row.id)) {
+        #expect(throws: BurlyStoreError.duplicateID(seeded.row.id)) {
             try store.applyDigest(
-                lastPerformance: [digestEntry(for: seeded.bench.id, kg: 100), poisoned],
+                lastPerformance: [
+                    digestEntry(for: seeded.bench.id, kg: 100),
+                    digestEntry(for: seeded.row.id, kg: 70),
+                    digestEntry(for: seeded.row.id, kg: 75)
+                ],
                 ackedSessionIDs: [seeded.logged.id]
             )
         }
@@ -215,22 +212,6 @@ struct DigestTransactionTests {
         #expect(try store.lastPerformance(exerciseID: seeded.bench.id) == nil)
         #expect(try store.lastPerformance(exerciseID: seeded.row.id) == nil)
         #expect(try store.session(id: seeded.logged.id) != nil)
-    }
-
-    @Test("upsertLastPerformance applies the same validation as the batch path")
-    func singleEntryUpsertValidatesToo() throws {
-        let store = try makeStore(.watch)
-        let seeded = try seededWatchStore(store)
-        let poisoned = ExerciseLastPerformanceData(
-            exerciseID: seeded.bench.id,
-            performedAt: Fixture.epoch,
-            sets: [SetSnapshot(weight: Weight(kg: .nan), reps: 5)]
-        )
-
-        #expect(throws: BurlyStoreError.invalidLastPerformance(exerciseID: seeded.bench.id)) {
-            try store.upsertLastPerformance(poisoned)
-        }
-        #expect(try store.lastPerformance(exerciseID: seeded.bench.id) == nil)
     }
 
     // MARK: - Idempotency

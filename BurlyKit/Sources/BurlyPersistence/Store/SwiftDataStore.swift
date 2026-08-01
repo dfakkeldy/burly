@@ -632,7 +632,7 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.unreadableActiveSessionJournal(sessionID: stored.id)
         }
         return ActiveSession(
-            session: stored.snapshot(),
+            session: try stored.snapshot(),
             plans: scaffolding.plans,
             restTimer: scaffolding.restTimer
         )
@@ -717,6 +717,23 @@ public final class SwiftDataStore: BurlyStore {
         return try session.items.map { try resolveExercise($0.exerciseID) }
     }
 
+    /// No `weightKg` finite/non-negative check here (m1-06 review, fix
+    /// round B — reconciling with M2's original weightKg gate, which this
+    /// replaces): a `[SetSnapshot]` value cannot carry an invalid
+    /// `weightKg` by the time it reaches this function. Both of
+    /// `SetSnapshot`'s construction paths are closed at the `Weight`
+    /// boundary — `init(weight:reps:isWarmup:)` only accepts an already-
+    /// valid `Weight` (its non-throwing initializers trap on a non-finite
+    /// or negative value), and `SetSnapshot`'s own custom `Decodable`
+    /// throws before producing a value at all. There is no ingress —
+    /// programmatic or wire — through which a caller could still hand this
+    /// function a `weightKg` this check could catch. A runtime check for an
+    /// unreachable condition is not defense in depth, it's dead code that
+    /// invites the next reader to assume a threat model that no longer
+    /// exists, so it was removed along with `BurlyStoreError
+    /// .invalidLastPerformance`. Duplicate-`exerciseID` detection is a
+    /// different story — nothing about `Weight` prevents two entries from
+    /// naming the same exercise — so that check stays.
     private func validateLastPerformance(
         _ entries: [ExerciseLastPerformanceData]
     ) throws {
@@ -726,10 +743,6 @@ public final class SwiftDataStore: BurlyStore {
                 // Two entries claiming latest-wins for one exercise: the
                 // payload does not say which one wins, so none of it lands.
                 throw BurlyStoreError.duplicateID(entry.exerciseID)
-            }
-            for snapshot in entry.sets
-            where snapshot.weightKg.isFinite == false || snapshot.weightKg < 0 {
-                throw BurlyStoreError.invalidLastPerformance(exerciseID: entry.exerciseID)
             }
         }
     }
