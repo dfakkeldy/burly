@@ -32,18 +32,30 @@
 # RAM guardrails (16 GB build Mac -- non-negotiable):
 #   - A global, mkdir-based lock ($LOCK_DIR) serializes this script
 #     against any other Burly xcodebuild/simctl work on the machine.
-#     The lock is NOT installed as a cleanup-trap target until it is
-#     actually acquired -- a process still waiting for the lock (a
-#     "waiter") never owns it and must never run simulator/lock cleanup
-#     if it is interrupted. See acquire_lock()/cleanup() below.
+#     The single ownership-flag-aware `cleanup` trap (EXIT/INT/TERM) is
+#     installed BEFORE the first `mkdir` attempt -- there is no window
+#     where a signal could hit a cleanup-unaware handler after the lock
+#     directory already exists on disk. `cleanup` itself is a no-op on
+#     lock/simulator state whenever LOCK_OWNED != 1, so a process still
+#     waiting for the lock (a "waiter") never tears down another
+#     holder's simulators/lock if it is interrupted -- only the process
+#     that actually created $LOCK_DIR (LOCK_OWNED=1, set immediately
+#     after `mkdir` succeeds) ever runs that part of cleanup. See
+#     acquire_lock()/cleanup() below.
 #   - Lock acquisition writes an owner file ("$LOCK_DIR/owner" = "<pid>
 #     <unix ts>") so a dead holder's lock can be detected and recovered:
 #     if the owner file is older than 30 minutes AND its pid is no
 #     longer alive, the lock is treated as stale, is recovered (with a
 #     loud log line and `xcrun simctl shutdown all` to clear whatever
-#     the dead owner left booted), and re-acquired. Waiting for the lock
-#     has a hard 45-minute timeout, after which the script exits
-#     non-zero with a FATAL message rather than waiting forever.
+#     the dead owner left booted), and re-acquired. If the owner file is
+#     missing or unreadable/unparseable (e.g. the holder was killed
+#     between `mkdir` succeeding and the owner file being written), the
+#     lock directory's own mtime is used instead: once it is >= 30
+#     minutes old the lock is reclaimed the same way. This caps any
+#     orphaned-lock consequence at the 30-minute stale threshold instead
+#     of the full 45-minute wait timeout. Waiting for the lock has a
+#     hard 45-minute timeout, after which the script exits non-zero with
+#     a FATAL message rather than waiting forever.
 #   - Every xcodebuild build/test invocation passes
 #     -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1.
 #   - All Burly builds share one DerivedData directory ($DERIVED_DATA,
@@ -96,25 +108,14 @@ RUN_DIR=""
 log() { echo "acceptance-sim: $*" >&2; }
 
 # ---------------------------------------------------------------------------
-# Pre-lock signal safety.
-#
-# While this process is only WAITING for the lock, it does not own any
-# simulator state and must never run the full cleanup (that would tear down
-# the active lock holder's simulators/lock out from under it). These handlers
-# are installed BEFORE acquire_lock() is called and are replaced by the full
-# cleanup trap only after the lock is actually acquired.
-# ---------------------------------------------------------------------------
-early_signal_exit() {
-  local code="$1"
-  log "received signal before acquiring the build lock -- exiting without touching simulators or the lock (exit $code)"
-  exit "$code"
-}
-trap 'early_signal_exit 130' INT
-trap 'early_signal_exit 143' TERM
-
-# ---------------------------------------------------------------------------
-# Cleanup: installed only once the lock is actually held. Runs on every exit
-# path (pass, fail, interrupt) for the lock OWNER only.
+# Cleanup: the trap is installed once, up front, BEFORE acquire_lock() makes
+# its first `mkdir` attempt (see acquire_lock() below) -- there is no
+# separate "pre-lock" signal handler and no window where a signal could hit
+# a cleanup-unaware handler after the lock directory already exists on disk.
+# Safety for a process that does not (yet) own the lock comes entirely from
+# the LOCK_OWNED gate below: cleanup() is a no-op on lock/simulator state
+# whenever LOCK_OWNED != 1, so a waiter that gets interrupted never tears
+# down another holder's simulators/lock out from under it.
 #
 #   - INT/TERM always force exit 130/143, never PASS, never exit 0 --
 #     regardless of what $? happened to be from the command in flight.
@@ -139,7 +140,9 @@ cleanup() {
   set +e
   local dirty=0
 
-  if [ "$LOCK_OWNED" -eq 1 ]; then
+  if [ "$LOCK_OWNED" -ne 1 ]; then
+    log "no build lock owned at exit -- nothing to clean up on the lock/simulator side (exit $exit_code)"
+  else
     if ! xcrun simctl shutdown all >/dev/null 2>&1; then
       log "WARNING: 'xcrun simctl shutdown all' failed during cleanup -- shared simulator state may be dirty"
       dirty=1
@@ -155,25 +158,40 @@ cleanup() {
     clone_fail_marker="$(mktemp -u -t burly-clone-fail)"
     rm -f "$clone_fail_marker" 2>/dev/null
 
-    xcrun simctl list devices --json 2>/dev/null \
-      | grep -E '"udid"|"name"' \
-      | paste -d '\t' - - \
-      | grep 'Clone of ' \
-      | sed -E 's/.*"udid" : "([^"]+)".*/\1/' \
-      | while IFS= read -r clone_udid; do
-          [ -n "$clone_udid" ] || continue
-          log "deleting stray clone device: $clone_udid"
-          if ! xcrun simctl delete "$clone_udid" >/dev/null 2>&1; then
-            log "WARNING: failed to delete stray clone device $clone_udid"
-            touch "$clone_fail_marker"
-          fi
-        done
+    # Enumeration honesty: `xcrun simctl list devices --json` is captured to
+    # a file FIRST, with its own exit status checked explicitly, rather than
+    # feeding it directly into the parse pipe below. If enumeration itself
+    # fails, we have no idea whether stray clones exist -- that must count
+    # as a dirty cleanup (loud warning + nonzero exit), never as a silent
+    # "zero clones found".
+    local devices_list_file
+    devices_list_file="$(mktemp -t burly-cleanup-devices)"
 
-    if [ -f "$clone_fail_marker" ]; then
-      log "WARNING: one or more stray 'Clone of' devices could not be deleted -- shared simulator state may be dirty"
+    if ! xcrun simctl list devices --json > "$devices_list_file" 2>/dev/null; then
+      log "WARNING: 'xcrun simctl list devices --json' failed during cleanup -- cannot enumerate stray clone devices, shared simulator state may be dirty"
       dirty=1
-      rm -f "$clone_fail_marker"
+    else
+      grep -E '"udid"|"name"' "$devices_list_file" \
+        | paste -d '\t' - - \
+        | grep 'Clone of ' \
+        | sed -E 's/.*"udid" : "([^"]+)".*/\1/' \
+        | while IFS= read -r clone_udid; do
+            [ -n "$clone_udid" ] || continue
+            log "deleting stray clone device: $clone_udid"
+            if ! xcrun simctl delete "$clone_udid" >/dev/null 2>&1; then
+              log "WARNING: failed to delete stray clone device $clone_udid"
+              touch "$clone_fail_marker"
+            fi
+          done
+
+      if [ -f "$clone_fail_marker" ]; then
+        log "WARNING: one or more stray 'Clone of' devices could not be deleted -- shared simulator state may be dirty"
+        dirty=1
+        rm -f "$clone_fail_marker"
+      fi
     fi
+
+    rm -f "$devices_list_file"
 
     rm -f "$OWNER_FILE"
     rmdir "$LOCK_DIR" 2>/dev/null
@@ -234,44 +252,73 @@ finalize_run_artifacts() {
 # Global build lock: only one Burly xcodebuild/simctl session at a time.
 # ---------------------------------------------------------------------------
 reclaim_stale_lock_if_any() {
-  [ -f "$OWNER_FILE" ] || return 1
-
-  local owner_pid owner_ts
-  read -r owner_pid owner_ts < "$OWNER_FILE" 2>/dev/null || return 1
-  [[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
-  [[ "$owner_ts" =~ ^[0-9]+$ ]] || return 1
-
-  local now age
+  local now
   now=$(date +%s)
-  age=$((now - owner_ts))
-  [ "$age" -ge "$STALE_LOCK_SECONDS" ] || return 1
 
-  if kill -0 "$owner_pid" 2>/dev/null; then
-    return 1   # owner process is still alive -- just slow, not stale
+  local owner_pid="" owner_ts=""
+  if [ -f "$OWNER_FILE" ] && [ -r "$OWNER_FILE" ]; then
+    read -r owner_pid owner_ts < "$OWNER_FILE" 2>/dev/null
   fi
 
-  log "STALE LOCK DETECTED: owner pid $owner_pid is dead and the lock is ${age}s old (>= ${STALE_LOCK_SECONDS}s) -- recovering"
+  if [[ "$owner_pid" =~ ^[0-9]+$ ]] && [[ "$owner_ts" =~ ^[0-9]+$ ]]; then
+    # Owner file present and parses -- use its age/pid to judge staleness,
+    # same as always.
+    local age=$((now - owner_ts))
+    [ "$age" -ge "$STALE_LOCK_SECONDS" ] || return 1
+
+    if kill -0 "$owner_pid" 2>/dev/null; then
+      return 1   # owner process is still alive -- just slow, not stale
+    fi
+
+    log "STALE LOCK DETECTED: owner pid $owner_pid is dead and the lock is ${age}s old (>= ${STALE_LOCK_SECONDS}s) -- recovering"
+  else
+    # No usable owner file -- missing, unreadable, or unparseable. This is
+    # exactly what a `mkdir` that succeeded but was interrupted before the
+    # owner file got written would leave behind. Without this fallback the
+    # lock would sit unreclaimable until the full LOCK_TIMEOUT_SECONDS wait
+    # gives up; instead, fall back to the lock directory's own mtime so an
+    # ownerless lock is reclaimed no later than STALE_LOCK_SECONDS after it
+    # was created.
+    local lock_mtime
+    lock_mtime="$(stat -f %m "$LOCK_DIR" 2>/dev/null)" || return 1
+    [[ "$lock_mtime" =~ ^[0-9]+$ ]] || return 1
+
+    local lock_age=$((now - lock_mtime))
+    [ "$lock_age" -ge "$STALE_LOCK_SECONDS" ] || return 1
+
+    log "STALE LOCK DETECTED (missing/unreadable owner file): $LOCK_DIR is ${lock_age}s old (>= ${STALE_LOCK_SECONDS}s) -- recovering"
+  fi
+
   rm -f "$OWNER_FILE"
   rmdir "$LOCK_DIR" 2>/dev/null
-  log "shutting down all simulators to clear residual state left by the dead lock owner"
+  log "shutting down all simulators to clear residual state left by the orphaned lock"
   xcrun simctl shutdown all >/dev/null 2>&1
   return 0
 }
 
 acquire_lock() {
+  # Install the ownership-flag-aware cleanup trap BEFORE the first `mkdir`
+  # attempt below -- not after it succeeds. cleanup() gates all lock/
+  # simulator teardown on LOCK_OWNED, so this is a safe no-op for as long as
+  # this process is only waiting for the lock, and it closes the window
+  # where a signal landing right after a successful `mkdir` (but before a
+  # trap was installed) could leak an ownerless lock directory.
+  trap cleanup EXIT
+  trap 'cleanup 130' INT
+  trap 'cleanup 143' TERM
+
   local start_ts
   start_ts=$(date +%s)
 
   while true; do
     local mkdir_err
     if mkdir_err="$(mkdir "$LOCK_DIR" 2>&1)"; then
+      # Flag assignment immediately follows the successful mkdir -- the
+      # cleanup trap is already installed (above), so from this line
+      # onward a signal reliably runs the full lock/simulator teardown
+      # instead of leaking the directory this process just created.
       LOCK_OWNED=1
       printf '%s %s\n' "$$" "$(date +%s)" > "$OWNER_FILE"
-      # Only now do we own anything worth protecting -- install the real
-      # cleanup trap, replacing the pre-lock signal-only handlers.
-      trap cleanup EXIT
-      trap 'cleanup 130' INT
-      trap 'cleanup 143' TERM
       log "build lock acquired ($LOCK_DIR), owner pid $$"
       return 0
     fi
