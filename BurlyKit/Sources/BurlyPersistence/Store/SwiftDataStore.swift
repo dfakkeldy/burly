@@ -251,6 +251,41 @@ public final class SwiftDataStore: BurlyStore {
         try context.save()
     }
 
+    // MARK: - Watch working set
+
+    public func loggedSessionsAwaitingAck() throws -> [SessionData] {
+        guard kind == .watch else {
+            throw BurlyStoreError.operationRequiresWatchStore
+        }
+        // Filtering in Swift, not in the predicate: same rationale as
+        // `exercises(includingArchived:)` above — the working set is small
+        // by construction (that is the whole point of pruning), and enum
+        // equality in `#Predicate` is another well-known SwiftData sharp
+        // edge alongside optional-Date predicates.
+        return try context.fetch(FetchDescriptor<Session>())
+            .filter { $0.state == .logged }
+            .map { $0.snapshot() }
+    }
+
+    public func pruneDeliveredSessions(ackedIDs: [UUID]) throws {
+        guard kind == .watch else {
+            throw BurlyStoreError.operationRequiresWatchStore
+        }
+        for id in ackedIDs {
+            guard
+                let session = try model(Session.self, id: id),
+                session.state == .logged
+            else {
+                // Unknown id, or a still-`.active` session: leave it be.
+                // See the protocol doc — this is a timing fact, not an
+                // error, and it must not abort acks for the other ids.
+                continue
+            }
+            context.delete(session)
+        }
+        try context.save()
+    }
+
     // MARK: - Internals
 
     /// Single fetch-by-id helper. `id` is unique on every model, so

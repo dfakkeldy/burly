@@ -79,4 +79,27 @@ public protocol BurlyStore: AnyObject {
     func lastPerformance(exerciseID: UUID) throws -> ExerciseLastPerformanceData?
     /// Latest-wins upsert keyed on `exerciseID` (§5 digest rule).
     func upsertLastPerformance(_ performance: ExerciseLastPerformanceData) throws
+
+    // MARK: - Watch working set (§1 store shape; watch-only)
+    //
+    // "the watch never accumulates full history — after ack, delivered
+    // sessions are pruned from the watch store." These two members are the
+    // whole of that rule the store itself can enforce today: what's still
+    // waiting, and the prune. The queued courier, ack bookkeeping, and
+    // retry policy are BurlySync's M4 job — see `SessionAckApplying`.
+
+    /// Sessions in `.logged` state that have not yet been pruned — the
+    /// sync layer's view of the queue. Throws `.operationRequiresWatchStore`
+    /// on a phone-kind store: full history makes "awaiting ack" meaningless
+    /// there. `.count` on the result is the test-visible working-set size.
+    func loggedSessionsAwaitingAck() throws -> [SessionData]
+
+    /// Prunes `.logged` sessions named in `ackedIDs`, cascading their items
+    /// and sets — the mechanism that keeps the watch from accumulating full
+    /// history. An id naming an `.active` session, or no session at all, is
+    /// left untouched rather than throwing: an ack racing a session that
+    /// hasn't finished yet, or a duplicate/late ack, is a timing fact, not
+    /// an error. Throws `.operationRequiresWatchStore` on a phone-kind
+    /// store, before touching anything.
+    func pruneDeliveredSessions(ackedIDs: [UUID]) throws
 }
