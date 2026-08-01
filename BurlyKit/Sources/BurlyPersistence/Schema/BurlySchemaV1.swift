@@ -16,8 +16,10 @@ import SwiftData
 enum BurlySchemaV1: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(1, 0, 0) }
 
-    /// Every §1 entity, in spec order, plus the internal §9 seed-version
-    /// metadata immediately after Exercise. One schema serves both devices;
+    /// Every §1 entity, in spec order, plus two pieces of module-internal
+    /// bookkeeping placed next to what they serve: the §9 seed-version
+    /// metadata immediately after Exercise, and the in-flight session
+    /// journal immediately after Session. One schema serves both devices;
     /// the phone/watch difference is *content* policy (which rows exist, and
     /// the watch's post-ack pruning — §1 store shape, §5 outbox), not a
     /// different entity set. Two schemas would mean two migration ladders
@@ -29,6 +31,7 @@ enum BurlySchemaV1: VersionedSchema {
             Routine.self,
             RoutineItem.self,
             Session.self,
+            ActiveSessionJournal.self,
             SessionItem.self,
             SetRecord.self,
             ExerciseLastPerformance.self
