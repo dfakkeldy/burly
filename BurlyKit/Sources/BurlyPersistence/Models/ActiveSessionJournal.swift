@@ -36,40 +36,46 @@
 // Same reasoning as `CatalogSeedState`: BurlySchemaV1 has not shipped, so
 // adding this model to V1 is an additive completion of the initial schema,
 // not a migration of user data. It is module-internal bookkeeping, not a
-// §1 domain entity, and nothing about it crosses the sync wire.
+// §1 domain entity, and nothing about it crosses the sync wire. Nested in
+// `BurlySchemaV1` like every other model — see Schema/CurrentSchema.swift.
 
 import Foundation
 import SwiftData
 import BurlyCore
 
-@Model
-final class ActiveSessionJournal {
-    /// The `Session` this journal belongs to. Unique: a session has one
-    /// in-flight record or none.
-    @Attribute(.unique) var sessionID: UUID
+extension BurlySchemaV1 {
+    @Model
+    final class ActiveSessionJournal {
+        /// The `Session` this journal belongs to. Unique: a session has one
+        /// in-flight record or none.
+        @Attribute(.unique) var sessionID: UUID
 
-    /// JSON-encoded `ActiveSessionScaffolding`.
-    ///
-    /// Stored as `Data` rather than as a natively-persisted Codable
-    /// property because the payload contains `[UUID: ItemPlan]` — a
-    /// dictionary whose keys are not strings, which `Codable` renders as a
-    /// flat unkeyed array. That round-trips predictably through
-    /// `JSONEncoder`; handing SwiftData's own Codable storage a shape like
-    /// that is an unnecessary bet.
-    var payload: Data
+        /// JSON-encoded `ActiveSessionScaffolding`.
+        ///
+        /// Stored as `Data` rather than as a natively-persisted Codable
+        /// property because the payload contains `[UUID: ItemPlan]` — a
+        /// dictionary whose keys are not strings, which `Codable` renders as a
+        /// flat unkeyed array. That round-trips predictably through
+        /// `JSONEncoder`; handing SwiftData's own Codable storage a shape like
+        /// that is an unnecessary bet.
+        var payload: Data
 
-    /// Store-owned. Sole purpose: make the `fetchLimit = 1` Resume lookup
-    /// deterministic if a store ever holds more than one journal row.
-    var updatedAt: Date
+        /// Store-owned. Sole purpose: make the `fetchLimit = 1` Resume lookup
+        /// deterministic if a store ever holds more than one journal row.
+        var updatedAt: Date
 
-    init(sessionID: UUID, payload: Data, updatedAt: Date) {
-        self.sessionID = sessionID
-        self.payload = payload
-        self.updatedAt = updatedAt
+        init(sessionID: UUID, payload: Data, updatedAt: Date) {
+            self.sessionID = sessionID
+            self.payload = payload
+            self.updatedAt = updatedAt
+        }
     }
 }
 
 /// The non-§1 half of an `ActiveSession`, as one Codable value.
+///
+/// Not a `@Model` and therefore not versioned: this is the *wire shape* of
+/// `ActiveSessionJournal.payload`, which SwiftData sees only as `Data`.
 ///
 /// Deliberately *not* the whole `ActiveSession`: `session` is stored as the
 /// real §1 object graph, and journaling a second copy of it would create
