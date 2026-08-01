@@ -16,12 +16,13 @@ import BurlyCore
 @Suite("§1 #5 — versioned schema and migration plan wiring")
 struct MigrationPlanTests {
 
-    @Test("BurlySchemaV1 is version 1.0.0 and lists every §1 entity exactly once")
-    func schemaListsEveryEntity() {
+    @Test("BurlySchemaV1 is version 1.0.0 and lists every persistent model exactly once")
+    func schemaListsEveryPersistentModel() {
         #expect(BurlySchemaV1.versionIdentifier == Schema.Version(1, 0, 0))
 
         let names = BurlySchemaV1.models.map { String(describing: $0) }.sorted()
         #expect(names == [
+            "CatalogSeedState",
             "Exercise",
             "ExerciseLastPerformance",
             "Routine",

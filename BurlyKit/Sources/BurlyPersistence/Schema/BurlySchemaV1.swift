@@ -16,14 +16,16 @@ import SwiftData
 enum BurlySchemaV1: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(1, 0, 0) }
 
-    /// Every §1 entity, in spec order. One schema serves both devices; the
-    /// phone/watch difference is *content* policy (which rows exist, and
+    /// Every §1 entity, in spec order, plus the internal §9 seed-version
+    /// metadata immediately after Exercise. One schema serves both devices;
+    /// the phone/watch difference is *content* policy (which rows exist, and
     /// the watch's post-ack pruning — §1 store shape, §5 outbox), not a
     /// different entity set. Two schemas would mean two migration ladders
     /// to keep in step for no gain.
     static var models: [any PersistentModel.Type] {
         [
             Exercise.self,
+            CatalogSeedState.self,
             Routine.self,
             RoutineItem.self,
             Session.self,

@@ -379,6 +379,52 @@ public final class SwiftDataStore: BurlyStore {
         try context.save()
     }
 
+    // MARK: - Catalog seed
+
+    /// One-save, additive seed application. Version metadata and newly
+    /// inserted exercises commit atomically in this context.
+    ///
+    /// Matching is by the permanent seed UUID only. No property of an
+    /// existing Exercise is assigned here, so a user's rename, muscle-tag
+    /// edit, origin, naming state, and archive timestamp all survive both a
+    /// same-version reapply and a later additive seed bump.
+    func applyCatalogSeed(_ seed: CatalogSeed) throws -> Int {
+        let key = CatalogSeedState.exerciseCatalogKey
+        var stateDescriptor = FetchDescriptor<CatalogSeedState>(
+            predicate: #Predicate { $0.key == key }
+        )
+        stateDescriptor.fetchLimit = 1
+        let state = try context.fetch(stateDescriptor).first
+
+        guard (state?.version ?? 0) < seed.seedVersion else { return 0 }
+
+        let existingIDs = Set(
+            try context.fetch(FetchDescriptor<Exercise>()).map(\.id)
+        )
+        var insertedCount = 0
+        for seeded in seed.exercises where existingIDs.contains(seeded.id) == false {
+            context.insert(
+                Exercise(
+                    id: seeded.id,
+                    name: seeded.name,
+                    muscleGroups: seeded.muscleGroups,
+                    origin: .curated,
+                    needsNaming: false,
+                    archivedAt: nil
+                )
+            )
+            insertedCount += 1
+        }
+
+        if let state {
+            state.version = seed.seedVersion
+        } else {
+            context.insert(CatalogSeedState(version: seed.seedVersion))
+        }
+        try context.save()
+        return insertedCount
+    }
+
     // MARK: - Internals
 
     /// Single fetch-by-id helper. `id` is unique on every model, so
