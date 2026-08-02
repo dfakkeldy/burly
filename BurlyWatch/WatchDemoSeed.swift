@@ -130,6 +130,27 @@ enum WatchDemoSeed {
             origin: .live,
             items: [SessionItemData(exerciseID: squatID, order: 0)]
         ))
+
+        // m2-03: a seeded ExerciseLastPerformance digest for Back Squat, so
+        // BurlyWatchUITests can assert the §2 ghost row / prefill ladder
+        // against known numbers, set index by set index. Bench Press and
+        // Pull-Up deliberately get NO digest -- §2 acceptance #5's other
+        // half ("absent digest renders empty ghosts, no crash, no stale
+        // data") needs an exercise that has never had one.
+        try store.applyDigest(
+            lastPerformance: [
+                ExerciseLastPerformanceData(
+                    exerciseID: squatID,
+                    performedAt: threeDaysAgo,
+                    sets: [
+                        SetSnapshot(weight: Weight(kg: 100), reps: 8),
+                        SetSnapshot(weight: Weight(kg: 102.5), reps: 7),
+                        SetSnapshot(weight: Weight(kg: 105), reps: 6)
+                    ]
+                )
+            ],
+            ackedSessionIDs: []
+        )
     }
 }
 #endif
