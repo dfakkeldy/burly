@@ -13,6 +13,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§1 #1 — round-trip: write, cold-load a new container, identical graph")
 struct RoundTripTests {
 

@@ -14,10 +14,13 @@ import Foundation
 import SwiftData
 import BurlyCore
 
+@MainActor
 public final class SwiftDataStore: BurlyStore {
 
     /// Not Sendable, and neither is this class — see BurlyStore's threading
-    /// note. One store, one isolation domain.
+    /// note. `@MainActor` isolation (m4-04 review round 1, blocker 2) is
+    /// what makes "one store, one isolation domain" a compiler-enforced fact
+    /// rather than a convention every caller has to remember.
     private let context: ModelContext
 
     /// Which device this store belongs to (§1 store shape: phone vs. watch
@@ -42,6 +45,18 @@ public final class SwiftDataStore: BurlyStore {
     /// It is deliberately *not* consulted by `applyRoutineSnapshot`, which
     /// replicates someone else's authored timestamp.
     private let clock: any WallClock
+
+    /// Test-only fault injection (m4-04 review round 2, finding 3): called
+    /// with the 0-based index and id of each placeholder exercise
+    /// `applyReplicatedSession(_:upsertingPlaceholderExercises:)` is about
+    /// to check for existence, immediately before the fetch. Throwing from
+    /// it simulates a genuine `context.fetch` I/O failure landing on that
+    /// exact iteration — a real one cannot be deterministically timed to
+    /// one specific loop iteration in a test. `nil` in production and in
+    /// every test that isn't specifically pinning the rollback boundary
+    /// this seam exists to test; internal (not `private`), matching this
+    /// file's other test-only seams, so `@testable import` can reach it.
+    var placeholderExistenceCheckFaultForTesting: ((_ index: Int, _ placeholderID: UUID) throws -> Void)?
 
     /// Internal — see BurlyContainer.swift's boundary doc: `ModelContainer`
     /// must never appear in a public signature of this module. Construct a
@@ -269,6 +284,12 @@ public final class SwiftDataStore: BurlyStore {
     // MARK: - Sessions
 
     public func createSession(_ session: SessionData) throws {
+        // m4-04 review round 1, major 7: an out-of-range revision (a
+        // programmatic caller that bypassed `SessionData`'s own `Decodable`
+        // gate) must never reach storage — a later `applyPhoneEdit` on it
+        // would trap trying to increment past `Int`'s range instead of
+        // throwing.
+        try validateIncomingRevision(session.revision, sessionID: session.id)
         // In-flight sessions are born through `saveActiveSession` and
         // nowhere else (m1-06 review round D). An `.active` row created
         // here would have no `ActiveSessionJournal` beside it: invisible to
@@ -525,6 +546,19 @@ public final class SwiftDataStore: BurlyStore {
         guard let stored = try model(Session.self, id: session.id) else {
             throw BurlyStoreError.notFound(session.id)
         }
+        // m4-04 review round 1, major 7: refuse an increment that would
+        // carry the stored revision past `maximumRevision` — checked before
+        // any preflight or mutation runs, same "nothing rejected leaves a
+        // trace" rule every other guard in this file follows, and a thrown
+        // domain error instead of letting `+= 1` trap the process on the
+        // one value (`Int.max`) it cannot represent one past. Reports the
+        // *current* stored value, not `+ 1`: computing that unconditionally
+        // would itself risk overflowing if `stored.revision` somehow already
+        // reached `Int.max` out-of-band (the same class of defensive
+        // reasoning `corruptedWeight` exists for elsewhere in this file).
+        guard stored.revision < SessionData.maximumRevision else {
+            throw BurlyStoreError.invalidRevision(sessionID: session.id, revision: stored.revision)
+        }
         let resolved = try preflightSessionGraph(session, ownedBy: stored)
         // Read before the graph is rewritten, so the decision is about the
         // session as it was, not as this edit leaves it.
@@ -549,6 +583,176 @@ public final class SwiftDataStore: BurlyStore {
 
         try commit()
         return stored.revision
+    }
+
+    @discardableResult
+    public func applyReplicatedSession(_ session: SessionData) throws -> Int {
+        try applyReplicatedSession(session, upsertingPlaceholderExercises: [])
+    }
+
+    /// The whole §5 `session` ingest, atomically: `applyReplicatedSession`'s
+    /// conditional revision-recheck rule, plus an idempotent upsert of every
+    /// `placeholders` entry, in **one** `commit()` (m4-04 review round 1,
+    /// major 1). Before this, `BurlyPhoneSync.PhoneSyncCoordinator` upserted
+    /// each placeholder through its own `createExercise` call and then
+    /// called the single-argument overload above — two-or-more separate
+    /// saves, so a failure partway (the session naming an *unrelated*
+    /// dangling exercise, say) left an already-committed placeholder behind
+    /// with no session, no ack, and no way for a retry to know the
+    /// placeholder was ever created for this specific delivery. Folding the
+    /// upserts into this method's own transaction means the same
+    /// `commit()`-rolls-back-on-throw guarantee that already protects the
+    /// session graph now protects the placeholders with it: nothing survives
+    /// a rejected delivery.
+    ///
+    /// - Placeholder upsert policy is unchanged from the coordinator's
+    ///   previous behavior: created only when genuinely absent, never
+    ///   overwriting an exercise this store already knows about (the same
+    ///   "never overwrite" policy `applyCatalogSeed` documents) — a
+    ///   `needsNaming` exercise may already have been named by the user
+    ///   between deliveries, and a redelivery must not un-name it.
+    /// - Inserted *before* `preflightSessionGraph` runs, so a session
+    ///   referencing a placeholder this call itself just introduced resolves
+    ///   without a nested save — `ModelContext.fetch` sees a context's own
+    ///   pending inserts, not only what is already durably saved.
+    /// - Major 7/8 both apply exactly as the single-argument overload's doc
+    ///   describes: the revision range is validated first, the existing-row
+    ///   no-op check runs before the `.active` guard, and no row (placeholder
+    ///   or session) is touched until every rejection check has passed.
+    @discardableResult
+    public func applyReplicatedSession(
+        _ session: SessionData,
+        upsertingPlaceholderExercises placeholders: [ExerciseData]
+    ) throws -> Int {
+        // m4-04 review round 1, major 7: a wire payload's revision is
+        // already validated by `SessionData`'s own `Decodable`; this is the
+        // store-level backstop for a caller that constructed one directly.
+        try validateIncomingRevision(session.revision, sessionID: session.id)
+
+        // m4-04 review round 1, major 8: the existing-row no-op check runs
+        // BEFORE the `.active` guard below. A stale replica (incoming
+        // revision ≤ stored) must be a silent no-op unconditionally — even
+        // in the unreachable-on-today's-protocol shape where it also
+        // happens to claim `.active` — because the alternative throws on a
+        // payload the §5 idempotency rule says to drop quietly, and the
+        // coordinator's binding contract sends no ack for a thrown command
+        // (an honest drop is owed a re-ack, not silence forever).
+        let stored = try model(Session.self, id: session.id)
+        if let stored, session.revision <= stored.revision {
+            // The in-transaction recheck (binding contract item 2): a
+            // caller's own lookup can be stale, so this is the one read
+            // that actually decides. Nothing is mutated, nothing is saved
+            // — the §5 "drop silently" rule, realized as a store guarantee.
+            return stored.revision
+        }
+
+        // Only reached when this call is actually about to create or
+        // replace — the `.active` prohibition belongs here, not earlier
+        // (m1-06 review round D's rule, scoped correctly by major 8): a
+        // replica can never mint an `.active` row; only
+        // `saveActiveSession` writes the journal that makes one resumable.
+        guard session.state != .active else {
+            throw BurlyStoreError.activeSessionRequiresSaveActiveSession(sessionID: session.id)
+        }
+
+        // Everything from here on — INCLUDING the placeholder existence
+        // checks and inserts, not merely `preflightSessionGraph` and after
+        // — is wrapped in an explicit rollback-on-throw, not just
+        // `commit()`'s own (m4-04 review round 1, major 1, tightened by
+        // round 2 finding 3). Round 1's fix left the placeholder loop
+        // itself OUTSIDE this block: a throw from the loop's own existence
+        // fetch (a genuine I/O/fetch error on, say, the second placeholder,
+        // not merely `preflightSessionGraph`'s dangling-reference check)
+        // would escape uncaught, leaving any placeholder already inserted
+        // earlier in the same loop pending-but-uncommitted in this
+        // long-lived context — invisible to a fresh reader, but silently
+        // committed whole by the next unrelated successful `save()`,
+        // exactly the create-residue hazard m1-06 review M1 closed for
+        // every *other* insert-then-validate sequence in this file (see
+        // `commit()`'s own doc). Moving the loop inside closes that gap:
+        // ANY throw between the first placeholder insert and `commit()` —
+        // wherever it originates — now rolls back everything staged so far.
+        do {
+            // m4-04 review round 1, major 1: placeholder exercises land in
+            // the SAME transaction as the session, inserted (not yet
+            // saved) before `preflightSessionGraph` resolves the session's
+            // own exercise references, so a session naming a placeholder
+            // this very call introduces resolves without a nested save.
+            for (index, placeholder) in placeholders.enumerated() {
+                // Test-only fault injection (round 2, finding 3's pin): a
+                // real `context.fetch` I/O failure cannot be deterministically
+                // timed to land on one specific loop iteration — moving the
+                // whole store out from under the context (the technique
+                // `SaveRollbackTests` uses for a save failure) cannot be
+                // scoped to a single iteration of this synchronous loop.
+                // `nil` in production and in every test that isn't
+                // specifically pinning this exact rollback boundary.
+                try placeholderExistenceCheckFaultForTesting?(index, placeholder.id)
+                guard try model(Exercise.self, id: placeholder.id) == nil else { continue }
+                context.insert(
+                    Exercise(
+                        id: placeholder.id,
+                        name: placeholder.name,
+                        muscleGroups: placeholder.muscleGroups,
+                        origin: placeholder.origin,
+                        needsNaming: placeholder.needsNaming,
+                        archivedAt: placeholder.archivedAt
+                    )
+                )
+            }
+
+            let resolved = try preflightSessionGraph(session, ownedBy: stored)
+            let journal = try journalModel(sessionID: session.id)
+
+            let target: Session
+            if let stored {
+                target = stored
+            } else {
+                let created = Session(
+                    id: session.id,
+                    routineID: session.routineID,
+                    routineName: session.routineName,
+                    startedAt: session.startedAt,
+                    endedAt: session.endedAt,
+                    state: session.state,
+                    // Verbatim, like `createSession` — a replica's revision
+                    // is the author's, not this store's to compute.
+                    revision: session.revision,
+                    healthKitWorkoutID: session.healthKitWorkoutID,
+                    origin: session.origin,
+                    notes: session.notes
+                )
+                context.insert(created)
+                target = created
+            }
+            reconcileSessionGraph(target, to: session, resolved: resolved)
+            // Overwritten, never incremented (m1-06 fix round A / m4-04):
+            // `applyPhoneEdit` stays the only incrementer in this protocol
+            // — this carries someone else's number forward, exactly like
+            // `applyRoutineSnapshot` carries forward an author's
+            // `updatedAt`.
+            target.revision = session.revision
+
+            if let journal {
+                // The guard above proves the incoming session is not
+                // `.active`, so a journal still beside the row it is about
+                // to replace is a Resume pointer at a session that is about
+                // to stop being in flight — `applyPhoneEdit`'s "editing a
+                // session out of `.active` is fine" rule, applied to the
+                // replicated path too.
+                context.delete(journal)
+            }
+
+            try commit()
+            return target.revision
+        } catch {
+            // `commit()` above already rolls back on a save failure, so
+            // this is a harmless no-op in that case; for every earlier
+            // throw in this block (preflight chief among them) it is what
+            // actually discards the pending placeholder inserts.
+            context.rollback()
+            throw error
+        }
     }
 
     // MARK: - Last-performance digests
@@ -718,6 +922,17 @@ public final class SwiftDataStore: BurlyStore {
         return try context.fetch(descriptor)
             .filter { $0.state == .logged }
             .map(\.startedAt)
+    }
+
+    // MARK: - Digest generation (m4-04; bounded)
+
+    public func allLoggedSetSlices() throws -> [SetRecordSlice] {
+        // No predicate, no exercise filter: one full pass over `SetRecord`,
+        // exactly the shape `loggedSetSlices(exerciseID:since: nil,
+        // through: nil)` already produces internally for a single exercise
+        // (see that method's and the protocol doc's cost note) — this is
+        // that same fetch, paid for once instead of once per exercise.
+        try fetchSetSlices(predicate: nil, exerciseID: nil)
     }
 
     // MARK: - Phone-shell existence/count (m5-01; bounded)
@@ -1150,6 +1365,18 @@ public final class SwiftDataStore: BurlyStore {
                 // payload does not say which one wins, so none of it lands.
                 throw BurlyStoreError.duplicateID(entry.exerciseID)
             }
+        }
+    }
+
+    /// m4-04 review round 1, major 7 — the store-level backstop for
+    /// `createSession`/`applyReplicatedSession`: `SessionData`'s own
+    /// `Decodable` already rejects an out-of-range `revision` for anything
+    /// that arrived over the wire, but a caller can construct a
+    /// `SessionData` directly (a test, a future in-process caller) without
+    /// ever going through that decoder, so the store re-checks here too.
+    private func validateIncomingRevision(_ revision: Int, sessionID: UUID) throws {
+        guard (1...SessionData.maximumRevision).contains(revision) else {
+            throw BurlyStoreError.invalidRevision(sessionID: sessionID, revision: revision)
         }
     }
 

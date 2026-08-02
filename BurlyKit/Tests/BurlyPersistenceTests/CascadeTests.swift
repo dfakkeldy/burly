@@ -14,6 +14,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§1 #2 — cascade deletes")
 struct CascadeTests {
 

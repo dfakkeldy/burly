@@ -24,6 +24,7 @@ import BurlyCore
 import BurlySync
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§1 #6 — ack seam prunes delivered sessions from the watch container")
 struct AckSeamIntegrationTests {
 

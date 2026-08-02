@@ -15,6 +15,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m6-01 fix round 2 — BurlyStore.exerciseProgression: the blessed all-time-then-filter path")
 struct ExerciseProgressionIntegrationTests {
     private func loggedSession(

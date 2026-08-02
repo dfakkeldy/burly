@@ -18,6 +18,7 @@ import BurlyCore
 import BurlyPersistence
 
 #if DEBUG
+@MainActor
 enum PhoneDemoSeed {
     /// Matched literally (not shared code) by BurlyPhoneUITests.swift — the
     /// UI test target runs out-of-process and can only reach this app

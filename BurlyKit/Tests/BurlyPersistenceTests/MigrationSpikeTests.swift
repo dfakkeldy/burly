@@ -60,6 +60,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite(
     "m1-06 M3 — migration spike (isolated process)",
     .enabled(

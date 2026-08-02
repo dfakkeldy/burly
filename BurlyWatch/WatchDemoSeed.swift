@@ -15,6 +15,7 @@ import BurlyCore
 import BurlyPersistence
 
 #if DEBUG
+@MainActor
 enum WatchDemoSeed {
     /// Matched literally (not shared code) by BurlyWatchUITests.swift -- the
     /// UI test target runs out-of-process and can only reach this app
@@ -252,6 +253,7 @@ enum WatchDemoSeed {
 /// layer, which essentially never fails on the simulator. DEBUG-only, like
 /// the rest of this file; every method not named by `fault` forwards to
 /// `wrapped` untouched.
+@MainActor
 final class FaultInjectingStore: BurlyStore {
     enum Fault: String {
         case saveActiveSession
@@ -320,6 +322,15 @@ final class FaultInjectingStore: BurlyStore {
     func updateRoutine(_ routine: RoutineData) throws { try wrapped.updateRoutine(routine) }
     func applyRoutineSnapshot(_ routine: RoutineData) throws { try wrapped.applyRoutineSnapshot(routine) }
     func hasRoutines() throws -> Bool { try wrapped.hasRoutines() }
+    @discardableResult
+    func applyReplicatedSession(_ session: SessionData) throws -> Int {
+        try wrapped.applyReplicatedSession(session)
+    }
+    @discardableResult
+    func applyReplicatedSession(_ session: SessionData, upsertingPlaceholderExercises placeholders: [ExerciseData]) throws -> Int {
+        try wrapped.applyReplicatedSession(session, upsertingPlaceholderExercises: placeholders)
+    }
+    func allLoggedSetSlices() throws -> [SetRecordSlice] { try wrapped.allLoggedSetSlices() }
 
     // MARK: - Sessions
 

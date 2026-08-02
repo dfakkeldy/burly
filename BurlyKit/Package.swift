@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "BurlySync", targets: ["BurlySync"]),
         .library(name: "BurlySyncMachine", targets: ["BurlySyncMachine"]),
         .library(name: "BurlySyncAdapters", targets: ["BurlySyncAdapters"]),
+        .library(name: "BurlyPhoneSync", targets: ["BurlyPhoneSync"]),
         .library(name: "BurlyHealth", targets: ["BurlyHealth"]),
         .library(name: "BurlyFixtures", targets: ["BurlyFixtures"]),
         .library(name: "BurlyImport", targets: ["BurlyImport"])
@@ -67,6 +68,20 @@ let package = Package(
         .target(
             name: "BurlyHealth",
             dependencies: ["BurlyCore"]
+        ),
+        // m4-04 — the phone-side sync runtime: binds `PhoneSyncMachine` (via
+        // BurlySync's DTO seam) to a real `BurlyStore`, so it necessarily
+        // sits above *both* BurlyPersistence and BurlySync — the layer the
+        // task brief calls "above the seam". It cannot live inside either
+        // of those targets: BurlyPersistence already depends on BurlySync
+        // (for the §5 digest seam), so adding BurlyPersistence as a
+        // dependency of BurlySync would be a circular target dependency.
+        // BurlySyncMachine is named explicitly because this target
+        // references `PhoneSyncMachine`'s types directly, not merely
+        // through BurlySync's bound aliases.
+        .target(
+            name: "BurlyPhoneSync",
+            dependencies: ["BurlyCore", "BurlyPersistence", "BurlySync", "BurlySyncMachine"]
         ),
         // Synthetic fixture generators (workout history, Hevy-shaped CSV)
         // for tests and previews. Shipped as its own library target (not a
@@ -124,6 +139,14 @@ let package = Package(
         .testTarget(
             name: "BurlyHealthTests",
             dependencies: ["BurlyHealth"]
+        ),
+        // BurlyFixtures for `SeededGenerator` — the digest generator's
+        // completeness property test drives randomized histories off the
+        // same deterministic PRNG every other fixture generator in the
+        // package uses, rather than hand-rolling a second one.
+        .testTarget(
+            name: "BurlyPhoneSyncTests",
+            dependencies: ["BurlyPhoneSync", "BurlyPersistence", "BurlySync", "BurlySyncMachine", "BurlyCore", "BurlyFixtures"]
         ),
         .testTarget(
             name: "BurlyFixturesTests",

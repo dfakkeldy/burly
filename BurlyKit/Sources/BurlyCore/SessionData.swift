@@ -70,9 +70,33 @@ public struct SessionData: Sendable, Equatable, Hashable, Codable, Identifiable 
         case id, routineID, routineName, startedAt, endedAt, state, revision, healthKitWorkoutID, origin, items, notes
     }
 
+    /// Upper bound for a legal `revision` line (m4-04 review round 1, major
+    /// 7). §1 starts a session at revision 1 and only a phone edit ever
+    /// moves it, one at a time (`BurlyStore.applyPhoneEdit`'s `+= 1`); no
+    /// real session will ever come close to this bound in the lifetime of
+    /// the app. It exists to catch a forged or corrupted wire value —
+    /// `Int.max` chief among them — before it can reach that increment,
+    /// where overflowing `Int` traps the process instead of throwing. A
+    /// wire payload's revision is checked against this range at decode time
+    /// below; the store re-checks it at apply time (`BurlyStore
+    /// .applyReplicatedSession`, `.createSession`) for callers that never
+    /// went through `Decodable` at all.
+    public static let maximumRevision = 1_000_000_000
+
+    /// True for the one legal §1/§5 revision range: `1...maximumRevision`.
+    /// `0` and negative values are never legal — §1: "starts at 1."
+    public var hasValidRevision: Bool {
+        (1...Self.maximumRevision).contains(revision)
+    }
+
     /// Custom decoder for §1 default symmetry: `state` defaults to
     /// `.active`, `revision` to 1, and `items` to `[]` when absent —
-    /// matching the memberwise initializer's defaults.
+    /// matching the memberwise initializer's defaults. Also validates
+    /// `revision` against `maximumRevision` (m4-04 review round 1, major
+    /// 7) — a wire payload is the one ingress this type cannot trap on;
+    /// a hostile or corrupted value must fail the decode with a normal,
+    /// catchable `DecodingError`, the same way `Weight`'s decoder already
+    /// rejects a hostile `weightKg`.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -81,7 +105,15 @@ public struct SessionData: Sendable, Equatable, Hashable, Codable, Identifiable 
         startedAt = try container.decode(Date.self, forKey: .startedAt)
         endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
         state = try container.decodeIfPresent(SessionState.self, forKey: .state) ?? .active
-        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        let decodedRevision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        guard (1...Self.maximumRevision).contains(decodedRevision) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .revision,
+                in: container,
+                debugDescription: "revision must be in 1...\(Self.maximumRevision) (decoded \(decodedRevision))."
+            )
+        }
+        revision = decodedRevision
         healthKitWorkoutID = try container.decodeIfPresent(UUID.self, forKey: .healthKitWorkoutID)
         origin = try container.decode(SessionOrigin.self, forKey: .origin)
         items = try container.decodeIfPresent([SessionItemData].self, forKey: .items) ?? []

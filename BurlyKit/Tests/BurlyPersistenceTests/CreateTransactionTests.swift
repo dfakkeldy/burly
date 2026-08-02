@@ -23,6 +23,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m1-06 M1 — rejected creates leave no pending rows")
 struct CreateTransactionTests {
 

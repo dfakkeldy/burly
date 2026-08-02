@@ -105,6 +105,24 @@ public enum BurlyStoreError: Error, Equatable {
     /// failure rather than handing a poisoned `Weight` back into equality,
     /// sorting, volume, PR, or chart math.
     case corruptedWeight(id: UUID, underlying: WeightValidationError)
+    /// A session's `revision` fell outside `SessionData.hasValidRevision`'s
+    /// `1...maximumRevision` range (m4-04 review round 1, major 7).
+    ///
+    /// Two distinct call sites throw this, both a thrown domain error
+    /// instead of a process trap:
+    ///
+    /// - `createSession`/`applyReplicatedSession` reject an out-of-range
+    ///   incoming `revision` before touching a row — `SessionData`'s own
+    ///   `Decodable` already rejects this for anything that arrived over
+    ///   the wire, so reaching this from those two methods means a
+    ///   programmatic caller constructed the value directly.
+    /// - `applyPhoneEdit` refuses to increment a stored revision that has
+    ///   already reached `maximumRevision` — `revision` in the payload is
+    ///   the value the increment *would* have produced, one past what
+    ///   `Int` can represent only in the literal `Int.max` case, but
+    ///   refused well before that boundary by the same shared bound so the
+    ///   two call sites agree on one number.
+    case invalidRevision(sessionID: UUID, revision: Int)
     // There is deliberately no `unboundedStatsQuery` case (m6-01 fix round
     // 2, review item 7 — reverting round 1's fix for this same finding).
     // Round 1 refused an all-nil `loggedSetSlices`/`loggedSessionDates`

@@ -19,7 +19,12 @@
 import Foundation
 import BurlySync
 
-extension SwiftDataStore: SessionDigestApplying {
+// `@MainActor` on the conformance itself: `SessionDigestApplying` is not
+// global-actor-isolated (BurlySync has no reason to know about it), so the
+// isolated-conformance syntax has to state explicitly where the conforming
+// type's implementation actually runs (m4-04 review round 1, blocker 2
+// ripple).
+extension SwiftDataStore: @MainActor SessionDigestApplying {
     public func apply(_ receipt: SessionDigestReceipt) throws {
         try applyDigest(
             lastPerformance: receipt.lastPerformance,

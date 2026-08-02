@@ -6,6 +6,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§9 #1 — idempotent, additive catalog seed loader")
 struct SeedLoaderTests {
     @Test("fresh load inserts the complete catalog as active curated exercises")

@@ -27,6 +27,7 @@ import BurlyCore
 import BurlySync
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m1-06 M2 — atomic digest application")
 struct DigestTransactionTests {
 
