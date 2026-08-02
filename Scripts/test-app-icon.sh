@@ -37,7 +37,8 @@ done
 swift - \
   "$TEST_DIR/first.png" \
   "$TEST_DIR/unauthorized-palette.png" \
-  "$TEST_DIR/interior-blend.png" <<'SWIFT'
+  "$TEST_DIR/interior-blend.png" \
+  "$TEST_DIR/single-interior-blend.png" <<'SWIFT'
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -48,7 +49,11 @@ guard let source = CGImageSourceCreateWithURL(inputURL as CFURL, nil),
     fatalError("Could not read palette fixture source")
 }
 
-func writeFixture(path: String, color: (red: CGFloat, green: CGFloat, blue: CGFloat)) {
+func writeFixture(
+    path: String,
+    color: (red: CGFloat, green: CGFloat, blue: CGFloat),
+    patch: CGRect
+) {
     guard let context = CGContext(
           data: nil,
           width: image.width,
@@ -67,7 +72,7 @@ func writeFixture(path: String, color: (red: CGFloat, green: CGFloat, blue: CGFl
         blue: color.blue,
         alpha: 1
     )
-    context.fill(CGRect(x: 496, y: 496, width: 32, height: 32))
+    context.fill(patch)
     let outputURL = URL(fileURLWithPath: path)
     guard let fixture = context.makeImage(),
           let destination = CGImageDestinationCreateWithURL(
@@ -84,8 +89,24 @@ func writeFixture(path: String, color: (red: CGFloat, green: CGFloat, blue: CGFl
     }
 }
 
-writeFixture(path: CommandLine.arguments[2], color: (0, 0x70 / 255, 1))
-writeFixture(path: CommandLine.arguments[3], color: (0x88 / 255, 0x33 / 255, 0x21 / 255))
+let block = CGRect(x: 496, y: 496, width: 32, height: 32)
+let blend = (
+    red: CGFloat(0x88) / 255,
+    green: CGFloat(0x33) / 255,
+    blue: CGFloat(0x21) / 255
+)
+writeFixture(
+    path: CommandLine.arguments[2],
+    color: (0, 0x70 / 255, 1),
+    patch: block
+)
+writeFixture(path: CommandLine.arguments[3], color: blend, patch: block)
+// This maps to validator coordinate (512, 895), in flat red between the feet.
+writeFixture(
+    path: CommandLine.arguments[4],
+    color: blend,
+    patch: CGRect(x: 512, y: 128, width: 1, height: 1)
+)
 SWIFT
 
 expect_palette_rejection() {
@@ -102,5 +123,6 @@ expect_palette_rejection() {
 
 expect_palette_rejection "$TEST_DIR/unauthorized-palette.png" '#0070FF'
 expect_palette_rejection "$TEST_DIR/interior-blend.png" '#883321'
+expect_palette_rejection "$TEST_DIR/single-interior-blend.png" '#883321'
 
 echo "app-icon-test: PASS"

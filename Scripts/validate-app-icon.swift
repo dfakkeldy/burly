@@ -5,7 +5,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 
-struct RGB: Equatable {
+struct RGB: Hashable {
     let r: UInt8
     let g: UInt8
     let b: UInt8
@@ -65,7 +65,9 @@ let background = RGB(r: 0xF0, g: 0x4F, b: 0x2F)
 let ink = RGB(r: 0x20, g: 0x17, b: 0x13)
 let parchment = RGB(r: 0xFF, g: 0xF0, b: 0xCF)
 let approvedColors = [background, ink, parchment]
+let approvedColorPairs = [(0, 1), (0, 2), (1, 2)]
 let antialiasToleranceSquared = 4.0
+var blendPairIndices = [Int](repeating: -1, count: width * height)
 var backgroundCount = 0
 var inkCount = 0
 var parchmentCount = 0
@@ -105,30 +107,21 @@ func squaredDistanceFromBlend(
     }
 }
 
-func isApprovedAntialiasBlend(_ pixel: RGB, x: Int, y: Int) -> Bool {
-    for firstIndex in 0..<approvedColors.count {
-        for secondIndex in (firstIndex + 1)..<approvedColors.count {
-            let first = approvedColors[firstIndex]
-            let second = approvedColors[secondIndex]
-            guard squaredDistanceFromBlend(pixel, between: first, and: second)
-                    <= antialiasToleranceSquared else {
-                continue
-            }
-
-            // CoreGraphics antialiasing is a one-pixel raster edge. Require a
-            // blend-colored pixel to touch an exact endpoint so flat gradients
-            // or textures cannot masquerade as antialiasing in an interior.
-            for neighborY in max(0, y - 1)...min(height - 1, y + 1) {
-                for neighborX in max(0, x - 1)...min(width - 1, x + 1) {
-                    let neighbor = pixelAt(x: neighborX, y: neighborY)
-                    if neighbor == first || neighbor == second {
-                        return true
-                    }
-                }
-            }
+func approvedBlendPairIndex(for pixel: RGB) -> Int? {
+    var closestPairIndex: Int?
+    var closestDistance = Double.infinity
+    for (pairIndex, pair) in approvedColorPairs.enumerated() {
+        let distance = squaredDistanceFromBlend(
+            pixel,
+            between: approvedColors[pair.0],
+            and: approvedColors[pair.1]
+        )
+        if distance < closestDistance {
+            closestDistance = distance
+            closestPairIndex = pairIndex
         }
     }
-    return false
+    return closestDistance <= antialiasToleranceSquared ? closestPairIndex : nil
 }
 
 for y in 0..<height {
@@ -138,15 +131,88 @@ for y in 0..<height {
         if pixel == ink { inkCount += 1 }
         if pixel == parchment { parchmentCount += 1 }
 
-        if !approvedColors.contains(pixel),
-           !isApprovedAntialiasBlend(pixel, x: x, y: y) {
-            fail("unauthorized palette color \(pixel.hex) at (\(x), \(y))")
+        if !approvedColors.contains(pixel) {
+            guard let pairIndex = approvedBlendPairIndex(for: pixel) else {
+                fail("unauthorized palette color \(pixel.hex) at (\(x), \(y))")
+            }
+            blendPairIndices[y * width + x] = pairIndex
         }
 
         let dx = Double(x) + 0.5 - centerX
         let dy = Double(y) + 0.5 - centerY
         if dx * dx + dy * dy > safeRadiusSquared, pixel != background {
             fail("non-background pixel outside safe circle at (\(x), \(y))")
+        }
+    }
+}
+
+var visitedBlendPixels = [Bool](repeating: false, count: width * height)
+for y in 0..<height {
+    for x in 0..<width {
+        let startIndex = y * width + x
+        let pairIndex = blendPairIndices[startIndex]
+        guard pairIndex >= 0, !visitedBlendPixels[startIndex] else {
+            continue
+        }
+
+        let pair = approvedColorPairs[pairIndex]
+        let first = approvedColors[pair.0]
+        let second = approvedColors[pair.1]
+        var touchesFirst = false
+        var touchesSecond = false
+        var component = [startIndex]
+        var componentColors = Set<RGB>()
+        visitedBlendPixels[startIndex] = true
+        var nextComponentIndex = 0
+
+        while nextComponentIndex < component.count {
+            let pixelIndex = component[nextComponentIndex]
+            nextComponentIndex += 1
+            let pixelX = pixelIndex % width
+            let pixelY = pixelIndex / width
+            componentColors.insert(pixelAt(x: pixelX, y: pixelY))
+            var touchesEndpointAtPixel = false
+
+            for neighborY in max(0, pixelY - 1)...min(height - 1, pixelY + 1) {
+                for neighborX in max(0, pixelX - 1)...min(width - 1, pixelX + 1) {
+                    let neighborIndex = neighborY * width + neighborX
+                    let neighbor = pixelAt(x: neighborX, y: neighborY)
+                    touchesFirst = touchesFirst || neighbor == first
+                    touchesSecond = touchesSecond || neighbor == second
+                    touchesEndpointAtPixel = touchesEndpointAtPixel
+                        || neighbor == first
+                        || neighbor == second
+
+                    if blendPairIndices[neighborIndex] == pairIndex,
+                       !visitedBlendPixels[neighborIndex] {
+                        visitedBlendPixels[neighborIndex] = true
+                        component.append(neighborIndex)
+                    }
+                }
+            }
+
+            if !touchesEndpointAtPixel {
+                let pixel = pixelAt(x: pixelX, y: pixelY)
+                fail(
+                    "unauthorized palette color \(pixel.hex) "
+                        + "at (\(pixelX), \(pixelY)): blend pixel is not on a palette edge"
+                )
+            }
+        }
+
+        // A normal edge component reaches both flat endpoint colors. A source
+        // feature narrower than one pixel may never reach full coverage, but
+        // CoreGraphics still emits a multi-step ramp rather than one stray
+        // blend value; preserve those deterministic subpixel components.
+        let reachesBothEndpoints = touchesFirst && touchesSecond
+        let hasSubpixelTransitionRamp = (touchesFirst || touchesSecond)
+            && componentColors.count >= 3
+        if !reachesBothEndpoints && !hasSubpixelTransitionRamp {
+            let pixel = pixelAt(x: x, y: y)
+            fail(
+                "unauthorized palette color \(pixel.hex) at (\(x), \(y)): "
+                    + "blend component is not a palette-edge transition"
+            )
         }
     }
 }
