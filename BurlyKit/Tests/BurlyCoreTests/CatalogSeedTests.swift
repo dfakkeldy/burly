@@ -101,4 +101,139 @@ struct CatalogSeedTests {
         #expect(seed.exercise(forHevyAlias: "Squat (Barbell)")?.name == "Back Squat")
         #expect(seed.exercise(forHevyAlias: "Deadlift (Barbell)")?.name == "Conventional Deadlift")
     }
+
+    @Test("Hevy alias lookup is case-insensitive on both sides (spec §8)")
+    func hevyAliasLookupIsCaseInsensitive() throws {
+        let seed = try CatalogSeed.loadBundled()
+        let exactID = try #require(seed.exerciseID(forHevyAlias: "Bench Press (Barbell)"))
+
+        #expect(seed.exerciseID(forHevyAlias: "BENCH PRESS (BARBELL)") == exactID)
+        #expect(seed.exerciseID(forHevyAlias: "bench press (barbell)") == exactID)
+        #expect(seed.exerciseID(forHevyAlias: "Bench PRESS (barbell)") == exactID)
+        #expect(seed.exercise(forHevyAlias: "bench press (barbell)")?.name == "Barbell Bench Press")
+    }
+
+    // MARK: - m7-01 adversarial review round 1 — findings 3.1, 7.1, 7.2, 8.1
+
+    @Test("finding 3.1 — validation rejects two aliases that collide under lookup normalization but map to different exercise IDs")
+    func validationRejectsAmbiguousAliasNormalization() throws {
+        let exerciseA = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000010"))
+        let exerciseB = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000011"))
+        let exercises = [
+            CatalogSeed.CatalogExercise(id: exerciseA, name: "First", muscleGroups: [.chest]),
+            CatalogSeed.CatalogExercise(id: exerciseB, name: "Second", muscleGroups: [.lats])
+        ]
+
+        // "Foo" and "FOO" normalize to the same lookup key but point at
+        // different exercises — nondeterministic under plain
+        // `uniquingKeysWith: { first, _ in first }` (whichever alias
+        // `Dictionary` happens to iterate first would silently win).
+        // Pinning regression: the old validate() never checked for this.
+        #expect(throws: CatalogSeedError.ambiguousHevyAliasNormalization(normalized: "foo")) {
+            try CatalogSeed(seedVersion: 1, exercises: exercises, hevyAliases: ["Foo": exerciseA, "FOO": exerciseB])
+        }
+    }
+
+    @Test("finding 3.1 — two aliases that collide under normalization but agree on the same exercise ID are harmless, not rejected")
+    func harmlessAliasNormalizationCollisionIsAllowed() throws {
+        let exerciseID = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000012"))
+        let exercise = CatalogSeed.CatalogExercise(id: exerciseID, name: "Known", muscleGroups: [.core])
+
+        let seed = try CatalogSeed(seedVersion: 1, exercises: [exercise], hevyAliases: ["Foo": exerciseID, "FOO": exerciseID])
+        #expect(seed.exerciseID(forHevyAlias: "foo") == exerciseID)
+    }
+
+    @Test("finding 8.1 — an alias with surrounding whitespace still resolves via the same normalization used at lookup time")
+    func aliasWithSurroundingWhitespaceStillResolves() throws {
+        let exerciseID = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000013"))
+        let exercise = CatalogSeed.CatalogExercise(id: exerciseID, name: "Known", muscleGroups: [.core])
+
+        // Pinning regression: seed-side normalization only lowercased
+        // (never trimmed) while CSV-side lookup values are already
+        // trimmed before lookup — an authored alias with stray whitespace
+        // previously could never match a well-formed, trimmed CSV value.
+        let seed = try CatalogSeed(seedVersion: 1, exercises: [exercise], hevyAliases: [" Known Alias ": exerciseID])
+        #expect(seed.exerciseID(forHevyAlias: "Known Alias") == exerciseID)
+    }
+
+    // MARK: - m7-01 adversarial review round 2 §2.3 — catalog-name collision validation
+
+    @Test("round-2 §2.3 — validation rejects two exercise names that collide under normalization but belong to different exercises")
+    func validationRejectsAmbiguousExerciseNameNormalization() throws {
+        let exerciseA = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000020"))
+        let exerciseB = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000021"))
+        // "Foo" and "FOO" are exact-match distinct (so the existing
+        // `duplicateExerciseName` check doesn't catch them) but collide
+        // once lookup-normalized — pinning regression: `catalogNameIndex`
+        // in `HevyCSVImporter` would otherwise let whichever one
+        // `Dictionary` happens to keep silently shadow the other, making
+        // it unreachable by its own name.
+        let exercises = [
+            CatalogSeed.CatalogExercise(id: exerciseA, name: "Foo", muscleGroups: [.chest]),
+            CatalogSeed.CatalogExercise(id: exerciseB, name: "FOO", muscleGroups: [.lats])
+        ]
+
+        #expect(throws: CatalogSeedError.ambiguousExerciseNameNormalization(normalized: "foo")) {
+            try CatalogSeed(seedVersion: 1, exercises: exercises, hevyAliases: [:])
+        }
+    }
+
+    @Test("round-2 §2.3 — validation rejects an alias that collides under normalization with a different exercise's name")
+    func validationRejectsAliasCollidingWithADifferentExerciseName() throws {
+        let exerciseA = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000022"))
+        let exerciseB = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000023"))
+        // Exercise A is literally named "Foo"; exercise B has an alias
+        // "FOO" (same normalized key). `resolveExercise` checks the alias
+        // table before the catalog-name index, so importing "Foo" would
+        // resolve to B every time, making A permanently unreachable by its
+        // own name — pinning regression: the old validate() only checked
+        // alias-vs-alias and name-vs-name collisions, never alias-vs-name.
+        let exercises = [
+            CatalogSeed.CatalogExercise(id: exerciseA, name: "Foo", muscleGroups: [.chest]),
+            CatalogSeed.CatalogExercise(id: exerciseB, name: "Something Else", muscleGroups: [.lats])
+        ]
+
+        #expect(
+            throws: CatalogSeedError.aliasCollidesWithExerciseName(alias: "FOO", exerciseID: exerciseB, shadowedExerciseID: exerciseA)
+        ) {
+            try CatalogSeed(seedVersion: 1, exercises: exercises, hevyAliases: ["FOO": exerciseB])
+        }
+    }
+
+    @Test("round-2 §2.3 — an alias that collides under normalization with its OWN exercise's name is harmless, not rejected")
+    func aliasCollidingWithItsOwnExerciseNameIsAllowed() throws {
+        let exerciseID = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000024"))
+        let exercise = CatalogSeed.CatalogExercise(id: exerciseID, name: "Foo", muscleGroups: [.core])
+
+        // An alias that just happens to normalize to the same key as its
+        // OWN exercise's name (e.g. a redundantly-authored "FOO" alias
+        // pointing at the exercise literally named "Foo") agrees on the
+        // same ID — not ambiguous, must not be rejected.
+        let seed = try CatalogSeed(seedVersion: 1, exercises: [exercise], hevyAliases: ["FOO": exerciseID])
+        #expect(seed.exerciseID(forHevyAlias: "foo") == exerciseID)
+    }
+
+    @Test("round-2 §2.3 — the bundled seed passes every collision-validation rule (review verified no such collision exists today)")
+    func bundledSeedPassesCollisionValidation() throws {
+        // `loadBundled()` runs the exact same `validate()` this suite
+        // pins above; a passing load here IS the assertion that the real
+        // catalog contains no normalized name-vs-name or alias-vs-name
+        // collision (m7-01 review round 2 §"CatalogSeed.validate() against
+        // the shipped resource": no defect confirmed against the actual
+        // bundled data). This test exists so a FUTURE authored addition
+        // that introduces such a collision fails fast here instead of only
+        // showing up as a silently-shadowed exercise at import time.
+        _ = try CatalogSeed.loadBundled()
+    }
+
+    @Test("findings 7.1/7.2 — normalizedMatchKey NFC-normalizes and locale-independently case-folds")
+    func normalizedMatchKeyNormalizesAndFolds() {
+        let nfc = "Caf\u{E9} Curl" // é precomposed (NFC)
+        let nfd = "Cafe\u{301} Curl" // e + combining acute (NFD)
+        #expect(CatalogSeed.normalizedMatchKey(nfc) == CatalogSeed.normalizedMatchKey(nfd))
+        #expect(CatalogSeed.normalizedMatchKey("Straße Press") == CatalogSeed.normalizedMatchKey("STRASSE PRESS"))
+        // Not diacritic-insensitive: visually/semantically distinct names
+        // must not collapse onto the same key.
+        #expect(CatalogSeed.normalizedMatchKey("café") != CatalogSeed.normalizedMatchKey("cafe"))
+    }
 }

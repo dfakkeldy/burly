@@ -20,7 +20,8 @@ let package = Package(
         .library(name: "BurlyPersistence", targets: ["BurlyPersistence"]),
         .library(name: "BurlySync", targets: ["BurlySync"]),
         .library(name: "BurlyHealth", targets: ["BurlyHealth"]),
-        .library(name: "BurlyFixtures", targets: ["BurlyFixtures"])
+        .library(name: "BurlyFixtures", targets: ["BurlyFixtures"]),
+        .library(name: "BurlyImport", targets: ["BurlyImport"])
     ],
     targets: [
         .target(
@@ -54,6 +55,18 @@ let package = Package(
         .target(
             name: "BurlyFixtures"
         ),
+        // Hevy CSV import — parsing/mapping layer only (spec §8, task m7-01).
+        // Depends on BurlyCore alone (domain types, CatalogSeed/alias table)
+        // and CryptoKit (system framework, not a third-party dependency) for
+        // the UUIDv5 derivation behind deterministic re-import identity.
+        // Deliberately does not depend on BurlyPersistence: wiring imported
+        // history into the store is a later M7 task, and this target's
+        // public surface (parse a CSV, get back domain values plus a
+        // dropped-data summary) is the seam that task builds on.
+        .target(
+            name: "BurlyImport",
+            dependencies: ["BurlyCore"]
+        ),
         .testTarget(
             name: "BurlyCoreTests",
             dependencies: ["BurlyCore"]
@@ -80,6 +93,13 @@ let package = Package(
         .testTarget(
             name: "BurlyFixturesTests",
             dependencies: ["BurlyFixtures"]
+        ),
+        .testTarget(
+            name: "BurlyImportTests",
+            // BurlyFixtures for the shared Hevy-shaped CSV generator (bodyweight,
+            // warmup, malformed-row scenarios); BurlyImport is the thing under
+            // test.
+            dependencies: ["BurlyImport", "BurlyFixtures"]
         )
     ],
     swiftLanguageModes: [.v6]

@@ -17,7 +17,37 @@
 // a new seedVersion (additive rows only; never mutate a shipped id's name or
 // muscleGroups in place). Existing UUIDs must never be changed or reused
 // regardless of which side of this line a change falls on.
-
+//
+// KNOWN ALIAS TO RE-VERIFY (task m7-03): "Pullover (Cable)" maps to
+// Straight-Arm Pulldown below. That pairing was a judgment call made
+// without a real Hevy export in hand (m7-01, 2026-08-01) - Hevy may export
+// cable pullovers as a distinct movement. Left as-is pending m7-03's
+// comparison against Dan's actual export; correcting it later is a
+// seedVersion bump (additive-only rule above), not an in-place edit.
+//
+// CASE SENSITIVITY (spec section 8): exerciseID(forHevyAlias:) and
+// exercise(forHevyAlias:) match case-insensitively - a Hevy export's exact
+// capitalization of an exercise title is not something Burly controls or
+// can rely on. `normalizedHevyAliases` below is a `normalizedMatchKey`
+// mirror of `hevyAliases`, built once at construction, so every lookup
+// normalizes both sides without renormalizing the whole table per call.
+//
+// NORMALIZATION (m7-01 review findings 7.1/7.2/8.1): `normalizedMatchKey`
+// is the ONE normalization rule shared by every alias/name comparison in
+// this module (and by BurlyImport's catalog-name matching and
+// custom-exercise identity hashing) - trims surrounding whitespace,
+// canonically (NFC) normalizes, then applies locale-independent Unicode
+// case folding. Trimming symmetrically on both the seed-construction side
+// (here) and the CSV-lookup side closes a prior gap where an authored
+// alias with stray whitespace would fail to match an already-trimmed CSV
+// value. Case folding (not `.lowercased()`) is locale-independent - unlike
+// `.lowercased()`, it does not vary with the device's language setting -
+// and also collapses expansions like German "ß" -> "ss", the same way two
+// case variants of a name should match. NFC normalization ensures a name
+// typed as precomposed accents and the same name in decomposed form hash
+// identically. Deliberately NOT diacritic-insensitive: that would collapse
+// visually/semantically distinct names into the same key, which plain
+// case-insensitivity is not supposed to do.
 import Foundation
 
 public struct CatalogSeed: Sendable, Equatable, Decodable {
@@ -45,6 +75,15 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
     /// UUIDs. It versions in the same payload as the exercise catalog.
     public let hevyAliases: [String: UUID]
 
+    /// Lowercased mirror of `hevyAliases`, computed once here rather than
+    /// per lookup (see file doc, "CASE SENSITIVITY"). If two authored
+    /// aliases ever collided case-insensitively, the first one encountered
+    /// wins rather than crashing — `hevyAliases` itself has no such
+    /// collision today (enforced only informally; there is 103-for-103
+    /// alias/exercise parity as of seedVersion 1), but a lookup table must
+    /// never trap on data that `validate()` doesn't itself reject.
+    private let normalizedHevyAliases: [String: UUID]
+
     public init(
         seedVersion: Int,
         exercises: [CatalogExercise],
@@ -53,6 +92,10 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
         self.seedVersion = seedVersion
         self.exercises = exercises
         self.hevyAliases = hevyAliases
+        self.normalizedHevyAliases = Dictionary(
+            hevyAliases.map { (key, value) in (Self.normalizedMatchKey(key), value) },
+            uniquingKeysWith: { first, _ in first }
+        )
         try validate()
     }
 
@@ -80,13 +123,27 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
         return try Self(jsonData: Data(contentsOf: url))
     }
 
+    /// Case-insensitive lookup (spec §8): normalizes `alias` the same way
+    /// `normalizedHevyAliases` was built, so callers never need to worry
+    /// about matching a Hevy export's exact capitalization.
     public func exerciseID(forHevyAlias alias: String) -> UUID? {
-        hevyAliases[alias]
+        normalizedHevyAliases[Self.normalizedMatchKey(alias)]
     }
 
     public func exercise(forHevyAlias alias: String) -> CatalogExercise? {
         guard let id = exerciseID(forHevyAlias: alias) else { return nil }
         return exercises.first { $0.id == id }
+    }
+
+    /// The one normalization rule shared by every alias/name comparison in
+    /// this module and by BurlyImport's catalog-name matching and
+    /// custom-exercise identity hashing (findings 7.1, 7.2, 8.1 — see file
+    /// doc "NORMALIZATION" above for why each step is needed).
+    public static func normalizedMatchKey(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+            .folding(options: .caseInsensitive, locale: nil)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -102,6 +159,17 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
 
         var ids = Set<UUID>()
         var names = Set<String>()
+        // Round-2 finding §2.3: two exercise NAMES that are textually
+        // different (so the `names` exact-match check above doesn't catch
+        // them) can still collide once lookup-normalized — e.g. "Foo" and
+        // "FOO" as two DIFFERENT catalog exercises. `resolveExercise`'s
+        // `catalogNameIndex` builds its lookup table keyed on exactly this
+        // normalized form, so an unvalidated collision here means whichever
+        // exercise's normalized name `Dictionary` happens to keep silently
+        // shadows the other — the shadowed exercise becomes unreachable by
+        // its own name. Tracked alongside `names` so it's available below
+        // to also catch an alias colliding with a DIFFERENT exercise's name.
+        var normalizedNames: [String: UUID] = [:]
         for exercise in exercises {
             guard ids.insert(exercise.id).inserted else {
                 throw CatalogSeedError.duplicateExerciseID(exercise.id)
@@ -118,14 +186,46 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
             guard Set(exercise.muscleGroups).count == exercise.muscleGroups.count else {
                 throw CatalogSeedError.duplicateMuscleGroup(exercise.id)
             }
+
+            let normalizedName = Self.normalizedMatchKey(exercise.name)
+            if let existingID = normalizedNames[normalizedName], existingID != exercise.id {
+                throw CatalogSeedError.ambiguousExerciseNameNormalization(normalized: normalizedName)
+            }
+            normalizedNames[normalizedName] = exercise.id
         }
 
+        // Finding 3.1: two distinct authored aliases that collide once
+        // normalized (e.g. "Foo" / "FOO") but map to different exercise
+        // IDs would otherwise make `normalizedHevyAliases`'s lookup result
+        // depend on `Dictionary`'s unspecified iteration order at
+        // construction time (whichever alias happened to be visited first
+        // would silently win). Reject that ambiguity outright instead of
+        // resolving it nondeterministically. Two aliases that collide but
+        // agree on the same exercise ID are harmless duplicates, not
+        // rejected.
+        //
+        // Round-2 finding §2.3 (second half): the same ambiguity exists
+        // between an alias and a DIFFERENT exercise's catalog name —
+        // `resolveExercise` checks the alias table before the catalog-name
+        // index, so an alias "FOO" pointing at exercise B while exercise A
+        // is literally named "Foo" would make A unreachable by its own
+        // name every time "Foo" is imported. Checked against
+        // `normalizedNames` (built above) for exactly this reason.
+        var seenNormalizedAliases: [String: UUID] = [:]
         for (alias, exerciseID) in hevyAliases {
             guard alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 throw CatalogSeedError.emptyHevyAlias
             }
             guard ids.contains(exerciseID) else {
                 throw CatalogSeedError.unresolvedHevyAlias(alias: alias, exerciseID: exerciseID)
+            }
+            let normalized = Self.normalizedMatchKey(alias)
+            if let existingID = seenNormalizedAliases[normalized], existingID != exerciseID {
+                throw CatalogSeedError.ambiguousHevyAliasNormalization(normalized: normalized)
+            }
+            seenNormalizedAliases[normalized] = exerciseID
+            if let nameOwnerID = normalizedNames[normalized], nameOwnerID != exerciseID {
+                throw CatalogSeedError.aliasCollidesWithExerciseName(alias: alias, exerciseID: exerciseID, shadowedExerciseID: nameOwnerID)
             }
         }
     }
@@ -141,4 +241,17 @@ public enum CatalogSeedError: Error, Sendable, Equatable {
     case duplicateMuscleGroup(UUID)
     case emptyHevyAlias
     case unresolvedHevyAlias(alias: String, exerciseID: UUID)
+    /// Two distinct authored aliases normalize (see `normalizedMatchKey`)
+    /// to the same key but map to different exercise IDs (finding 3.1).
+    case ambiguousHevyAliasNormalization(normalized: String)
+    /// Two distinct exercise NAMES normalize (see `normalizedMatchKey`) to
+    /// the same key but belong to different exercises (round-2 finding
+    /// §2.3) — `catalogNameIndex` would otherwise let one silently shadow
+    /// the other depending on `Dictionary` iteration order.
+    case ambiguousExerciseNameNormalization(normalized: String)
+    /// An alias normalizes (see `normalizedMatchKey`) to the same key as a
+    /// DIFFERENT exercise's catalog name (round-2 finding §2.3) —
+    /// `resolveExercise` checks the alias table first, so the shadowed
+    /// exercise would become unreachable by its own name.
+    case aliasCollidesWithExerciseName(alias: String, exerciseID: UUID, shadowedExerciseID: UUID)
 }
