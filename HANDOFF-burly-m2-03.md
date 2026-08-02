@@ -578,3 +578,97 @@ drag (e.g. Digital Crown rotation via XCUITest, if available). Do not
 re-attempt the SAME drag-based scroll fix again without new evidence --
 it has already been tried and shown flaky under load.
 ```
+
+## 2026-08-02 — Round E (final): removed the scroll dependency at the root; TWO CONSECUTIVE FULLY GREEN GATE RUNS; m2-03 done
+
+Per the dispatcher's instruction, fixed round D's remaining blocker (a
+scroll-to-row-5 flake under full-gate load) at its root instead of
+continuing to refine the scroll mechanism: reordered
+`SessionActionsView`'s menu so the two rows that needed the flaky scroll
+("Add exercise," "Swap exercise") no longer need any scroll at all.
+
+**New row order (was: Add set, Remove empty set, Skip exercise, Swap
+exercise, Add exercise, Move up, Move down, End workout, Discard
+workout):**
+
+1. Add exercise
+2. Swap exercise
+3. Add set
+4. Remove empty set
+5. Skip exercise
+6. Move up
+7. Move down
+8. End workout
+9. Discard workout
+
+**Rationale (a real UX improvement, not just a test workaround):** rows
+are now ordered by how often a lifter actually reaches for them
+mid-workout, safest first. "Add exercise" and "Swap exercise" are the two
+most common mid-session edits (a machine's occupied, a superset needs one
+more movement, today's plan changes) -- they now sit at the top, requiring
+no scroll. "End workout" and "Discard workout" -- the two actions with the
+biggest and least-reversible consequences -- stay at the bottom, requiring
+a deliberate scroll to reach. This is the neurodivergent-first/glanceable
+lens the project is built on: frequency-first ordering means a lifter
+mid-set never has to hunt or scroll for what they need most, and a
+destructive action is never one slip away from the top of a list someone
+is skimming one-handed. "End workout" and "Discard workout" did not move
+(still rows 8 and 9), so their existing `scrollUntilExists`-based test
+coverage is untouched.
+
+Mechanical follow-through: `SaveFailureUITests
+.testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds` no longer
+scrolls to reach "Add exercise" -- replaced `scrollUntilExists` with a
+plain `waitForExistence`, matching the new no-scroll-needed reality for
+both the test and the real UI. `SessionActionsView.swift`'s doc comment
+explains the ordering rationale in full. No other test needed to change --
+"Swap exercise" was already found without scrolling before this round
+(row 4 was inside the fold too); it's now row 2, same no-scroll access
+pattern.
+
+**Verification, in order:**
+- Scoped `xcodebuild test -only-testing` (5 tests spanning both the
+  reordered rows and the untouched scroll-based rows --
+  `testFullSessionFlowLogSwapFinishShowsCorrectTotals`,
+  `testSwapExerciseRelocksWeightControl`,
+  `testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds`,
+  `testDiscardFailureBlocksAndRetrySucceeds`,
+  `testFinishSaveFailureIsRecoverableWithoutReFinishing`): 5/5 pass.
+- `cd BurlyKit && swift test`: 557/557 pass (unaffected by this round;
+  re-verified anyway per the dispatcher's standing requirement).
+- `BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests`:
+  2/2 pass.
+- **`Scripts/acceptance-sim.sh` run 1 of 2
+  (`Scripts/output/runs/20260802T092448Z`): FULLY GREEN.**
+  `BurlyPhoneUITests`: "Executed 1 test, with 0 failures." `BurlyWatchUITests.xctest`:
+  "Executed 15 tests, with 0 failures (0 unexpected) in 201.364 seconds."
+  Top-level: `acceptance-sim: PASS`.
+- **`Scripts/acceptance-sim.sh` run 2 of 2
+  (`Scripts/output/runs/20260802T093021Z`): FULLY GREEN.**
+  `BurlyPhoneUITests`: "Executed 1 test, with 0 failures." `BurlyWatchUITests.xctest`:
+  "Executed 15 tests, with 0 failures (0 unexpected) in 233.111 seconds."
+  Top-level: `acceptance-sim: PASS`.
+
+**Both consecutive stability runs are fully green: phone 1/1 and all 15
+watch tests, twice in a row, with no flakes of any kind in either run.**
+
+**m2-03 is done.** All 12 original review findings are closed: the 9 from
+round 1 stayed untouched and green throughout; finding 11 (hit regions)
+and finding 9 (double-confirm discard) were fixed in round C and have
+been green in every run since; finding 8 (placeholder exercise creation)
+needed three of this task's four final-pass rounds -- a scroll-granularity
+test bug (round C), a chained sheet-presentation race (round D), and a
+scroll-reliability-under-load flake whose root fix was a genuine menu-
+ordering UX improvement (round E) -- and is now green, twice, under the
+full gate.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-03
+Branch: task/burly-m2-03 (HEAD after this entry's commit)
+m2-03 is complete: all 12 review findings closed, two consecutive fully
+green Scripts/acceptance-sim.sh gate runs (phone 1/1 + watch 15/15 each),
+BurlyKit 557/557, migration spike 2/2. Ready for dispatcher sign-off /
+merge. No further action needed on this task unless new review feedback
+arrives.
+```

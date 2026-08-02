@@ -84,24 +84,20 @@ final class SaveFailureUITests: XCTestCase {
         XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
         ellipsis.tap()
 
-        // Ground truth (live accessibility-tree dump, m2-03 review round 3):
-        // "Add exercise" is row 5 of 9 in SessionActionsView's lazily-
-        // rendered List. A live per-swipe dump showed a single
-        // `app.swipeUp()` jumping straight from rows 1-4 (the initial
-        // scroll position) to rows 6-9 -- landing past the bottom of the
-        // list -- and staying there on every further attempt. Row 5 falls
-        // exactly in the gap that one full-screen swipe skips over: it is
-        // never present in the render buffer at either checkpoint. "End
-        // workout" (row 8) and "Discard workout" (row 9) both happen to
-        // land inside that same post-swipe window, which is why the
-        // original full-swipe `scrollUntilExists` (still used for those
-        // elsewhere in this file) never surfaced this gap. This is a test
-        // scrolling-granularity bug, not a missing feature: `addExercise`
-        // renders identically to the already-reachable `swapExercise` row.
-        // `scrollUntilExists` below now drags in smaller increments so
-        // every row passes through the rendered range at some checkpoint.
+        // m2-03 review round 3 (final pass): "Add exercise" is now row 1 of
+        // 9 in SessionActionsView's List (see that file's doc on the
+        // frequent-first/destructive-last row order) -- no scroll needed,
+        // for the same reason a lifter reaching for it mid-workout
+        // shouldn't need to scroll either. This used to be row 5, exactly
+        // one row past this small watch List's reliable no-scroll fold; a
+        // live investigation caught the scroll-to-reveal-it step itself
+        // flaking under full-gate load even with a finer-grained scroll
+        // technique. Reordering the menu fixed the root cause for the test
+        // and the real UI at once, rather than continuing to chase a more
+        // reliable scroll mechanism for an item that never needed to be
+        // below the fold in the first place.
         let addExercise = app.buttons["sessionActions.addExercise"]
-        XCTAssertTrue(scrollUntilExists(app, addExercise), "Expected to be able to scroll to 'Add exercise'")
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5), "Expected 'Add exercise' to be visible without scrolling")
         addExercise.tap()
 
         let addPlaceholder = app.buttons["exercisePicker.addPlaceholder"]
@@ -254,22 +250,23 @@ final class SaveFailureUITests: XCTestCase {
     /// increments than a plain `app.swipeUp()`. Confirmed via a live
     /// accessibility-tree dump (m2-03 review round 3): a full-screen
     /// `swipeUp()` on this 9-row list jumps straight from rows 1-4 to rows
-    /// 6-9, skipping row 5 ("Add exercise") entirely at every single
+    /// 6-9, skipping whatever sits at row 5 entirely at every single
     /// attempt, because the swipe distance overshoots by more than one
     /// row's height. A partial drag of roughly one row's height per step
     /// guarantees every row passes through the rendered range at some
     /// checkpoint -- `maxAttempts` is raised accordingly since each step now
     /// covers less ground.
     ///
-    /// The trailing settle delay is defensive, not the fix for a separate
-    /// issue this scroll approach first surfaced: a follow-up live dump
-    /// showed `sessionActions.addExercise` at a clean, stable, non-
-    /// overlapping frame immediately before the tap, and the tap itself
-    /// landing correctly (the actions sheet dismissed) -- so a mis-tap from
-    /// residual scroll momentum was ruled out. The actual defect was in
-    /// `LoggingScreenView`'s picker presentation (`.sheet(item:)` not
-    /// reliably re-presenting after the actions sheet's `onDismiss` handoff
-    /// once this row required a scroll to reach -- see that file's fix).
+    /// Still used for "End workout" (row 8) and "Discard workout" (row 9)
+    /// below -- both land inside the post-swipe window this drag reaches,
+    /// same as before. "Add exercise" no longer uses this helper: the
+    /// dispatcher's final-round fix was to reorder `SessionActionsView`
+    /// itself so the two most common mid-session edits ("Add exercise,"
+    /// "Swap exercise") sit above the fold, removing the scroll dependency
+    /// at the root instead of continuing to refine how the scroll is
+    /// performed -- see that file's doc for the full rationale
+    /// (frequent/safe first, destructive last is also a real UX
+    /// improvement, not just a test workaround).
     private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 20) -> Bool {
         for _ in 0..<maxAttempts {
             if element.exists {
