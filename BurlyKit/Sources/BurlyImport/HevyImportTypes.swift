@@ -72,9 +72,29 @@ public enum MalformedRowReason: Sendable, Equatable {
     /// A `"` appeared somewhere other than the true start of a field
     /// (finding 1.4) — e.g. an unquoted `1"2"` value.
     case strayQuoteInField
-    /// A field grew past `CSVTokenizer.maxFieldLength` scalars before its
-    /// record ended (finding 1.5).
-    case oversizedRecord(limitScalars: Int)
+    /// A closing quote was immediately followed by something other than a
+    /// separator/CR/LF/CRLF/EOF (m7-01 review round 2, new defect #1) —
+    /// e.g. `"Bench Press (Barbell)"junk`. The value up to the closing
+    /// quote is well-formed; the trailing content glued onto it is not.
+    case contentAfterClosingQuote
+    /// One of `CSVTokenizer`'s bounds (field size, total record size, or
+    /// field count) was exceeded before the record ended (finding 1.5,
+    /// plus the round-2 record-size/field-count gaps).
+    case oversizedRecord(OversizedRecordLimit)
+}
+
+/// Which of `CSVTokenizer`'s bounds was exceeded to produce
+/// `.oversizedRecord` above — every bound reports through that one case,
+/// but callers can still tell which limit was hit and what its value was.
+public enum OversizedRecordLimit: Sendable, Equatable {
+    /// A single field grew past `CSVTokenizer.maxFieldLength` scalars.
+    case fieldLength(Int)
+    /// The record's total content (summed across every field) grew past
+    /// `CSVTokenizer.maxRecordLength` scalars.
+    case recordLength(Int)
+    /// The record accumulated more fields (commas) than
+    /// `CSVTokenizer.maxFieldsPerRecord` allows.
+    case fieldCount(Int)
 }
 
 public struct MalformedRow: Sendable, Equatable {

@@ -43,28 +43,45 @@ enum HevyCSVSchema {
 struct HevyCSVHeader {
     private let columnIndex: [String: Int]
     let columnCount: Int
-    /// Header column names (trimmed, lowercased) not recognized by
-    /// `HevyCSVSchema.knownColumns` — finding 4.3.
-    let unknownColumnNames: [String]
+    /// EVERY header column's index (not deduplicated by name) whose
+    /// trimmed/lowercased name isn't recognized by
+    /// `HevyCSVSchema.knownColumns` — finding 4.3, and the round-2 fix for
+    /// duplicate unknown column names undercounting their dropped values
+    /// (see doc below).
+    let unknownColumnIndices: [Int]
 
     /// A header name is matched case-insensitively and trimmed — Hevy's
     /// own header casing is not something Burly controls any more than an
     /// exercise title's casing is (spec §8's case-insensitivity mandate
     /// applies to the whole file, not just exercise names). A duplicate
-    /// column name (a header oddity, not expected in practice) resolves to
-    /// its first occurrence rather than being treated as fatal.
+    /// KNOWN column name (a header oddity, not expected in practice)
+    /// resolves to its first occurrence for `value(_:in:)` lookups rather
+    /// than being treated as fatal — `columnIndex` intentionally keeps
+    /// only the first index per name for that reason.
+    ///
+    /// `unknownColumnIndices` deliberately does NOT dedupe by name the
+    /// same way: two duplicate UNKNOWN columns (e.g. a header with `tempo`
+    /// twice) can each carry their own nonempty value in a given row, and
+    /// m7-01 review round 2 found that counting drops by deduplicated NAME
+    /// silently discarded every occurrence after the first. Every unknown
+    /// column's own index is tracked independently so each one's value (if
+    /// present) is counted.
     init(fields: [String]) {
         columnCount = fields.count
         var map: [String: Int] = [:]
-        var seenOrder: [String] = []
+        var unknownIndices: [Int] = []
         for (index, raw) in fields.enumerated() {
             let key = raw.trimmingCharacters(in: .whitespaces).lowercased()
-            guard !key.isEmpty, map[key] == nil else { continue }
-            map[key] = index
-            seenOrder.append(key)
+            guard !key.isEmpty else { continue }
+            if map[key] == nil {
+                map[key] = index
+            }
+            if !HevyCSVSchema.knownColumns.contains(key) {
+                unknownIndices.append(index)
+            }
         }
         columnIndex = map
-        unknownColumnNames = seenOrder.filter { !HevyCSVSchema.knownColumns.contains($0) }
+        unknownColumnIndices = unknownIndices
     }
 
     var missingRequiredColumns: [String] {
@@ -81,6 +98,17 @@ struct HevyCSVHeader {
     /// metadata columns: both mean "nothing to drop-and-count").
     func value(_ column: String, in fields: [String]) -> String? {
         guard let index = columnIndex[column], index < fields.count else { return nil }
+        let raw = fields[index].trimmingCharacters(in: .whitespaces)
+        return raw.isEmpty ? nil : raw
+    }
+
+    /// The trimmed value at a raw column `index` (as opposed to `value`'s
+    /// lookup-by-name), or `nil` if the index is out of range for this row
+    /// or the value is empty. Used for `unknownColumnIndices`, which are
+    /// tracked per raw index rather than per (possibly duplicated) name —
+    /// see the "duplicate unknown columns" doc on `unknownColumnIndices`.
+    func value(atIndex index: Int, in fields: [String]) -> String? {
+        guard index < fields.count else { return nil }
         let raw = fields[index].trimmingCharacters(in: .whitespaces)
         return raw.isEmpty ? nil : raw
     }

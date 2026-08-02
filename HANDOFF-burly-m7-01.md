@@ -129,3 +129,88 @@ swift test        # 445 tests, 43 suites
 BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
 ```
 Branch `task/burly-m7-01` clean, one commit ahead of db54ab7, not pushed.
+
+## 2026-08-02 — Round-2 review (NOT-SAFE): CSVTokenizer redesigned as an explicit state machine, remaining findings fixed
+
+Done: dispatcher's diagnosis was "the hand-rolled tokenizer state machine
+has accreted patches — redesign it cleanly." `CSVTokenizer.swift` rewritten
+from scratch as an explicit state machine (`fieldStart` / `unquotedField` /
+`quotedField` / `quoteSeen` / `recordError`, each documented in the file's
+header comment) instead of the old single `inQuotes` boolean plus ad-hoc
+flags. Every malformed condition now funnels through one `enterRecordError`
+transition, so "resynchronize at the next record terminator" is one
+mechanism, not N patches:
+- Property 1 (record-local recovery): a still-open quoted field can no
+  longer swallow arbitrarily many subsequent physical rows or let a LATER
+  row's quote falsely close it and merge rows — bounded by a new
+  `maxEmbeddedTerminatorsPerRecord` (32) "runaway-quote guard": once a
+  quote absorbs more embedded line breaks than that, the tokenizer gives up
+  waiting for it to close and resynchronizes. Verified against the actual
+  old tokenizer (stashed, ran a throwaway diagnostic) that it swallows all
+  50 subsequent rows into one `.unterminatedQuote` for this exact scenario.
+- Property 2 (strict post-quote transitions): new `quoteSeen` state — only
+  `,`/CR/LF/CRLF/EOF are legal right after a closing quote; anything else
+  (e.g. `"a"junk`) is `.contentAfterClosingQuote`, a new `Row`/
+  `MalformedRowReason` case, instead of being silently glued onto the value.
+- Property 3 (bounded everything): added `maxRecordLength` (4× the
+  pre-existing `maxFieldLength`, total content across one record) and
+  `maxFieldsPerRecord` (4096) alongside the existing per-field bound; all
+  three report `.oversizedRecord(OversizedRecordLimit)` (new associated
+  enum: `.fieldLength`/`.recordLength`/`.fieldCount` — was a bare case with
+  a hardcoded `limitScalars` at the call site before).
+- Property 4: every previously-pinned behavior (quoted commas/newlines/
+  escaped quotes, CRLF/LF/bare-CR terminators, CR literal in quotes, blank
+  rows, no-trailing-newline EOF) re-verified passing unchanged.
+- Permanent adversarial fuzz test added (`adversarialFuzzNeverCrashesOrOverlaps`):
+  fixed-seed deterministic PRNG (`SplitMix64`), 300 trials of up to 200
+  hostile scalars from a small adversarial alphabet, asserts no crash/hang
+  and no overlapping field content.
+
+Secondary fixes (all review-2 remaining items):
+- U+FFFD honesty: `HevyCSVImporter.parse` split into `parseImpl` with a
+  `strictDecodeSucceeded` flag threaded from the `csvData:` overload (the
+  `csv: String` overload always passes `true` — a `String` is by
+  definition already validly decoded). A row's U+FFFD is only flagged
+  `.invalidUTF8` when the WHOLE FILE needed the lossy fallback; the flag
+  is checked inside `decodeRow` itself (after `drops` is computed), not as
+  a pre-decode early return in the caller, so a flagged row still gets
+  full metadata-drop accounting.
+- `CatalogSeed.validate()`: added `ambiguousExerciseNameNormalization`
+  (two exercise names collide once normalized) and
+  `aliasCollidesWithExerciseName` (an alias collides with a DIFFERENT
+  exercise's name) — closes review §2.3. Bundled seed still passes
+  (pinned with a dedicated test).
+- Drop accounting completeness: `decodeRow` now computes `RowMetadataDrops`
+  before the wrong-column-count guard (was an unconditional
+  `RowMetadataDrops()`); `HevyCSVHeader.unknownColumnIndices` tracks every
+  unknown column's raw index instead of deduplicating by name, so
+  `header,tempo,tempo` with two nonempty values now counts 2 dropped
+  values, not 1.
+- `HevyTimestamp`'s real-export-shape date-token split changed to
+  `omittingEmptySubsequences: false`, rejecting an internal double space
+  (`2  Jan 2025, 08:00`) that the documented single-space grammar
+  disallows.
+
+Verification: every new/changed test manually confirmed to fail against
+the pre-fix behavior (reverted each fix in isolation — via `git stash` for
+the tokenizer, via temporary inline reverts for the rest — reran the
+specific new test, confirmed failure, restored). No disagreements with the
+dispatcher's diagnosis or either review; all findings fixed as described.
+
+```
+cd BurlyKit && rm -rf .build && swift test
+# Test run with 466 tests in 43 suites passed
+
+BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+# Test run with 2 tests in 1 suite passed
+```
+
+Next: awaiting dispatcher re-review of round B (round 3).
+
+Resume:
+```
+cd /Users/dfakkeldy/Developer/worktrees/burly-m7-01/BurlyKit
+swift test        # 466 tests, 43 suites
+BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+```
+Branch `task/burly-m7-01`, commit pending on top of 5693e85, not pushed.

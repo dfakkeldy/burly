@@ -54,25 +54,27 @@ func decodeRow(
     header: HevyCSVHeader,
     expectedColumnCount: Int,
     rowNumber: Int,
-    timeZone: TimeZone = HevyTimestamp.defaultTimeZone
+    timeZone: TimeZone = HevyTimestamp.defaultTimeZone,
+    /// Whether this row's bytes were genuinely undecodable as UTF-8 (m7-01
+    /// review finding 1.1, and the round-2 fix distinguishing that from a
+    /// LEGITIMATE U+FFFD the source text actually contained). The caller
+    /// computes this only when the whole-file strict decode already failed
+    /// — see `HevyCSVImporter.parseImpl`'s `strictDecodeSucceeded` doc —
+    /// since that's the only circumstance under which a U+FFFD in `fields`
+    /// could have come from decode corruption rather than real content.
+    hasUndecodableBytes: Bool = false
 ) -> RowDecodeOutcome {
-    // A wrong column count means `fields` can't be reliably mapped to the
-    // header's named positions at all (a shifted/ragged row) — attempting
-    // per-category metadata counting from misaligned data would itself be
-    // unreliable, so this is the one failure that reports zero drops
-    // rather than a best-effort (and potentially wrong) count.
-    guard fields.count == expectedColumnCount else {
-        return .malformed(
-            MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .wrongColumnCount(expected: expectedColumnCount, actual: fields.count)),
-            RowMetadataDrops()
-        )
-    }
-
-    // Findings 4.1/4.2/4.3/4.4: every dropped-metadata count is computed
-    // up front, before any validation that could return early, so it's
-    // never possible for a row's fate (malformed / cardio / imported) to
-    // determine whether its rpe/superset/notes/set_index/unknown-column
-    // values get counted.
+    // Findings 4.1/4.2/4.3/4.4, plus the round-2 fix extending this to the
+    // wrong-column-count case: every dropped-metadata count is computed up
+    // front, before ANY validation that could return early — including the
+    // column-count check below — so it's never possible for a row's fate
+    // (malformed / cardio / imported, for whatever reason) to determine
+    // whether its rpe/superset/notes/set_index/unknown-column values get
+    // counted. `header.value`/`value(atIndex:)` are safe to call even for
+    // a wrong-count row: both already guard against an out-of-range index
+    // and simply report "not present" rather than crashing or reading
+    // garbage, so a shifted/ragged row still gets a best-effort count
+    // instead of the round-1 design's unconditional zero.
     let setTypeRaw = (header.value("set_type", in: fields) ?? "normal").lowercased()
     let isStandardSetType = setTypeRaw == "normal" || setTypeRaw == "warmup"
     let drops = RowMetadataDrops(
@@ -81,10 +83,31 @@ func decodeRow(
         hasExerciseNotes: header.value("exercise_notes", in: fields) != nil,
         hasSetIndexValue: header.value("set_index", in: fields) != nil,
         nonStandardSetType: !isStandardSetType,
-        unknownColumnValueCount: header.unknownColumnNames.reduce(into: 0) { count, column in
-            if header.value(column, in: fields) != nil { count += 1 }
+        // Round-2 fix: counted by raw index, not by deduplicated column
+        // NAME — two duplicate unknown columns (e.g. header `tempo,tempo`)
+        // each carry their own index here, so a row with a nonempty value
+        // in both is counted as 2 dropped values, not silently collapsed
+        // to 1.
+        unknownColumnValueCount: header.unknownColumnIndices.reduce(into: 0) { count, index in
+            if header.value(atIndex: index, in: fields) != nil { count += 1 }
         }
     )
+
+    // Round-2 U+FFFD-honesty fix: checked here — after `drops` is
+    // computed, alongside every other malformed reason — rather than as a
+    // pre-decode early return in the caller, so a row flagged for
+    // genuinely undecodable bytes still gets full metadata-drop
+    // accounting like any other malformed row.
+    guard !hasUndecodableBytes else {
+        return .malformed(MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .invalidUTF8), drops)
+    }
+
+    guard fields.count == expectedColumnCount else {
+        return .malformed(
+            MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .wrongColumnCount(expected: expectedColumnCount, actual: fields.count)),
+            drops
+        )
+    }
 
     guard let title = header.value("title", in: fields) else {
         return .malformed(MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .missingRequiredField("title")), drops)

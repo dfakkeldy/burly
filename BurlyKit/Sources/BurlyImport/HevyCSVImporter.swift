@@ -56,24 +56,26 @@ public enum HevyCSVImporter {
     /// common, zero-cost-difference case for a well-formed file); only if
     /// that fails does it fall back to a lossy decode (invalid byte
     /// sequences become U+FFFD) so every otherwise-valid row's text
-    /// survives intact. The per-row loop below then accounts for whichever
-    /// row still carries a replacement character as malformed
-    /// (`.invalidUTF8`) instead of importing corrupted text as if it were
-    /// a real value; a header corrupted enough to be unrecognizable still
-    /// aborts via `.unrecognizedHeader`, since a replacement character
-    /// breaks its exact required-column-name match.
+    /// survives intact. Which path was taken is threaded through to the
+    /// per-row loop (round-2 fix, see `parseImpl`'s `strictDecodeSucceeded`
+    /// doc): only a row's replacement character introduced by the LOSSY
+    /// fallback is malformed (`.invalidUTF8`); a real U+FFFD the file
+    /// legitimately contained is not, since strict decoding already proved
+    /// every byte in the file was valid UTF-8. A header corrupted enough to
+    /// be unrecognizable still aborts via `.unrecognizedHeader` either way,
+    /// since a replacement character breaks its exact required-column-name
+    /// match.
     public static func parse(
         csvData: Data,
         catalog: CatalogSeed,
         timeZone: TimeZone = HevyTimestamp.defaultTimeZone
     ) throws -> HevyImportResult {
-        let text: String
         if let strict = String(data: csvData, encoding: .utf8) {
-            text = strict
+            return try parseImpl(csv: strict, catalog: catalog, timeZone: timeZone, strictDecodeSucceeded: true)
         } else {
-            text = String(decoding: csvData, as: UTF8.self)
+            let lossy = String(decoding: csvData, as: UTF8.self)
+            return try parseImpl(csv: lossy, catalog: catalog, timeZone: timeZone, strictDecodeSucceeded: false)
         }
-        return try parse(csv: text, catalog: catalog, timeZone: timeZone)
     }
 
     /// - Parameter timeZone: How to interpret Hevy's timezone-less
@@ -83,10 +85,39 @@ public enum HevyCSVImporter {
     ///   silent one. Pass the export device's real timezone when it's
     ///   known to avoid a multi-hour shift versus the wall-clock time Hevy
     ///   actually displayed.
+    ///
+    /// `csv` is already a valid Swift `String` here — by definition every
+    /// scalar in it decoded successfully, so any U+FFFD it contains is
+    /// real content the caller typed or generated, not decode corruption.
+    /// `parseImpl` is therefore always called with `strictDecodeSucceeded:
+    /// true` from this overload (round-2 U+FFFD-honesty fix).
     public static func parse(
         csv: String,
         catalog: CatalogSeed,
         timeZone: TimeZone = HevyTimestamp.defaultTimeZone
+    ) throws -> HevyImportResult {
+        try parseImpl(csv: csv, catalog: catalog, timeZone: timeZone, strictDecodeSucceeded: true)
+    }
+
+    /// Shared implementation behind both public `parse` overloads.
+    ///
+    /// - Parameter strictDecodeSucceeded: Whether the WHOLE FILE decoded as
+    ///   strict UTF-8 (round-2 U+FFFD-honesty fix). When `true`, a U+FFFD
+    ///   scalar anywhere in a row's fields is legitimate content — real
+    ///   replacement characters the source text actually contained — and
+    ///   must import normally, exactly like any other character. Only when
+    ///   `false` (the whole-file strict decode failed, so `csv` came from
+    ///   the LOSSY fallback) does a row's U+FFFD mean that SPECIFIC row's
+    ///   bytes were genuinely undecodable, and only then is it flagged
+    ///   `.invalidUTF8` — routed through the normal per-row malformed path
+    ///   (metadata-drop accounting included), not a pre-decode early
+    ///   return, so a flagged row is accounted exactly like every other
+    ///   malformed reason.
+    private static func parseImpl(
+        csv: String,
+        catalog: CatalogSeed,
+        timeZone: TimeZone,
+        strictDecodeSucceeded: Bool
     ) throws -> HevyImportResult {
         // Finding 1.2: strip exactly one leading BOM before header
         // resolution — otherwise the first header column's key retains
@@ -149,26 +180,34 @@ public enum HevyCSVImporter {
             case .strayQuote:
                 malformedRows.append(MalformedRow(rowNumber: rowNumber, rawFields: [], reason: .strayQuoteInField))
                 continue
-            case .oversizedRecord:
-                malformedRows.append(MalformedRow(
-                    rowNumber: rowNumber, rawFields: [],
-                    reason: .oversizedRecord(limitScalars: CSVTokenizer.maxFieldLength)
-                ))
+            case .contentAfterClosingQuote:
+                malformedRows.append(MalformedRow(rowNumber: rowNumber, rawFields: [], reason: .contentAfterClosingQuote))
+                continue
+            case .oversizedRecord(let limit):
+                malformedRows.append(MalformedRow(rowNumber: rowNumber, rawFields: [], reason: .oversizedRecord(limit)))
                 continue
             case .fields(let rowFields):
                 fields = rowFields
             }
 
-            // Finding 1.1: any field that still carries a replacement
-            // character couldn't be decoded even under the lossy fallback
-            // above — report the row as malformed instead of importing
-            // corrupted text as if it were a real value.
-            if fields.contains(where: { $0.contains("\u{FFFD}") }) {
-                malformedRows.append(MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .invalidUTF8))
-                continue
-            }
+            // Finding 1.1, round-2 U+FFFD-honesty fix: a replacement
+            // character only means "this row's bytes were genuinely
+            // undecodable" when the WHOLE FILE required the lossy
+            // fallback (`!strictDecodeSucceeded`) — that's the only path
+            // that can ever introduce a U+FFFD that wasn't already in the
+            // source text. When strict decoding succeeded, every scalar in
+            // `fields` — including any U+FFFD — is real content the file
+            // actually contained and must import normally, not be flagged.
+            // This flag flows INTO `decodeRow` rather than short-circuiting
+            // here, so a flagged row still gets full metadata-drop
+            // accounting through the normal malformed path instead of a
+            // pre-decode early return.
+            let hasUndecodableBytes = !strictDecodeSucceeded && fields.contains(where: { $0.contains("\u{FFFD}") })
 
-            switch decodeRow(fields: fields, header: header, expectedColumnCount: header.columnCount, rowNumber: rowNumber, timeZone: timeZone) {
+            switch decodeRow(
+                fields: fields, header: header, expectedColumnCount: header.columnCount,
+                rowNumber: rowNumber, timeZone: timeZone, hasUndecodableBytes: hasUndecodableBytes
+            ) {
             case .malformed(let malformed, let drops):
                 malformedRows.append(malformed)
                 applyDrops(drops)

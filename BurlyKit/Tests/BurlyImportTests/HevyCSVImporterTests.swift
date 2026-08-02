@@ -741,6 +741,119 @@ struct HevyCSVImporterTests {
         #expect(result.newExercises.count == 1)
         #expect(result.sessions[0].items[0].exerciseID == result.sessions[1].items[0].exerciseID)
     }
+
+    // MARK: - m7-01 adversarial review round 2 — clean-redesign properties, at the importer level
+
+    @Test("round-2 required property 2 — content glued onto a closing quote never silently becomes part of the value")
+    func contentAfterClosingQuoteNeverCreatesACorruptedExercise() throws {
+        // Pinning regression (round-2 new defect #1): `"Bench Press
+        // (Barbell)"junk` used to tokenize as the single value
+        // `Bench Press (Barbell)junk`, which would have created a
+        // corrupted custom exercise instead of being rejected.
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let row = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\"junk,1,\"normal\",80,5"
+        let csv = header + "\n" + row + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.setsImported == 0)
+        #expect(result.summary.malformedRowCount == 1)
+        #expect(result.summary.malformedRows.first?.reason == .contentAfterClosingQuote)
+        #expect(result.newExercises.isEmpty)
+    }
+
+    @Test("round-2 finding — a real U+FFFD the file legitimately contained imports normally when the whole file decoded as strict UTF-8")
+    func legitimateReplacementCharacterImportsNormallyWhenStrictDecodeSucceeded() throws {
+        // Pinning regression: the old design flagged ANY U+FFFD as
+        // `.invalidUTF8` regardless of whether the whole-file decode was
+        // strict or lossy, so a perfectly valid UTF-8 file whose exercise
+        // title genuinely contains U+FFFD was wrongly rejected.
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let row = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Weird \u{FFFD} Press\",1,\"normal\",80,5"
+        let csv = header + "\n" + row + "\n"
+        // Fully valid UTF-8 bytes end-to-end (U+FFFD is a real, encodable
+        // Unicode scalar) — strict decoding must succeed.
+        let bytes = Data(csv.utf8)
+        #expect(String(data: bytes, encoding: .utf8) != nil)
+
+        let result = try HevyCSVImporter.parse(csvData: bytes, catalog: try loadCatalog())
+
+        #expect(result.summary.malformedRowCount == 0)
+        #expect(result.summary.setsImported == 1)
+        #expect(result.newExercises.first?.name == "Weird \u{FFFD} Press")
+    }
+
+    @Test("round-2 finding — the same real U+FFFD text is also legal via the String-based parse(csv:) overload")
+    func legitimateReplacementCharacterImportsNormallyViaStringOverload() throws {
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let row = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Weird \u{FFFD} Press\",1,\"normal\",80,5"
+        let csv = header + "\n" + row + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.malformedRowCount == 0)
+        #expect(result.summary.setsImported == 1)
+    }
+
+    @Test("round-2 finding — a row flagged for genuinely undecodable bytes still gets full metadata-drop accounting, not a pre-decode early return")
+    func undecodableRowStillAccountsForDroppedMetadata() throws {
+        // Pinning regression: the old check ran BEFORE `decodeRow` at all,
+        // so a row corrupted enough to need the lossy fallback contributed
+        // to `malformedRowCount` but left every rpe/superset/notes/
+        // set-type counter at zero even when those columns had values.
+        let header = "title,start_time,end_time,exercise_title,superset_id,exercise_notes,set_index,set_type,weight_kg,reps,rpe"
+        var bytes = Data((header + "\n").utf8)
+        var brokenRow = Data("\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bad".utf8)
+        brokenRow.append(0xFF) // invalid standalone UTF-8 byte
+        brokenRow.append(Data("Row\",\"grp-1\",\"tough one\",1,\"failure\",80,5,9\n".utf8))
+        bytes.append(brokenRow)
+
+        let result = try HevyCSVImporter.parse(csvData: bytes, catalog: try loadCatalog())
+
+        #expect(result.summary.malformedRowCount == 1)
+        #expect(result.summary.malformedRows.first?.reason == .invalidUTF8)
+        #expect(result.summary.setsImported == 0)
+        #expect(result.summary.rpeValuesDropped == 1)
+        #expect(result.summary.supersetRowsDropped == 1)
+        #expect(result.summary.exerciseNotesDropped == 1)
+        #expect(result.summary.nonStandardSetTypeMarkersFlattened == 1)
+    }
+
+    @Test("round-2 finding — a wrong-column-count row still gets a best-effort metadata-drop count, not an unconditional zero")
+    func wrongColumnCountRowStillAccountsForDroppedMetadata() throws {
+        // Pinning regression: the old `decodeRow` returned
+        // `RowMetadataDrops()` unconditionally for a wrong-column-count
+        // row, discarding any rpe/superset/notes/set-type value that
+        // happened to still be in range.
+        let header = "title,start_time,end_time,exercise_title,superset_id,exercise_notes,set_index,set_type,weight_kg,reps,rpe"
+        // One fewer field than the header declares.
+        let row = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",\"grp-1\",\"tough one\",1,\"failure\",80,5"
+        let csv = header + "\n" + row + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.malformedRowCount == 1)
+        #expect(result.summary.malformedRows.first?.reason == .wrongColumnCount(expected: 11, actual: 10))
+        #expect(result.summary.setsImported == 0)
+        #expect(result.summary.supersetRowsDropped == 1)
+        #expect(result.summary.exerciseNotesDropped == 1)
+        #expect(result.summary.nonStandardSetTypeMarkersFlattened == 1)
+    }
+
+    @Test("round-2 finding — duplicate unknown columns each count their own dropped value, not collapsed to one")
+    func duplicateUnknownColumnsEachCountIndependently() throws {
+        // Pinning regression: the header map deduplicated by column NAME,
+        // so a header with `tempo` twice only ever reported one dropped
+        // value even when both occurrences had a nonempty value in a row.
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps,tempo,tempo"
+        let row = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5,\"3-1-1\",\"slow\""
+        let csv = header + "\n" + row + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.setsImported == 1)
+        #expect(result.summary.unknownColumnValuesDropped == 2)
+    }
 }
 
 /// Tiny hand-written single-row CSV builder for hostile-input tests that

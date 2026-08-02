@@ -118,9 +118,18 @@ public enum HevyTimestamp {
         let commaParts = text.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: true)
         guard commaParts.count == 2 else { return nil }
 
+        // Finding 6.3 (round-2 follow-up): `omittingEmptySubsequences:
+        // false` here (rather than the `true` used elsewhere in this file
+        // for splitting on a delimiter that legitimately never repeats) is
+        // deliberate — the documented grammar is exactly ONE space between
+        // `d`, `MMM`, and `yyyy`. An internal double space (e.g.
+        // "2  Jan 2025") produces an empty token between two real ones,
+        // pushing the count to 4 and failing the guard below instead of
+        // silently tolerating a shape that was never one of the two
+        // documented/supported formats.
         let dateTokens = commaParts[0]
             .trimmingCharacters(in: .whitespaces)
-            .split(separator: " ", omittingEmptySubsequences: true)
+            .split(separator: " ", omittingEmptySubsequences: false)
         guard dateTokens.count == 3,
               isExactDigits(dateTokens[0], countRange: 1...2), let day = Int(dateTokens[0]),
               dateTokens[1].count == 3, let month = monthAbbreviations[dateTokens[1].lowercased()],

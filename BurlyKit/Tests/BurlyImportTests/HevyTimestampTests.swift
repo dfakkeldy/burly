@@ -77,6 +77,19 @@ struct HevyTimestampTests {
         #expect(HevyTimestamp.parse("2 Jan 2025, 6:05") == nil) // 1-digit hour in the real-export shape
     }
 
+    @Test("round-2 follow-up to finding 6.3 — rejects an internal double space in the real-export shape, even though the tokens themselves are otherwise valid")
+    func rejectsInternalDoubleSpace() {
+        // Pinning regression: `split(separator: " ",
+        // omittingEmptySubsequences: true)` silently absorbed a doubled
+        // space between tokens, so "2  Jan 2025, 08:00" parsed
+        // successfully despite not matching the documented exact
+        // single-space `d MMM yyyy, HH:mm` grammar.
+        #expect(HevyTimestamp.parse("2  Jan 2025, 08:00") == nil)
+        #expect(HevyTimestamp.parse("2 Jan  2025, 08:00") == nil)
+        // A single space between every token is still accepted.
+        #expect(HevyTimestamp.parse("2 Jan 2025, 08:00") != nil)
+    }
+
     @Test("finding 2.2 — canonicalKey produces the same value for both formats' representation of the same instant")
     func canonicalKeyMatchesAcrossFormats() throws {
         let a = try #require(HevyTimestamp.parse("2025-12-22 08:00:00"))

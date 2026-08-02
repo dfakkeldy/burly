@@ -159,6 +159,17 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
 
         var ids = Set<UUID>()
         var names = Set<String>()
+        // Round-2 finding §2.3: two exercise NAMES that are textually
+        // different (so the `names` exact-match check above doesn't catch
+        // them) can still collide once lookup-normalized — e.g. "Foo" and
+        // "FOO" as two DIFFERENT catalog exercises. `resolveExercise`'s
+        // `catalogNameIndex` builds its lookup table keyed on exactly this
+        // normalized form, so an unvalidated collision here means whichever
+        // exercise's normalized name `Dictionary` happens to keep silently
+        // shadows the other — the shadowed exercise becomes unreachable by
+        // its own name. Tracked alongside `names` so it's available below
+        // to also catch an alias colliding with a DIFFERENT exercise's name.
+        var normalizedNames: [String: UUID] = [:]
         for exercise in exercises {
             guard ids.insert(exercise.id).inserted else {
                 throw CatalogSeedError.duplicateExerciseID(exercise.id)
@@ -175,6 +186,12 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
             guard Set(exercise.muscleGroups).count == exercise.muscleGroups.count else {
                 throw CatalogSeedError.duplicateMuscleGroup(exercise.id)
             }
+
+            let normalizedName = Self.normalizedMatchKey(exercise.name)
+            if let existingID = normalizedNames[normalizedName], existingID != exercise.id {
+                throw CatalogSeedError.ambiguousExerciseNameNormalization(normalized: normalizedName)
+            }
+            normalizedNames[normalizedName] = exercise.id
         }
 
         // Finding 3.1: two distinct authored aliases that collide once
@@ -186,6 +203,14 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
         // resolving it nondeterministically. Two aliases that collide but
         // agree on the same exercise ID are harmless duplicates, not
         // rejected.
+        //
+        // Round-2 finding §2.3 (second half): the same ambiguity exists
+        // between an alias and a DIFFERENT exercise's catalog name —
+        // `resolveExercise` checks the alias table before the catalog-name
+        // index, so an alias "FOO" pointing at exercise B while exercise A
+        // is literally named "Foo" would make A unreachable by its own
+        // name every time "Foo" is imported. Checked against
+        // `normalizedNames` (built above) for exactly this reason.
         var seenNormalizedAliases: [String: UUID] = [:]
         for (alias, exerciseID) in hevyAliases {
             guard alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
@@ -199,6 +224,9 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
                 throw CatalogSeedError.ambiguousHevyAliasNormalization(normalized: normalized)
             }
             seenNormalizedAliases[normalized] = exerciseID
+            if let nameOwnerID = normalizedNames[normalized], nameOwnerID != exerciseID {
+                throw CatalogSeedError.aliasCollidesWithExerciseName(alias: alias, exerciseID: exerciseID, shadowedExerciseID: nameOwnerID)
+            }
         }
     }
 }
@@ -216,4 +244,14 @@ public enum CatalogSeedError: Error, Sendable, Equatable {
     /// Two distinct authored aliases normalize (see `normalizedMatchKey`)
     /// to the same key but map to different exercise IDs (finding 3.1).
     case ambiguousHevyAliasNormalization(normalized: String)
+    /// Two distinct exercise NAMES normalize (see `normalizedMatchKey`) to
+    /// the same key but belong to different exercises (round-2 finding
+    /// §2.3) — `catalogNameIndex` would otherwise let one silently shadow
+    /// the other depending on `Dictionary` iteration order.
+    case ambiguousExerciseNameNormalization(normalized: String)
+    /// An alias normalizes (see `normalizedMatchKey`) to the same key as a
+    /// DIFFERENT exercise's catalog name (round-2 finding §2.3) —
+    /// `resolveExercise` checks the alias table first, so the shadowed
+    /// exercise would become unreachable by its own name.
+    case aliasCollidesWithExerciseName(alias: String, exerciseID: UUID, shadowedExerciseID: UUID)
 }
