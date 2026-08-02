@@ -73,53 +73,59 @@ struct LoggingScreenView: View {
                 pendingAction: $pendingAction
             )
         }
-        .sheet(item: pickerContextBinding) { context in
-            ExercisePickerView(
-                context: context,
-                exercises: viewModel.availableExercises(),
-                onSelect: { exerciseID in
-                    switch context {
-                    case .swap(let itemID):
-                        viewModel.swap(currentItem: itemID, to: exerciseID)
-                    case .add:
-                        viewModel.addExercise(exerciseID)
-                    }
-                },
-                onAddPlaceholder: viewModel.addPlaceholderExercise,
-                onCancel: { viewModel.pickerContext = nil }
-            )
+        // m2-03 review round 3 (final pass): ground truth (a live
+        // accessibility-tree dump around `testPlaceholderExerciseCreate
+        // FailureBlocksAndRetrySucceeds`) showed the ellipsis sheet
+        // dismissing cleanly and its "Add exercise" row's own action
+        // firing (`pendingAction` set, `isPresented` false), but this
+        // sheet never presenting afterward -- reproducibly, across
+        // multiple settle-delay lengths, so not a timing issue. The
+        // sibling `.sheet(isPresented: discardConfirmBinding)` above,
+        // driven by the exact same `onDismiss -> pendingAction` handoff,
+        // presents reliably every time. The one structural difference is
+        // `.sheet(item:)` vs `.sheet(isPresented:)` -- so this now uses
+        // the same already-proven `isPresented`-driven shape, reading
+        // `viewModel.pickerContext` directly inside the content closure
+        // instead of relying on `item:`'s captured-value semantics.
+        .sheet(isPresented: isShowingPickerBinding) {
+            if let context = viewModel.pickerContext {
+                ExercisePickerView(
+                    context: context,
+                    exercises: viewModel.availableExercises(),
+                    onSelect: { exerciseID in
+                        switch context {
+                        case .swap(let itemID):
+                            viewModel.swap(currentItem: itemID, to: exerciseID)
+                        case .add:
+                            viewModel.addExercise(exerciseID)
+                        }
+                    },
+                    onAddPlaceholder: viewModel.addPlaceholderExercise,
+                    onCancel: { viewModel.pickerContext = nil }
+                )
+            }
         }
         // §2 Discard: "destructive, double-confirm."
         //
-        // Round B fix: this used to be two separate `.confirmationDialog`
-        // modifiers, `confirmDiscardStepOne()` flipping `isShowingDiscardStepOne`
-        // to false and `isShowingDiscardStepTwo` to true in the same
-        // synchronous call. Confirmed against a live run (SaveFailureUITests
-        // .testDiscardFailureBlocksAndRetrySucceeds stalled waiting for the
-        // second dialog after tapping the first) and against SwiftUI's own
-        // documented behavior: presenting a second sheet/alert/
-        // confirmationDialog immediately after dismissing the first is not
-        // reliably supported -- the exact reason this file already routes
-        // the sheet -> confirmationDialog handoff through `pendingAction` /
-        // `onDismiss` above. `.confirmationDialog` has no `onDismiss`, so the
-        // fix here is structural instead: ONE dialog whose `isPresented`
-        // binding never toggles off between the two steps (it stays true for
-        // both `isShowingDiscardStepOne` and `isShowingDiscardStepTwo`), and
-        // whose title/actions are computed from which step is active. SwiftUI
-        // only has to update the content of an already-presented dialog, not
-        // chain a second presentation -- so the two-tap "double-confirm" the
-        // spec requires survives, without the presentation defect.
-        .confirmationDialog(
-            discardDialogTitle,
-            isPresented: discardDialogBinding,
-            titleVisibility: .visible
-        ) {
-            if viewModel.isShowingDiscardStepTwo {
-                Button("Discard permanently", role: .destructive, action: viewModel.confirmDiscardStepTwo)
-            } else {
-                Button("Discard", role: .destructive, action: viewModel.confirmDiscardStepOne)
-            }
-            Button("Cancel", role: .cancel, action: viewModel.cancelDiscard)
+        // Round C fix (m2-03 review, final pass): rounds A/B both tried
+        // `.confirmationDialog` shapes -- first two separate dialogs
+        // (broken: SwiftUI cannot reliably chain a second presentation
+        // right after the first dismisses), then one dialog whose
+        // `isPresented` binding never toggles off between steps, with
+        // title/actions computed from which step is active (still broken,
+        // confirmed live: `SaveFailureUITests
+        // .testDiscardFailureBlocksAndRetrySucceeds` never saw "Discard
+        // permanently" appear -- `.confirmationDialog` does not reliably
+        // re-diff its content while already presented). This drops
+        // `.confirmationDialog` entirely: `DiscardConfirmView` is a
+        // dedicated full-screen confirm view (modeled on
+        // `SessionConflictView`, which has no chaining problem because it
+        // only ever shows one step) presented ONCE via a plain `.sheet`.
+        // Moving from step one's content to step two's is ordinary body
+        // diffing inside an already-presented sheet, not a second system
+        // presentation.
+        .sheet(isPresented: discardConfirmBinding) {
+            DiscardConfirmView(viewModel: viewModel)
         }
         // §2 Always-On: the screen actually woke from the dimmed state --
         // feeds §3's "repeats once at +5 s if screen never woke."
@@ -200,22 +206,22 @@ struct LoggingScreenView: View {
 
     // MARK: - Bindings
 
-    private var pickerContextBinding: Binding<ExercisePickerContext?> {
-        Binding(get: { viewModel.pickerContext }, set: { viewModel.pickerContext = $0 })
+    private var isShowingPickerBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.pickerContext != nil },
+            set: { if !$0 { viewModel.pickerContext = nil } }
+        )
     }
 
     /// True across both discard steps -- kept `true` continuously while
     /// `confirmDiscardStepOne()` flips which step is active, so the single
-    /// `.confirmationDialog` above never dismisses and re-presents (see its
-    /// doc comment).
-    private var discardDialogBinding: Binding<Bool> {
+    /// `.sheet` above never dismisses and re-presents; `DiscardConfirmView`
+    /// re-renders its own content from `viewModel`'s flags instead (see its
+    /// doc comment and `LoggingScreenView.body`'s).
+    private var discardConfirmBinding: Binding<Bool> {
         Binding(
             get: { viewModel.isShowingDiscardStepOne || viewModel.isShowingDiscardStepTwo },
             set: { if !$0 { viewModel.cancelDiscard() } }
         )
-    }
-
-    private var discardDialogTitle: String {
-        viewModel.isShowingDiscardStepTwo ? "This can't be undone." : "Discard this workout?"
     }
 }

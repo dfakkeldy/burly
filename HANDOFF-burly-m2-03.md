@@ -299,3 +299,142 @@ failure point), not another blind code-guess-and-rerun:
 Do not spend a third acceptance-sim.sh run on another guess without first
 getting a screenshot/log of the actual on-screen state at failure time.
 ```
+
+## 2026-08-02 — Round C (final pass): ground-truth debugging, 2/3 fixed and green, 1/3 improved but still flaky
+
+Per the dispatcher's instruction, got GROUND TRUTH via live `app.debugDescription`
+dumps at each failure point (throwaway `XCTFail`/`Thread.sleep` instrumentation
+in the three failing tests, always run through the sim lock, always cleaned up
+before the final gate) instead of guessing again. Two of the three prior
+diagnoses (both rounds' scroll theories) were disproven by direct evidence; the
+real defects were different from anything either round guessed.
+
+**Finding 11 (`testRestTimerControlsHaveMinimumHitRegions`) -- VIEW BUG, FIXED,
+confirmed green in the full gate run.** A live dump right after `logSetButton
+.tap()` showed the rest timer banner's *container* (`restTimerBanner`)
+existed, but `restTimer.remaining` / `.decreaseButton` / `.increaseButton`
+did not -- because all three child elements' `debugDescription` reported
+identifier `restTimerBanner` (the *container's* identifier), not their own.
+`RestTimerBanner`'s outer `HStack` carried its own
+`.accessibilityIdentifier("restTimerBanner")`, which on watchOS clobbers
+every descendant's individually-set identifier. Nothing read that container
+identifier (grepped the whole app + both UI test targets to confirm), so the
+fix was to delete it (`BurlyWatch/Session/RestTimerBanner.swift`). Round B's
+"plain VStack renders regardless of scroll" finding was correct and is now
+also reflected honestly in the test (dropped the now-unneeded
+`scrollUntilExists` call in `LoggingScreenUITests.swift`, replaced with a
+plain `waitForExistence`). **Not a test bug in the end** -- the identifiers
+were always right; the container clobbering them was the defect.
+
+**Finding 8 (`testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds`) --
+BOTH a test bug AND a view bug, partially fixed, still intermittently
+failing.** Two separate defects stacked here, found in sequence:
+1. *Test bug (fixed, confirmed via per-swipe dump):* "Add exercise" is row 5
+   of 9 in `SessionActionsView`'s `List`. A live per-swipe dump proved a
+   single `app.swipeUp()` jumps straight from rows 1-4 to rows 6-9 --
+   skipping row 5 at every attempt, every time, because the swipe distance
+   overshoots more than one row's height. "End workout" (row 8) and
+   "Discard workout" (row 9) both happen to land inside that same
+   post-swipe window, which is why this gap was never caught before.
+   Fixed: `SaveFailureUITests.scrollUntilExists` now drags in smaller
+   (~one-row) increments instead of a full-screen swipe.
+2. *View bug (fixed, but not fully -- see below):* with the scroll fixed,
+   a NEW failure appeared one step later: tapping the now-reachable "Add
+   exercise" row correctly dismissed the ellipsis sheet (confirmed via a
+   pre-tap frame dump showing a clean, stable, non-overlapping row frame,
+   and a post-tap dump showing the sheet gone -- ruling out a mis-tap from
+   scroll momentum), but the add-exercise picker sheet never presented
+   afterward -- reproduced twice with zero exceptions across 8+ seconds of
+   polling. The sibling discard-confirm sheet, driven by the exact same
+   `onDismiss -> pendingAction` handoff, presented reliably every time; the
+   one structural difference was `.sheet(item: pickerContextBinding)`
+   (picker) vs `.sheet(isPresented:)` (discard confirm). Converted the
+   picker to the same `isPresented`-driven shape
+   (`LoggingScreenView.swift`'s `isShowingPickerBinding`, content closure
+   reads `viewModel.pickerContext` directly instead of relying on `item:`'s
+   captured-value semantics). **This closed the failure in two consecutive
+   isolated re-runs of just this test** (scoped `xcodebuild test
+   -only-testing`, sim lock taken and released each time) -- but the full
+   `acceptance-sim.sh` gate run hit the *exact same* assertion failure once
+   more, at the same line, with the same "picker never appears" signature.
+   **Conclusion: this is a genuine, confirmed SwiftUI/watchOS presentation
+   race in the onDismiss-triggered second-sheet handoff, specifically for
+   actions sheet rows that require a scroll to reach before tapping --
+   the `isPresented` conversion measurably reduced its frequency (from
+   100% reproducible before the fix, to passing 2/2 isolated re-runs after)
+   but did not eliminate it (1 failure in the one full-gate attempt after
+   the fix).** Not resolved. See "Not green" below.
+
+**Finding 9 (`testDiscardFailureBlocksAndRetrySucceeds`) -- confirmed
+pre-existing `.confirmationDialog` defect, fixed via the dispatcher's
+prescribed conversion, confirmed green in the full gate run.** Per the
+dispatcher's instruction, converted the two-step discard confirmation from
+chained `.confirmationDialog` presentations to a dedicated full-screen
+confirm view with a single `.sheet` presentation, modeled on
+`SessionConflictView` (which has no chaining problem because it only ever
+shows one step). New file `BurlyWatch/Session/DiscardConfirmView.swift`
+renders step-one or step-two content based on
+`viewModel.isShowingDiscardStepOne`/`isShowingDiscardStepTwo` -- moving
+between steps is ordinary body diffing inside an already-presented sheet,
+never a second system presentation. `LoggingScreenView.swift`'s
+`.confirmationDialog` block replaced with
+`.sheet(isPresented: discardConfirmBinding) { DiscardConfirmView(...) }`.
+Updated `SaveFailureUITests.testDiscardFailureBlocksAndRetrySucceeds` to
+select the new dedicated identifiers
+(`discardConfirm.stepOneButton`/`discardConfirm.stepTwoButton`) instead of
+looking buttons up by their visible label text, matching this repo's
+identifier-based house rule. **Passed in every re-run since, including the
+final full gate run.**
+
+Verification:
+- `cd BurlyKit && swift test`: 557/557 pass.
+- `BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests`: 2/2 pass.
+- `Scripts/acceptance-sim.sh` (final run, `Scripts/output/runs/20260802T084809Z`):
+  BurlyPhoneUITests 1/1 pass. BurlyWatchUITests **14/15 pass, 1 fail**
+  (`testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds`, the finding-8
+  presentation race above). Exit non-zero, `acceptance-sim: FAIL`.
+- Additionally, several scoped diagnostic `xcodebuild test -only-testing`
+  runs against just the three target tests were used for ground truth and
+  fix verification, each taking the sim lock and shutting the sim down on
+  exit, per the dispatcher's resource-discipline instruction. All temporary
+  `XCTFail`/`Thread.sleep` diagnostic instrumentation was removed before the
+  final gate run -- the diff contains only the real fixes and their
+  supporting doc comments.
+
+No regressions: all previously-passing tests (the 9 already-fixed findings'
+pins, F1/F6/F7 tests, both `SessionConflictUITests` tests,
+`testFullSessionFlowLogSwapFinishShowsCorrectTotals`,
+`testAbsentDigestRendersEmptyGhostsAcrossPages`,
+`testSwapExerciseRelocksWeightControl`,
+`testSummaryNeverShowsInventedPRLabel`) still pass in the final run.
+
+**Not green.** Per the dispatcher's "stop and report, do not guess again"
+rule, no further code changes were attempted after this gate result. The
+remaining defect is precisely diagnosed (a SwiftUI/watchOS onDismiss ->
+second-sheet presentation race, isolated to actions-sheet rows reached via
+scroll) but is intermittent rather than deterministic, so a fix cannot be
+confirmed green by any number of isolated single-test re-runs -- it needs
+either a structurally different presentation approach for the whole
+picker flow (e.g. the same "drop the chained-presentation dependency
+entirely" pattern finding 9 used -- a dedicated full-screen destination
+instead of a sheet chained off another sheet's dismissal) or a genuine
+upstream SwiftUI/watchOS fix, neither of which fits in a "no further guess
+loops" round.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-03
+Branch: task/burly-m2-03 (HEAD after this entry's commit)
+Findings 9 and 11 are fixed and confirmed green. Finding 8's root cause is
+precisely diagnosed (onDismiss -> .sheet(item:)/.sheet(isPresented:)
+presentation race after a scrolled actions-sheet row) and its frequency was
+measurably reduced but not eliminated by converting to .sheet(isPresented:).
+Next step, if authorized: apply finding 9's same pattern -- stop chaining a
+new presentation off another sheet's onDismiss entirely. E.g. route
+"Add exercise" through a NavigationStack push (a destination, not a second
+sheet) instead of dismiss-then-present, or defer `pickerContext = .add` by
+one runloop tick (a tiny `DispatchQueue.main.asyncAfter`) as a documented
+stopgap while a structural fix is designed. Re-run
+`Scripts/acceptance-sim.sh` (one full attempt) to confirm before declaring
+green.
+```

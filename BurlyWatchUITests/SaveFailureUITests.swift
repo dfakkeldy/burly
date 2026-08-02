@@ -84,16 +84,31 @@ final class SaveFailureUITests: XCTestCase {
         XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
         ellipsis.tap()
 
-        // "Add exercise" is row 5 of 9 in SessionActionsView's lazily-rendered
-        // List -- past the initial-scroll-position fold on the 46 mm sim,
-        // same reason "Discard workout" (row 9) and "End workout" (row 8)
-        // need this elsewhere in this file / LoggingScreenUITests.swift.
+        // Ground truth (live accessibility-tree dump, m2-03 review round 3):
+        // "Add exercise" is row 5 of 9 in SessionActionsView's lazily-
+        // rendered List. A live per-swipe dump showed a single
+        // `app.swipeUp()` jumping straight from rows 1-4 (the initial
+        // scroll position) to rows 6-9 -- landing past the bottom of the
+        // list -- and staying there on every further attempt. Row 5 falls
+        // exactly in the gap that one full-screen swipe skips over: it is
+        // never present in the render buffer at either checkpoint. "End
+        // workout" (row 8) and "Discard workout" (row 9) both happen to
+        // land inside that same post-swipe window, which is why the
+        // original full-swipe `scrollUntilExists` (still used for those
+        // elsewhere in this file) never surfaced this gap. This is a test
+        // scrolling-granularity bug, not a missing feature: `addExercise`
+        // renders identically to the already-reachable `swapExercise` row.
+        // `scrollUntilExists` below now drags in smaller increments so
+        // every row passes through the rendered range at some checkpoint.
         let addExercise = app.buttons["sessionActions.addExercise"]
         XCTAssertTrue(scrollUntilExists(app, addExercise), "Expected to be able to scroll to 'Add exercise'")
         addExercise.tap()
 
         let addPlaceholder = app.buttons["exercisePicker.addPlaceholder"]
-        XCTAssertTrue(addPlaceholder.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            addPlaceholder.waitForExistence(timeout: 5),
+            "Expected the ellipsis sheet's dismissal to hand off to the add-exercise picker"
+        )
         addPlaceholder.tap()
 
         let saveFailureHeading = app.staticTexts["saveFailure.heading"]
@@ -141,11 +156,16 @@ final class SaveFailureUITests: XCTestCase {
         XCTAssertTrue(scrollUntilExists(app, discardAction), "Expected to be able to scroll to 'Discard workout'")
         discardAction.tap()
 
-        let confirmStepOne = app.buttons["Discard"].firstMatch
+        // m2-03 review round 3: the two-step discard confirmation is now a
+        // dedicated `DiscardConfirmView` (a single `.sheet` presentation,
+        // no `.confirmationDialog` chaining -- see that file's doc) whose
+        // buttons carry stable identifiers rather than being looked up by
+        // visible label text, matching this repo's house rule elsewhere.
+        let confirmStepOne = app.buttons["discardConfirm.stepOneButton"]
         XCTAssertTrue(confirmStepOne.waitForExistence(timeout: 5))
         confirmStepOne.tap()
 
-        let confirmStepTwo = app.buttons["Discard permanently"].firstMatch
+        let confirmStepTwo = app.buttons["discardConfirm.stepTwoButton"]
         XCTAssertTrue(confirmStepTwo.waitForExistence(timeout: 5))
         confirmStepTwo.tap()
 
@@ -230,10 +250,35 @@ final class SaveFailureUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 8) -> Bool {
+    /// Scrolls `SessionActionsView`'s lazily-rendered `List` in smaller
+    /// increments than a plain `app.swipeUp()`. Confirmed via a live
+    /// accessibility-tree dump (m2-03 review round 3): a full-screen
+    /// `swipeUp()` on this 9-row list jumps straight from rows 1-4 to rows
+    /// 6-9, skipping row 5 ("Add exercise") entirely at every single
+    /// attempt, because the swipe distance overshoots by more than one
+    /// row's height. A partial drag of roughly one row's height per step
+    /// guarantees every row passes through the rendered range at some
+    /// checkpoint -- `maxAttempts` is raised accordingly since each step now
+    /// covers less ground.
+    ///
+    /// The trailing settle delay is defensive, not the fix for a separate
+    /// issue this scroll approach first surfaced: a follow-up live dump
+    /// showed `sessionActions.addExercise` at a clean, stable, non-
+    /// overlapping frame immediately before the tap, and the tap itself
+    /// landing correctly (the actions sheet dismissed) -- so a mis-tap from
+    /// residual scroll momentum was ruled out. The actual defect was in
+    /// `LoggingScreenView`'s picker presentation (`.sheet(item:)` not
+    /// reliably re-presenting after the actions sheet's `onDismiss` handoff
+    /// once this row required a scroll to reach -- see that file's fix).
+    private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 20) -> Bool {
         for _ in 0..<maxAttempts {
-            if element.exists { return true }
-            app.swipeUp()
+            if element.exists {
+                Thread.sleep(forTimeInterval: 0.4)
+                return true
+            }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+            start.press(forDuration: 0.05, thenDragTo: end)
         }
         return element.exists
     }

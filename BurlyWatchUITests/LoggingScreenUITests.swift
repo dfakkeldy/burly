@@ -313,14 +313,18 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(logButton.waitForExistence(timeout: 10))
         logButton.tap()
 
-        // RestTimerBanner renders below the Log button in the same
-        // ScrollView (ExercisePageView.interactiveControls) -- tapping Log
-        // set already needed its own auto-scroll to become hittable, so the
-        // banner starts even further off-screen and needs an explicit
-        // scroll to reveal it, same as the lazily-rendered actions list
-        // elsewhere in this file.
+        // Ground truth (live accessibility-tree dump, m2-03 review round 3):
+        // `ExercisePageView`'s `ScrollView` wraps a plain `VStack`, not a
+        // lazy container, so every child -- including the rest timer banner
+        // -- is already present in the accessibility tree immediately after
+        // logging a set, regardless of scroll position (`XCUIElement.exists`
+        // does not require on-screen visibility). The banner WAS rendering
+        // correctly all along; the real defect was `RestTimerBanner`'s own
+        // container-level `.accessibilityIdentifier("restTimerBanner")`
+        // clobbering its three children's individually-set identifiers (see
+        // that file's fix). No scroll is needed here.
         let remaining = app.staticTexts["restTimer.remaining"]
-        XCTAssertTrue(scrollUntilExists(app, remaining), "Expected the rest timer to auto-start after logging a set")
+        XCTAssertTrue(remaining.waitForExistence(timeout: 5), "Expected the rest timer to auto-start after logging a set")
 
         let decrease = anyElement(app, identifier: "restTimer.decreaseButton")
         let increase = anyElement(app, identifier: "restTimer.increaseButton")

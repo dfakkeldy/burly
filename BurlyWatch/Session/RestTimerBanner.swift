@@ -59,7 +59,19 @@ struct RestTimerBanner: View {
         .buttonStyle(.plain)
         .font(.caption2)
         .padding(.vertical, 2)
-        .accessibilityIdentifier("restTimerBanner")
+        // m2-03 review round 3 (final pass): this container used to also
+        // carry its own `.accessibilityIdentifier("restTimerBanner")`.
+        // Confirmed via a live accessibility-tree dump
+        // (testRestTimerControlsHaveMinimumHitRegions) that on watchOS this
+        // clobbers EVERY descendant's own identifier -- the decrease
+        // button, the skip target, and the increase button all reported
+        // back as `restTimerBanner` instead of their own
+        // `restTimer.decreaseButton` / `restTimer.remaining` /
+        // `restTimer.increaseButton`, making them unfindable by their real
+        // identifiers. Nothing reads a container-level identifier here (no
+        // test, no other view), so it is simply removed rather than
+        // renamed -- each control's own identifier is the only one that
+        // needs to survive.
     }
 
     private var formatted: String {
