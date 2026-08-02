@@ -104,9 +104,9 @@ struct ExercisePageView: View {
             .disabled(!viewModel.canLogCurrentSet)
             .accessibilityIdentifier("logSetButton")
 
-            if viewModel.isRestRunning {
+            if viewModel.isRestRunning, let restTimer = viewModel.restTimer {
                 RestTimerBanner(
-                    remaining: viewModel.restRemaining,
+                    timer: restTimer,
                     onAdjust: viewModel.adjustRest(by:),
                     onSkip: viewModel.skipRest
                 )
