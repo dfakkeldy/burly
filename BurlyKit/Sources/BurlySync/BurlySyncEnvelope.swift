@@ -75,6 +75,9 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
     /// surface the app-update state and retain the original data for a later
     /// compatible receiver; applying, queueing, and retrying are deliberately
     /// outside this seam.
+    ///
+    /// Additive schema evolution adds a version case and its translation below;
+    /// never replace an older version's decoder with the hold path.
     public static func decode(
         _ data: Data,
         using decoder: JSONDecoder = JSONDecoder()
@@ -92,34 +95,11 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
         guard header.schemaVersion <= BurlySync.currentSchemaVersion else {
             return .heldNeedsAppUpdate(version: header.schemaVersion)
         }
-        guard header.schemaVersion == BurlySync.currentSchemaVersion else {
-            return .malformed(.unsupportedSchemaVersion(header.schemaVersion))
-        }
-
-        let kindHeader: KindHeader
-        do {
-            kindHeader = try decoder.decode(KindHeader.self, from: data)
-        } catch {
-            return .malformed(.invalidEnvelope)
-        }
-        guard let kind = BurlySyncPayloadKind(rawValue: kindHeader.kind) else {
-            return .malformed(.unknownKind(kindHeader.kind))
-        }
-
-        do {
-            switch kind {
-            case .snapshot:
-                let envelope = try decoder.decode(TypedEnvelope<BurlySnapshotPayloadDTO>.self, from: data)
-                return .decoded(BurlySyncEnvelope(schemaVersion: envelope.schemaVersion, payload: .snapshot(envelope.payload)))
-            case .session:
-                let envelope = try decoder.decode(TypedEnvelope<BurlySessionPayloadDTO>.self, from: data)
-                return .decoded(BurlySyncEnvelope(schemaVersion: envelope.schemaVersion, payload: .session(envelope.payload)))
-            case .digest:
-                let envelope = try decoder.decode(TypedEnvelope<BurlyDigestPayloadDTO>.self, from: data)
-                return .decoded(BurlySyncEnvelope(schemaVersion: envelope.schemaVersion, payload: .digest(envelope.payload)))
-            }
-        } catch {
-            return .malformed(.invalidPayload(kind))
+        switch header.schemaVersion {
+        case 1:
+            return decodeVersion1(data, using: decoder)
+        default:
+            return .malformed(.unsupportedOlderSchemaVersion(header.schemaVersion))
         }
     }
 
@@ -130,14 +110,67 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
         let schemaVersion: Int
     }
 
-    private struct KindHeader: Decodable {
-        let kind: String
+    /// Decodes all version-1 details in the second and final JSON pass. The
+    /// header-only first pass is intentionally the only work done for held
+    /// future versions.
+    private static func decodeVersion1(
+        _ data: Data,
+        using decoder: JSONDecoder
+    ) -> BurlySyncDecodeResult {
+        do {
+            let envelope = try decoder.decode(Version1Envelope.self, from: data)
+            return .decoded(
+                BurlySyncEnvelope(
+                    schemaVersion: envelope.schemaVersion,
+                    payload: envelope.payload
+                )
+            )
+        } catch let error as Version1DecodingError {
+            switch error {
+            case let .unknownKind(rawValue):
+                return .malformed(.unknownKind(rawValue))
+            case let .invalidPayload(kind):
+                return .malformed(.invalidPayload(kind))
+            }
+        } catch {
+            return .malformed(.invalidEnvelope)
+        }
     }
 
-    private struct TypedEnvelope<Payload: Decodable>: Decodable {
+    private struct Version1Envelope: Decodable {
         let schemaVersion: Int
-        let kind: String
-        let payload: Payload
+        let payload: BurlySyncPayload
+
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion, kind, payload
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+            let rawKind = try container.decode(String.self, forKey: .kind)
+            guard let kind = BurlySyncPayloadKind(rawValue: rawKind) else {
+                throw Version1DecodingError.unknownKind(rawKind)
+            }
+
+            do {
+                switch kind {
+                case .snapshot:
+                    payload = .snapshot(try container.decode(BurlySnapshotPayloadDTO.self, forKey: .payload))
+                case .session:
+                    payload = .session(try container.decode(BurlySessionPayloadDTO.self, forKey: .payload))
+                case .digest:
+                    payload = .digest(try container.decode(BurlyDigestPayloadDTO.self, forKey: .payload))
+                }
+            } catch {
+                throw Version1DecodingError.invalidPayload(kind)
+            }
+        }
+    }
+
+    private enum Version1DecodingError: Error {
+        case unknownKind(String)
+        case invalidPayload(BurlySyncPayloadKind)
     }
 }
 
@@ -156,7 +189,7 @@ public enum BurlySyncDecodeResult: Sendable, Equatable {
 public enum BurlySyncMalformedPayloadError: Sendable, Equatable {
     case invalidEnvelope
     case invalidSchemaVersion(Int)
-    case unsupportedSchemaVersion(Int)
+    case unsupportedOlderSchemaVersion(Int)
     case unknownKind(String)
     case invalidPayload(BurlySyncPayloadKind)
 }

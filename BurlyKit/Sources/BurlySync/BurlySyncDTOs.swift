@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// BurlySync — wire DTOs
+// BurlySync — wire payloads
 //
-// These value types are the versioned JSON contract between the phone and
-// watch. They deliberately do not expose SwiftData models or store APIs:
-// converting a received DTO into a local model is an apply-layer concern.
+// The versioned envelope and its three payload wrappers are the only sync
+// DTOs. Their contents deliberately reuse BurlyCore's framework-free value
+// types, which are themselves the cross-module and cross-device data contract.
 
 import Foundation
 import BurlyCore
@@ -12,15 +12,15 @@ import BurlyCore
 ///
 /// `version` is monotonically increasing for a given phone catalog. Its
 /// interpretation (including how receivers discard stale snapshots) belongs
-/// to the later sync state machine; this DTO only preserves the fact on the
-/// wire. Both curated and custom exercises are present in `exercises`.
+/// to the later sync state machine; this payload only preserves the fact on
+/// the wire. Both curated and custom exercises are present in `exercises`.
 public struct BurlySnapshotPayloadDTO: Sendable, Equatable, Codable {
     /// A non-negative, monotonically increasing catalog/routine version.
     public let version: Int
-    public let exercises: [BurlyExerciseDTO]
-    public let routines: [BurlyRoutineDTO]
+    public let exercises: [ExerciseData]
+    public let routines: [RoutineData]
 
-    public init(version: Int, exercises: [BurlyExerciseDTO], routines: [BurlyRoutineDTO]) {
+    public init(version: Int, exercises: [ExerciseData], routines: [RoutineData]) {
         precondition(version >= 0, "Snapshot version must be non-negative.")
         self.version = version
         self.exercises = exercises
@@ -31,10 +31,8 @@ public struct BurlySnapshotPayloadDTO: Sendable, Equatable, Codable {
         case version, exercises, routines
     }
 
-    /// Rejects a negative version at the untrusted JSON boundary. A
-    /// programmatic negative version is a caller bug and is rejected by the
-    /// initializer above; received JSON must fail normally instead of
-    /// trapping.
+    /// Wire payloads require fields that the domain `*Data` decoders default,
+    /// so a truncated sync message never silently changes its meaning.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let version = try container.decode(Int.self, forKey: .version)
@@ -45,197 +43,53 @@ public struct BurlySnapshotPayloadDTO: Sendable, Equatable, Codable {
                 debugDescription: "Snapshot version must be non-negative."
             )
         }
+
+        try validateElements(
+            in: container,
+            forKey: .exercises,
+            as: StrictExerciseData.self
+        )
+        try validateElements(
+            in: container,
+            forKey: .routines,
+            as: StrictRoutineData.self
+        )
+
         self.version = version
-        exercises = try container.decode([BurlyExerciseDTO].self, forKey: .exercises)
-        routines = try container.decode([BurlyRoutineDTO].self, forKey: .routines)
-    }
-}
-
-/// A complete catalog exercise as represented on the sync wire.
-public struct BurlyExerciseDTO: Sendable, Equatable, Hashable, Codable, Identifiable {
-    public let id: UUID
-    public var name: String
-    public var muscleGroups: [MuscleGroup]
-    public var origin: ExerciseOrigin
-    public var needsNaming: Bool
-    public var archivedAt: Date?
-
-    public init(
-        id: UUID,
-        name: String,
-        muscleGroups: [MuscleGroup],
-        origin: ExerciseOrigin,
-        needsNaming: Bool,
-        archivedAt: Date?
-    ) {
-        self.id = id
-        self.name = name
-        self.muscleGroups = muscleGroups
-        self.origin = origin
-        self.needsNaming = needsNaming
-        self.archivedAt = archivedAt
-    }
-}
-
-/// A complete routine as represented on the sync wire.
-public struct BurlyRoutineDTO: Sendable, Equatable, Hashable, Codable, Identifiable {
-    public let id: UUID
-    public var name: String
-    public var orderIndex: Int
-    public var items: [BurlyRoutineItemDTO]
-    public var updatedAt: Date
-    public var archivedAt: Date?
-
-    public init(
-        id: UUID,
-        name: String,
-        orderIndex: Int,
-        items: [BurlyRoutineItemDTO],
-        updatedAt: Date,
-        archivedAt: Date?
-    ) {
-        self.id = id
-        self.name = name
-        self.orderIndex = orderIndex
-        self.items = items
-        self.updatedAt = updatedAt
-        self.archivedAt = archivedAt
-    }
-}
-
-/// One exercise placement in a routine on the sync wire.
-public struct BurlyRoutineItemDTO: Sendable, Equatable, Hashable, Codable, Identifiable {
-    public let id: UUID
-    public var exerciseID: UUID?
-    public var order: Int
-    public var defaultSetCount: Int
-    public var restOverride: TimeInterval?
-    public var note: String?
-
-    public init(
-        id: UUID,
-        exerciseID: UUID?,
-        order: Int,
-        defaultSetCount: Int,
-        restOverride: TimeInterval?,
-        note: String?
-    ) {
-        self.id = id
-        self.exerciseID = exerciseID
-        self.order = order
-        self.defaultSetCount = defaultSetCount
-        self.restOverride = restOverride
-        self.note = note
+        exercises = try container.decode([ExerciseData].self, forKey: .exercises)
+        routines = try container.decode([RoutineData].self, forKey: .routines)
     }
 }
 
 /// The watch-to-phone payload for one complete session.
 ///
-/// `needsNamingExercises` contains a minimal identity DTO for each
-/// watch-created placeholder referenced by `session`. The fixed facts of a
-/// placeholder (custom origin, no tags, and "needs naming") are not copied
-/// as mutable wire fields; later apply code reconstructs them from this
-/// identity without guessing at a name.
+/// `needsNamingExercises` embeds the watch-created placeholders referenced by
+/// `session`. `ExerciseData` fully expresses them (`.custom` plus
+/// `needsNaming`), so no parallel placeholder DTO is needed.
 public struct BurlySessionPayloadDTO: Sendable, Equatable, Codable {
-    public let session: BurlySessionDTO
-    public let needsNamingExercises: [BurlyNeedsNamingExerciseDTO]
+    public let session: SessionData
+    public let needsNamingExercises: [ExerciseData]
 
-    public init(session: BurlySessionDTO, needsNamingExercises: [BurlyNeedsNamingExerciseDTO]) {
+    public init(session: SessionData, needsNamingExercises: [ExerciseData]) {
         self.session = session
         self.needsNamingExercises = needsNamingExercises
     }
-}
 
-/// A complete session, including its HealthKit link and revision.
-public struct BurlySessionDTO: Sendable, Equatable, Hashable, Codable, Identifiable {
-    public let id: UUID
-    public var routineID: UUID?
-    public var routineName: String?
-    public var startedAt: Date
-    public var endedAt: Date?
-    public var state: SessionState
-    public var revision: Int
-    public var healthKitWorkoutID: UUID?
-    public var origin: SessionOrigin
-    public var items: [BurlySessionItemDTO]
-    public var notes: String?
-
-    public init(
-        id: UUID,
-        routineID: UUID?,
-        routineName: String?,
-        startedAt: Date,
-        endedAt: Date?,
-        state: SessionState,
-        revision: Int,
-        healthKitWorkoutID: UUID?,
-        origin: SessionOrigin,
-        items: [BurlySessionItemDTO],
-        notes: String?
-    ) {
-        self.id = id
-        self.routineID = routineID
-        self.routineName = routineName
-        self.startedAt = startedAt
-        self.endedAt = endedAt
-        self.state = state
-        self.revision = revision
-        self.healthKitWorkoutID = healthKitWorkoutID
-        self.origin = origin
-        self.items = items
-        self.notes = notes
+    private enum CodingKeys: String, CodingKey {
+        case session, needsNamingExercises
     }
-}
 
-/// One exercise row in a complete session.
-public struct BurlySessionItemDTO: Sendable, Equatable, Hashable, Codable, Identifiable {
-    public let id: UUID
-    public var exerciseID: UUID?
-    public var order: Int
-    public var sets: [BurlySetDTO]
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        _ = try StrictSessionData(from: container.superDecoder(forKey: .session))
+        try validateElements(
+            in: container,
+            forKey: .needsNamingExercises,
+            as: StrictExerciseData.self
+        )
 
-    public init(id: UUID, exerciseID: UUID?, order: Int, sets: [BurlySetDTO]) {
-        self.id = id
-        self.exerciseID = exerciseID
-        self.order = order
-        self.sets = sets
-    }
-}
-
-/// One logged set in a session. `weight` routes untrusted JSON through
-/// `Weight`'s finite, non-negative kilogram validation boundary.
-public struct BurlySetDTO: Sendable, Equatable, Hashable, Codable, Identifiable {
-    public let id: UUID
-    public var order: Int
-    public var weight: Weight
-    public var reps: Int
-    public var isWarmup: Bool
-    public var completedAt: Date
-
-    public init(
-        id: UUID,
-        order: Int,
-        weight: Weight,
-        reps: Int,
-        isWarmup: Bool,
-        completedAt: Date
-    ) {
-        self.id = id
-        self.order = order
-        self.weight = weight
-        self.reps = reps
-        self.isWarmup = isWarmup
-        self.completedAt = completedAt
-    }
-}
-
-/// The deliberately minimal identity carried beside a session for a
-/// watch-created placeholder exercise that still needs a phone-side name.
-public struct BurlyNeedsNamingExerciseDTO: Sendable, Equatable, Hashable, Codable, Identifiable {
-    public let id: UUID
-
-    public init(id: UUID) {
-        self.id = id
+        session = try container.decode(SessionData.self, forKey: .session)
+        needsNamingExercises = try container.decode([ExerciseData].self, forKey: .needsNamingExercises)
     }
 }
 
@@ -243,7 +97,7 @@ public struct BurlyNeedsNamingExerciseDTO: Sendable, Equatable, Hashable, Codabl
 ///
 /// `lastPerformance` intentionally reuses `ExerciseLastPerformanceData`.
 /// Its complete-history generator contract is documented at that type's
-/// existing sync seam (`SessionDigestReceipt`); this DTO does not duplicate
+/// existing sync seam (`SessionDigestReceipt`); this payload does not duplicate
 /// or weaken that contract.
 public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
     /// The snapshot version from which this latest-wins digest was derived.
@@ -280,5 +134,102 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
         self.snapshotVersion = snapshotVersion
         lastPerformance = try container.decode([ExerciseLastPerformanceData].self, forKey: .lastPerformance)
         ackedSessionIDs = try container.decode([UUID].self, forKey: .ackedSessionIDs)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func require(_ key: Key) throws {
+        guard contains(key) else {
+            throw DecodingError.keyNotFound(
+                key,
+                DecodingError.Context(
+                    codingPath: codingPath,
+                    debugDescription: "Required sync wire field \(key.stringValue) is missing."
+                )
+            )
+        }
+    }
+}
+
+private func validateElements<Key: CodingKey, Element: Decodable>(
+    in container: KeyedDecodingContainer<Key>,
+    forKey key: Key,
+    as _: Element.Type
+) throws {
+    var elements = try container.nestedUnkeyedContainer(forKey: key)
+    while !elements.isAtEnd {
+        _ = try elements.decode(Element.self)
+    }
+}
+
+/// Validates fields whose corresponding `ExerciseData` decoder defaults for
+/// local/domain compatibility. It stores no duplicate wire model.
+private struct StrictExerciseData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case needsNaming
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try container.require(.needsNaming)
+    }
+}
+
+/// Validates `RoutineData`'s defaulted nested fields without creating a second
+/// routine representation for the sync contract.
+private struct StrictRoutineData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case items
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try validateElements(in: container, forKey: .items, as: StrictRoutineItemData.self)
+    }
+}
+
+private struct StrictRoutineItemData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case defaultSetCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try container.require(.defaultSetCount)
+    }
+}
+
+private struct StrictSessionData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case state, revision, items
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try container.require(.state)
+        try container.require(.revision)
+        try validateElements(in: container, forKey: .items, as: StrictSessionItemData.self)
+    }
+}
+
+private struct StrictSessionItemData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case sets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try validateElements(in: container, forKey: .sets, as: StrictSetRecordData.self)
+    }
+}
+
+private struct StrictSetRecordData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case isWarmup
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try container.require(.isWarmup)
     }
 }

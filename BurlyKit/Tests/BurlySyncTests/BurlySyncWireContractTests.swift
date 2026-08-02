@@ -51,18 +51,22 @@ struct BurlySyncWireContractTests {
         #expect(BurlySyncEnvelope.decode(json) == .malformed(.unknownKind("other")))
     }
 
-    @Test("truncated JSON and wrong envelope field types are malformed")
+    @Test("truncated JSON, missing schema version, and wrong envelope field types are malformed")
     func malformedEnvelopeInputsAreRejected() {
         let truncated = "{\"schemaVersion\":1,\"kind\":\"digest\",\"payload\":".data(using: .utf8)!
+        let missingSchemaVersion = """
+        {"kind":"digest","payload":{}}
+        """.data(using: .utf8)!
         let wrongSchemaType = """
         {"schemaVersion":"one","kind":"digest","payload":{}}
         """.data(using: .utf8)!
 
         #expect(BurlySyncEnvelope.decode(truncated) == .malformed(.invalidEnvelope))
+        #expect(BurlySyncEnvelope.decode(missingSchemaVersion) == .malformed(.invalidEnvelope))
         #expect(BurlySyncEnvelope.decode(wrongSchemaType) == .malformed(.invalidEnvelope))
     }
 
-    @Test("non-positive and older schema versions are rejected without payload decoding")
+    @Test("non-positive schema versions are rejected without payload decoding")
     func invalidSchemaVersionsAreRejected() {
         let negative = """
         {"schemaVersion":-1,"kind":"digest","payload":"not decoded"}
@@ -84,32 +88,71 @@ struct BurlySyncWireContractTests {
         #expect(BurlySyncEnvelope.decode(json) == .heldNeedsAppUpdate(version: Int.max))
     }
 
-    @Test("negative snapshot versions and hostile non-finite weights fail at their decode boundaries")
+    @Test("negative snapshot versions and flat hostile weights fail at their decode boundaries")
     func hostilePayloadValuesAreRejected() {
         let negativeSnapshot = """
         {"schemaVersion":1,"kind":"snapshot","payload":{"version":-1,"exercises":[],"routines":[]}}
         """.data(using: .utf8)!
-        let unrepresentableWeight = """
+        let negativeWeight = sessionJSON(weightKg: "-1")
+        let nonFiniteWeight = sessionJSON(weightKg: "\"NaN\"")
+        let positiveInfinityWeight = sessionJSON(weightKg: "\"Infinity\"")
+        let nonConformingDecoder = JSONDecoder()
+        nonConformingDecoder.nonConformingFloatDecodingStrategy = .convertFromString(
+            positiveInfinity: "Infinity",
+            negativeInfinity: "-Infinity",
+            nan: "NaN"
+        )
+
+        #expect(BurlySyncEnvelope.decode(negativeSnapshot) == .malformed(.invalidPayload(.snapshot)))
+        #expect(BurlySyncEnvelope.decode(negativeWeight) == .malformed(.invalidPayload(.session)))
+        #expect(BurlySyncEnvelope.decode(nonFiniteWeight, using: nonConformingDecoder) == .malformed(.invalidPayload(.session)))
+        #expect(BurlySyncEnvelope.decode(positiveInfinityWeight, using: nonConformingDecoder) == .malformed(.invalidPayload(.session)))
+    }
+
+    @Test("wire payloads do not adopt domain decoder defaults")
+    func wirePayloadsRequireDefaultedDomainFields() {
+        let snapshotMissingNeedsNaming = """
+        {
+          "schemaVersion":1,
+          "kind":"snapshot",
+          "payload":{
+            "version":0,
+            "exercises":[{
+              "id":"\(UUID().uuidString)","name":"Bench Press","muscleGroups":["chest"],"origin":"curated"
+            }],
+            "routines":[]
+          }
+        }
+        """.data(using: .utf8)!
+        let sessionMissingState = """
         {
           "schemaVersion":1,
           "kind":"session",
           "payload":{
             "session":{
-              "id":"\(UUID().uuidString)","startedAt":700000000,"state":"logged","revision":1,
-              "origin":"live","items":[{
-                "id":"\(UUID().uuidString)","order":0,"sets":[{
-                  "id":"\(UUID().uuidString)","order":0,"weight":{"kg":1e400},"reps":5,
-                  "isWarmup":false,"completedAt":700000000
-                }]
-              }]
+              "id":"\(UUID().uuidString)","startedAt":700000000,"revision":1,"origin":"live","items":[]
             },
             "needsNamingExercises":[]
           }
         }
         """.data(using: .utf8)!
 
-        #expect(BurlySyncEnvelope.decode(negativeSnapshot) == .malformed(.invalidPayload(.snapshot)))
-        #expect(BurlySyncEnvelope.decode(unrepresentableWeight) == .malformed(.invalidPayload(.session)))
+        #expect(BurlySyncEnvelope.decode(snapshotMissingNeedsNaming) == .malformed(.invalidPayload(.snapshot)))
+        #expect(BurlySyncEnvelope.decode(sessionMissingState) == .malformed(.invalidPayload(.session)))
+    }
+
+    @Test("session sets encode only flat canonical weightKg")
+    func sessionSetWeightWireShapeIsFlat() throws {
+        let data = try BurlySyncEnvelope(payload: .session(makeSessionPayload())).encodedData()
+        let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payload = try #require(root["payload"] as? [String: Any])
+        let session = try #require(payload["session"] as? [String: Any])
+        let items = try #require(session["items"] as? [[String: Any]])
+        let sets = try #require(items.first?["sets"] as? [[String: Any]])
+        let set = try #require(sets.first)
+
+        #expect((set["weightKg"] as? Double) == 60)
+        #expect(set["weight"] == nil)
     }
 
     @Test("unknown fields are tolerated at the envelope and payload layers")
@@ -137,7 +180,7 @@ struct BurlySyncWireContractTests {
     @Test("a large current-schema payload decodes without changing its contents")
     func largePayloadRoundTrips() throws {
         let exercises = (0 ..< 5_000).map { index in
-            BurlyExerciseDTO(
+            ExerciseData(
                 id: UUID(),
                 name: "Exercise \(index)",
                 muscleGroups: [.chest],
@@ -158,7 +201,7 @@ struct BurlySyncWireContractTests {
         return BurlySnapshotPayloadDTO(
             version: 42,
             exercises: [
-                BurlyExerciseDTO(
+                ExerciseData(
                     id: exerciseID,
                     name: "Bench Press",
                     muscleGroups: [.chest, .triceps],
@@ -168,12 +211,12 @@ struct BurlySyncWireContractTests {
                 )
             ],
             routines: [
-                BurlyRoutineDTO(
+                RoutineData(
                     id: UUID(),
                     name: "Push",
                     orderIndex: 0,
                     items: [
-                        BurlyRoutineItemDTO(
+                        RoutineItemData(
                             id: UUID(),
                             exerciseID: exerciseID,
                             order: 0,
@@ -192,7 +235,7 @@ struct BurlySyncWireContractTests {
     private func makeSessionPayload() -> BurlySessionPayloadDTO {
         let placeholderID = UUID()
         return BurlySessionPayloadDTO(
-            session: BurlySessionDTO(
+            session: SessionData(
                 id: UUID(),
                 routineID: UUID(),
                 routineName: "Push",
@@ -203,12 +246,12 @@ struct BurlySyncWireContractTests {
                 healthKitWorkoutID: UUID(),
                 origin: .live,
                 items: [
-                    BurlySessionItemDTO(
+                    SessionItemData(
                         id: UUID(),
                         exerciseID: placeholderID,
                         order: 0,
                         sets: [
-                            BurlySetDTO(
+                            SetRecordData(
                                 id: UUID(),
                                 order: 0,
                                 weight: Weight(kg: 60),
@@ -221,7 +264,15 @@ struct BurlySyncWireContractTests {
                 ],
                 notes: "Good session"
             ),
-            needsNamingExercises: [BurlyNeedsNamingExerciseDTO(id: placeholderID)]
+            needsNamingExercises: [
+                ExerciseData(
+                    id: placeholderID,
+                    name: "Custom exercise",
+                    muscleGroups: [],
+                    origin: .custom,
+                    needsNaming: true
+                )
+            ]
         )
     }
 
@@ -237,5 +288,26 @@ struct BurlySyncWireContractTests {
             ],
             ackedSessionIDs: [UUID()]
         )
+    }
+
+    private func sessionJSON(weightKg: String) -> Data {
+        """
+        {
+          "schemaVersion":1,
+          "kind":"session",
+          "payload":{
+            "session":{
+              "id":"\(UUID().uuidString)","startedAt":700000000,"state":"logged","revision":1,
+              "origin":"live","items":[{
+                "id":"\(UUID().uuidString)","order":0,"sets":[{
+                  "id":"\(UUID().uuidString)","order":0,"weightKg":\(weightKg),"reps":5,
+                  "isWarmup":false,"completedAt":700000000
+                }]
+              }]
+            },
+            "needsNamingExercises":[]
+          }
+        }
+        """.data(using: .utf8)!
     }
 }
