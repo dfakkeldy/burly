@@ -306,6 +306,13 @@ final class BurlyPhoneUITests: XCTestCase {
         catalogSearch.typeText(customName)
         XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Biceps · Forearms"].exists)
+
+        // The toolbar's Done button is unreachable while the search field
+        // still has keyboard focus (SwiftUI hides the regular toolbar
+        // during active search editing). Submit/dismiss via the keyboard's
+        // own "search" return key before tapping Done.
+        app.keyboards.buttons["search"].tap()
+        XCTAssertTrue(app.buttons["catalog.doneButton"].waitForExistence(timeout: 5))
         app.buttons["catalog.doneButton"].tap()
 
         // Create a routine and add two actual curated catalog exercises by

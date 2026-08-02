@@ -310,10 +310,13 @@ private struct RoutineEditorItemRow: View {
 
     var body: some View {
         let itemID: UUID = item.id
-        let itemRowIdentifier: String = "routineEditor.itemRow.\(itemID.uuidString)"
         let canMoveUp: Bool = item.order > 0
         let canMoveDown: Bool = item.order < items.count - 1
 
+        // No row-level .accessibilityIdentifier here (m2-03): stamping one
+        // on this container clobbered RoutineItemEditorRow's own leaf
+        // identifiers (exerciseName, set-count, restMenu, move buttons),
+        // the same collapse fixed in CatalogBrowserView's row above.
         RoutineItemEditorRow(
             item: $item,
             exerciseName: exerciseName,
@@ -338,7 +341,6 @@ private struct RoutineEditorItemRow: View {
                 items = viewModel.movingRoutineItem(id: itemID, by: 1, in: items)
             }
         )
-        .accessibilityIdentifier(itemRowIdentifier)
     }
 }
 
@@ -463,7 +465,14 @@ private struct CatalogBrowserView: View {
                         .accessibilityIdentifier("catalog.archiveExercise.\(exercise.id.uuidString)")
                     }
                     .padding(.vertical, 3)
-                    .accessibilityIdentifier("catalog.exerciseRow.\(exercise.id.uuidString)")
+                    // No row-level .accessibilityIdentifier here (m2-03):
+                    // stamping an identifier on this plain HStack container
+                    // clobbered every descendant's own identifier (name,
+                    // tags, add, and archive all reported back the row's
+                    // identifier instead of their own), making
+                    // catalog.addExercise.* / catalog.archiveExercise.*
+                    // unreachable. Leaving the container unidentified lets
+                    // each leaf control keep its own.
                 }
                 .accessibilityIdentifier("catalog.exerciseList")
             }
