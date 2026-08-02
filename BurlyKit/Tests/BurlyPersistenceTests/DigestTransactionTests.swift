@@ -387,15 +387,16 @@ struct DigestTransactionTests {
         #expect(try pruner.resumableActiveSession() == nil)
     }
 
-    // MARK: - The prune is validated against what it destroys (round E)
+
+    // MARK: - The entries are trusted, not audited (round F, reverting E)
     //
-    // Round D made the *payload* whole: the receipt cannot be built with one
-    // half missing. It could still be semantically partial, because an empty
-    // entry list is a legitimate digest and no amount of type-level work can
-    // tell "this push has no new numbers" from "this push forgot its
-    // numbers". The store can: it holds the session graph the ack is about
-    // to delete, and §5 says a phone acking a session it has received must
-    // therefore have that session's exercises in its full-history digest.
+    // Round E made `applyDigest` refuse a payload that acked a session whose
+    // sets named exercises the digest carried no entry for. The shape looks
+    // like a §5 contradiction — "I have this history" plus "I know nothing
+    // about these exercises" — but it is a payload the phone legitimately
+    // produces, and refusing it strands the session on the watch forever.
+    // These tests pin the *permitted* behaviour, so the check cannot come
+    // back without someone reading why it left.
 
     /// A logged session with sets in it, plus the exercise those sets name.
     private func seededLiftHistory(
@@ -409,9 +410,6 @@ struct DigestTransactionTests {
         try store.createRoutine(routine)
 
         let empty = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        // Only the squat item carries sets. The press item is in the graph
-        // but was never performed, so it demands nothing of the digest —
-        // there is no last performance to lose.
         let logged = empty.addingSet(
             SetRecordData(order: 0, weight: Weight(kg: 140), reps: 3, completedAt: Fixture.epoch),
             toItem: try #require(empty.items.first { $0.exerciseID == squat.id }?.id)
@@ -420,8 +418,8 @@ struct DigestTransactionTests {
         return (squat, press, logged)
     }
 
-    @Test("acking a lift-bearing session with no entry for its exercise is refused, and nothing is pruned — proved across a cold reopen")
-    func ackWithoutTheEntriesItImpliesIsRefused() throws {
+    @Test("the phone-deleted-history case applies cleanly: an empty digest acking a lift-bearing session prunes it, and the prune survives a cold reopen")
+    func emptyDigestAckingALiftBearingSessionApplies() throws {
         let url = try makeTemporaryStoreURL()
         defer { removeStoreFiles(at: url) }
 
@@ -434,89 +432,69 @@ struct DigestTransactionTests {
             loggedID = seeded.logged.id
             squatID = seeded.squat.id
 
-            // No ghost row pre-seeded, and none arriving: applying this
-            // would delete the only record on the watch that squat was ever
-            // lifted, and put nothing in its place. Application context is
-            // latest-wins, so nothing redelivers to repair it.
-            #expect(try store.lastPerformance(exerciseID: squatID) == nil)
-            #expect(
-                throws: BurlyStoreError.partialDigest(
-                    sessionID: loggedID, missingExerciseIDs: [squatID]
-                )
-            ) {
-                try store.applyDigest(lastPerformance: [], ackedSessionIDs: [loggedID])
-            }
-
-            // Refused before any mutation, so an unrelated successful save
-            // afterwards cannot commit a half-applied version of it.
-            try store.createExercise(Fixture.exercise(name: "Curl", muscleGroups: [.biceps]))
+            // The sequence this test exists for. The watch finished the only
+            // squat session there has ever been and shipped it. The phone
+            // received it, acked it — and then the user deleted it on the
+            // phone (§1 gives the phone `deleteSession`). The phone still
+            // holds the ack, because §5 retains acked ids for ~30 days. So
+            // its next digest is derived from a full history that genuinely
+            // contains no squat, and it carries that ack.
+            //
+            // Empty entries, lift-bearing acked session: exactly the shape
+            // round E threw on. It is honest, and it has to apply — the
+            // alternative is that the throw repeats until the ack ages out,
+            // after which no digest names the session again and the watch
+            // keeps it forever (§5: zero delivered-and-acked sessions
+            // remain), where it will be redelivered as a ghost.
+            try store.applyDigest(lastPerformance: [], ackedSessionIDs: [loggedID])
         }
 
         let container = try BurlyContainer.make(.watch, at: .file(url))
         let reopened = SwiftDataStore(container: container)
 
-        let survivor = try #require(try reopened.session(id: loggedID))
-        #expect(survivor.items.flatMap(\.sets).map(\.weightKg) == [140])
-        #expect(try reopened.loggedSessionsAwaitingAck().map(\.id) == [loggedID])
-        #expect(try rowCount(Session.self, in: container) == 1)
-        #expect(try rowCount(SetRecord.self, in: container) == 1)
+        #expect(try reopened.session(id: loggedID) == nil)
+        #expect(try reopened.loggedSessionsAwaitingAck().isEmpty)
+        #expect(try rowCount(Session.self, in: container) == 0)
+        #expect(try rowCount(SetRecord.self, in: container) == 0)
+        // No ghost row was invented for the deleted history either — the
+        // watch mirrors what the phone said, which is nothing.
+        #expect(try reopened.lastPerformance(exerciseID: squatID) == nil)
         #expect(try rowCount(ExerciseLastPerformance.self, in: container) == 0)
     }
 
-    @Test("the refusal names every uncovered exercise, not just the first")
-    func partialDigestNamesEveryUncoveredExercise() throws {
+    @Test("the same case through the BurlySync seam: applying, not auditing")
+    func digestSeamAppliesAnEmptyDigestForDeletedHistory() throws {
         let store = try makeStore(.watch)
-        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
-        let press = Fixture.exercise(name: "Overhead Press", muscleGroups: [.shoulders])
-        let routine = Fixture.routine(over: [squat, press])
-        try store.createExercise(squat)
-        try store.createExercise(press)
-        try store.createRoutine(routine)
+        let seeded = try seededLiftHistory(store)
+        let sync: SessionDigestApplying = store
 
-        var logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        for item in logged.items {
-            logged = logged.addingSet(
-                SetRecordData(order: 0, weight: Weight(kg: 60), reps: 5, completedAt: Fixture.epoch),
-                toItem: item.id
-            )
-        }
-        try store.createSession(logged)
-
-        let expected = [squat.id, press.id].sorted { $0.uuidString < $1.uuidString }
-        #expect(
-            throws: BurlyStoreError.partialDigest(
-                sessionID: logged.id, missingExerciseIDs: expected
-            )
-        ) {
-            try store.applyDigest(lastPerformance: [], ackedSessionIDs: [logged.id])
-        }
-        #expect(try store.session(id: logged.id) != nil)
-    }
-
-    @Test("a genuinely empty digest is still legitimate: acking a session that logged nothing needs no entries")
-    func emptyDigestAcksASetLessSessionFine() throws {
-        let store = try makeStore(.watch)
-        let seeded = try seededWatchStore(store)
-        // `seeded.logged` is a started-then-abandoned session: items, no
-        // sets. Nothing about it is derivable into a last-performance entry,
-        // so nothing is lost by pruning it and an empty digest is honest.
-        #expect(seeded.logged.items.allSatisfy { $0.sets.isEmpty })
-
-        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [seeded.logged.id])
+        try sync.apply(
+            SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [seeded.logged.id])
+        )
 
         #expect(try store.session(id: seeded.logged.id) == nil)
         #expect(try store.loggedSessionsAwaitingAck().isEmpty)
     }
 
-    @Test("the entry may come from a newer session than the one being acked — the check is presence, not provenance")
-    func entryFromANewerSessionSatisfiesTheAckedOne() throws {
+    @Test("a phone edit that removed a session's last sets strands nothing either — the ack still prunes")
+    func ackAfterThePhoneEditedAwayTheLastSets() throws {
+        let store = try makeStore(.watch)
+        let seeded = try seededLiftHistory(store)
+        // Same class of legitimate omission, reached by editing rather than
+        // deleting: the phone kept the session but removed its last sets, so
+        // its full-history derivation no longer has a squat entry to send.
+        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [seeded.logged.id])
+        #expect(try store.session(id: seeded.logged.id) == nil)
+    }
+
+    @Test("an entry may still come from a newer session than the one acked — latest-wins is unaffected")
+    func entryFromANewerSessionAppliesAlongsideTheAck() throws {
         let store = try makeStore(.watch)
         let seeded = try seededLiftHistory(store)
 
-        // Latest-wins: the phone's digest names squat's *most recent*
-        // performance, which is a heavier session the watch has already
-        // synced and forgotten — not the one being acked here. That is the
-        // normal case, and it satisfies the acked session's exercise.
+        // The ordinary case: the phone's digest names squat's most recent
+        // performance, from a heavier session the watch already synced and
+        // forgot, and acks the older one in the same payload.
         let newer = digestEntry(
             for: seeded.squat.id,
             kg: 150,
@@ -529,65 +507,16 @@ struct DigestTransactionTests {
         let ghost = try #require(try store.lastPerformance(exerciseID: seeded.squat.id))
         #expect(ghost.performedAt == Fixture.epoch.addingTimeInterval(604_800))
         #expect(ghost.sets.map(\.weightKg) == [150])
-        // The never-performed press item never demanded an entry, and did
-        // not get one invented for it.
+        // The never-performed press item got no entry invented for it.
         #expect(try store.lastPerformance(exerciseID: seeded.press.id) == nil)
     }
 
-    @Test("an entry already stored from an earlier digest does not excuse the current one — the payload must carry it")
-    func aPreviouslyStoredGhostDoesNotSatisfyTheCheck() throws {
-        let store = try makeStore(.watch)
-        let seeded = try seededLiftHistory(store)
-        // A ghost row on the watch from some earlier push.
-        try store.upsertLastPerformance(digestEntry(for: seeded.squat.id, kg: 135, reps: 5))
-
-        // §5 is latest-wins over the *whole* payload: a digest that acks a
-        // squat session while omitting squat is describing a history it
-        // cannot have. Accepting it because the watch happens to hold a
-        // stale row would freeze that row as the permanent answer for an
-        // exercise the lifter just trained.
-        #expect(
-            throws: BurlyStoreError.partialDigest(
-                sessionID: seeded.logged.id, missingExerciseIDs: [seeded.squat.id]
-            )
-        ) {
-            try store.applyDigest(lastPerformance: [], ackedSessionIDs: [seeded.logged.id])
-        }
-        #expect(try store.session(id: seeded.logged.id) != nil)
-        #expect(try store.lastPerformance(exerciseID: seeded.squat.id)?.sets.first?.weightKg == 135)
-    }
-
-    @Test("the existing tolerances still demand nothing: an unknown id and an .active session prune nothing, so an empty digest carrying them is fine")
-    func skippedAckIDsDemandNoEntries() throws {
-        let store = try makeStore(.watch)
-        let clock = TestClock()
-        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
-        let routine = Fixture.routine(over: [squat])
-        try store.createExercise(squat)
-        try store.createRoutine(routine)
-
-        // A live session full of sets, acked by mistake. The prune skips it,
-        // so it loses nothing and demands no entry — the check is scoped to
-        // what is actually destroyed, not to every id in the receipt.
-        var active = Fixture.activeSession(from: routine)
-        try SessionMutator.logSet(
-            itemID: try #require(active.items.first?.id),
-            weight: Weight(kg: 140), reps: 3, in: &active, clock: clock
-        )
-        try store.saveActiveSession(active)
-
-        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [UUID(), active.id])
-
-        #expect(try store.session(id: active.id)?.state == .active)
-        #expect(try store.resumableActiveSession()?.allSets.count == 1)
-    }
-
-    @Test("a set logged against an item with no exercise reference cannot be described by a digest, and so does not block the ack")
-    func setsWithNoExerciseReferenceDoNotBlockTheAck() throws {
+    @Test("a set logged against an item with no exercise reference is prunable — a digest could never describe it")
+    func setsWithNoExerciseReferenceArePrunable() throws {
         let store = try makeStore(.watch)
         // §1 permits a nil exercise reference. A digest is keyed by
-        // exercise, so there is no entry such a set could ever require —
-        // demanding one would make the session unackable forever.
+        // exercise, so no payload could ever carry an entry for such a set;
+        // if the ack did not prune it, it would be unprunable forever.
         let orphan = SessionData(
             startedAt: Fixture.epoch,
             state: .logged,
@@ -612,21 +541,25 @@ struct DigestTransactionTests {
         #expect(try store.session(id: orphan.id) == nil)
     }
 
-    @Test("the coverage check runs through the BurlySync seam too — a transport cannot route around it")
-    func digestSeamEnforcesCoverage() throws {
+    @Test("the tolerances are unchanged: an unknown id and an .active session are skipped, whatever the entries say")
+    func skippedAckIDsAreStillSkipped() throws {
         let store = try makeStore(.watch)
-        let seeded = try seededLiftHistory(store)
-        let sync: SessionDigestApplying = store
+        let clock = TestClock()
+        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let routine = Fixture.routine(over: [squat])
+        try store.createExercise(squat)
+        try store.createRoutine(routine)
 
-        #expect(
-            throws: BurlyStoreError.partialDigest(
-                sessionID: seeded.logged.id, missingExerciseIDs: [seeded.squat.id]
-            )
-        ) {
-            try sync.apply(
-                SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [seeded.logged.id])
-            )
-        }
-        #expect(try store.session(id: seeded.logged.id) != nil)
+        var active = Fixture.activeSession(from: routine)
+        try SessionMutator.logSet(
+            itemID: try #require(active.items.first?.id),
+            weight: Weight(kg: 140), reps: 3, in: &active, clock: clock
+        )
+        try store.saveActiveSession(active)
+
+        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [UUID(), active.id])
+
+        #expect(try store.session(id: active.id)?.state == .active)
+        #expect(try store.resumableActiveSession()?.allSets.count == 1)
     }
 }

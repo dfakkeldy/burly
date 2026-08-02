@@ -169,6 +169,59 @@ struct AckSeamIntegrationTests {
         #expect(try rowCount(ExerciseLastPerformance.self, in: container) == 2)
     }
 
+    /// The control the gate test above used to carry before it was rewritten
+    /// to assert overwriting, restored as its own test (m1-06 review round
+    /// F). The two are different properties and both matter: that one asserts
+    /// a *mentioned* exercise's ghost is replaced by the arriving value, this
+    /// one asserts an *unmentioned* exercise's ghost is left completely
+    /// alone.
+    ///
+    /// What it protects against is a plausible future implementation:
+    /// `applyDigest` clearing the `ExerciseLastPerformance` table and
+    /// reinserting the payload, which is a tempting way to write
+    /// "latest-wins" and passes every overwrite assertion. Under §5 that
+    /// would be wrong — a digest is upsert-by-exercise, not
+    /// whole-table-replace — and the damage would be invisible until a
+    /// lifter noticed an untrained exercise's ghost row had vanished.
+    @Test("a digest leaves the ghost rows it does not mention completely untouched — it upserts, it does not replace the table")
+    func unmentionedGhostRowsSurviveADigest() throws {
+        let store = try makeStore(.watch)
+        let bench = Fixture.exercise(name: "Bench Press")
+        let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
+        try store.createExercise(bench)
+        try store.createExercise(row)
+
+        let benchGhost = ExerciseLastPerformanceData(
+            exerciseID: bench.id,
+            performedAt: Fixture.epoch,
+            sets: [
+                SetSnapshot(weight: Weight(kg: 80), reps: 5),
+                SetSnapshot(weight: Weight(kg: 85), reps: 3)
+            ]
+        )
+        try store.upsertLastPerformance(benchGhost)
+
+        // A digest that says nothing whatsoever about bench.
+        let sync: SessionDigestApplying = store
+        try sync.apply(
+            SessionDigestReceipt(
+                lastPerformance: [
+                    ExerciseLastPerformanceData(
+                        exerciseID: row.id,
+                        performedAt: Fixture.epoch.addingTimeInterval(3_600),
+                        sets: [SetSnapshot(weight: Weight(kg: 70), reps: 10)]
+                    )
+                ],
+                ackedSessionIDs: []
+            )
+        )
+
+        // Byte-for-byte, not merely present: a clear-and-reinsert that
+        // happened to restore the row would still lose the second set.
+        #expect(try store.lastPerformance(exerciseID: bench.id) == benchGhost)
+        #expect(try store.lastPerformance(exerciseID: row.id)?.sets.map(\.reps) == [10])
+    }
+
     // MARK: - Replay, duplicate, and ordering idempotency (m1-03 review)
     //
     // The gate above gets one disk-backed pass through the seam. These are

@@ -405,24 +405,38 @@ public protocol BurlyStore: AnyObject {
     /// The transport-facing shape is BurlySync's `SessionDigestReceipt`,
     /// which cannot be constructed with only one half.
     ///
-    /// **The prune is also validated against what it destroys** (m1-06
-    /// review round E), because the payload's shape cannot be. An empty
-    /// `lastPerformance` is a legal digest — a push whose only news is an
-    /// ack — so `applyDigest(lastPerformance: [], ackedSessionIDs: [s])`
-    /// type-checks and validates even when `s` is full of sets, and the
-    /// prune then deletes the watch's last knowledge of those exercises and
-    /// puts nothing in its place. The store can tell the two apart where
-    /// the transport cannot: it holds the graph it is about to delete. So
-    /// for every acked session actually present and eligible for pruning,
-    /// each exercise with sets in it must appear somewhere in
-    /// `lastPerformance` — from a newer session is fine (latest-wins);
-    /// absent is not. Otherwise `.partialDigest`, before anything is
-    /// written.
+    /// **The entries are trusted, not checked against the prune** (m1-06
+    /// review round F, reverting round E). It is tempting to validate them:
+    /// an empty `lastPerformance` is a legal digest, so
+    /// `applyDigest(lastPerformance: [], ackedSessionIDs: [s])` is
+    /// expressible even when `s` is full of sets, and applying it deletes
+    /// the watch's last knowledge of those exercises. The store holds the
+    /// graph it is about to delete, so it *can* notice. Round E made it
+    /// throw. That was wrong, and the reason is worth keeping written down.
     ///
-    /// Pruning otherwise tolerates what a real transport produces: an id
-    /// naming an `.active` session, or no session at all, is skipped rather
-    /// than treated as an error, so replaying a digest converges — and
-    /// since those prune nothing, they demand no entries either. An acked
+    /// The shape is not evidence of a bug, because the phone is allowed to
+    /// forget: §1 gives it `deleteSession`, and §5 has it retain acked ids
+    /// for ~30 days. So — watch finishes the only bench session ever; phone
+    /// receives and acks it; the user deletes it on the phone; the phone's
+    /// next digest is derived from a full history that now genuinely
+    /// contains no bench, and it still carries the ack. Honest payload,
+    /// exactly the refused shape. Round E threw on it every time, so the
+    /// session was never pruned; after 30 days the ack aged out, no later
+    /// digest named the session, and it was stranded on the watch forever —
+    /// violating §5's "zero delivered-and-acked sessions remain" and
+    /// leaving it to be re-delivered as a ghost. A phone edit removing a
+    /// session's last sets strands it identically.
+    ///
+    /// The watch cannot tell the two cases apart; the evidence lives on the
+    /// phone. So this is a **trust boundary, enforced upstream**: absence of
+    /// an entry asserts "the phone's history holds nothing for this
+    /// exercise," and the watch believes it. The obligation to make that
+    /// true belongs to the digest generator — see `SessionDigestReceipt`,
+    /// which states the contract, and M4, which owns and property-tests it.
+    ///
+    /// Pruning tolerates what a real transport produces: an id naming an
+    /// `.active` session, or no session at all, is skipped rather than
+    /// treated as an error, so replaying a digest converges. An acked
     /// session that somehow still carries a journal takes it along.
     /// Watch-only; throws `.operationRequiresWatchStore` on a phone-kind
     /// store before touching anything.
