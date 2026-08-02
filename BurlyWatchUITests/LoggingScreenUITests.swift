@@ -95,10 +95,14 @@ final class LoggingScreenUITests: XCTestCase {
             "Expected the logging screen to route to the swapped-in exercise"
         )
 
-        // §2 Finish: "End workout" -> summary -> Finish.
+        // §2 Finish: "End workout" -> summary -> Finish. The actions sheet
+        // is a plain `List` (SessionActionsView.swift) -- watchOS renders
+        // it lazily, so a row this far down the list ("End workout" is the
+        // 8th of 9 rows) doesn't exist in the accessibility tree until it's
+        // scrolled into view.
         ellipsis.tap()
         let endWorkout = app.buttons["sessionActions.endWorkout"]
-        XCTAssertTrue(endWorkout.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollUntilExists(app, endWorkout), "Expected to be able to scroll to 'End workout'")
         endWorkout.tap()
 
         let summaryHeading = app.staticTexts["sessionSummary.heading"]
@@ -187,6 +191,17 @@ final class LoggingScreenUITests: XCTestCase {
                        "Expected weight prefill \(weightText), got \(String(describing: weightControl.value))")
         XCTAssertTrue(waitFor { (repsControl.value as? String) == reps },
                        "Expected reps prefill \(reps), got \(String(describing: repsControl.value))")
+    }
+
+    /// Swipes up on the app's frontmost content until `element` exists (or
+    /// gives up after `maxAttempts`) -- for a lazily-rendered `List` row
+    /// that isn't in the accessibility tree at the current scroll position.
+    private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 8) -> Bool {
+        for _ in 0..<maxAttempts {
+            if element.exists { return true }
+            app.swipeUp()
+        }
+        return element.exists
     }
 
     /// Polls `condition` for up to `timeout` seconds -- covers the small

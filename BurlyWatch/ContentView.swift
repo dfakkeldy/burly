@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Watch app shell root (spec §2 home, §5 fresh install). Switches between
 // the routine list, the "waiting for iPhone" state, and a store-failure
-// fallback, then hosts the §2 navigation stubs (Start, "Empty session").
+// fallback, then routes Start / "Empty session" (§2) to the real session
+// flow via SessionEntryView (m2-03).
 
 import SwiftUI
 import BurlyPersistence

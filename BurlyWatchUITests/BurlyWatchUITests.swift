@@ -71,19 +71,18 @@ final class BurlyWatchUITests: XCTestCase {
 
         attachScreenshot(from: app, name: "BurlyWatch-routineList")
 
+        // m2-03: Start now pushes the real logging screen (SessionEntryView
+        // -> LoggingScreenView), not the m2-01 stub -- see
+        // LoggingScreenUITests.swift for the full session-flow coverage
+        // this unlocks (spec §2 acceptance #3/#5). This test's job stays the
+        // routine list's own contract: Start reaches a real, non-dead-end
+        // destination naming the routine that was tapped.
         legDay.tap()
-        let stubHeading = app.staticTexts["sessionStartStubView.heading"]
-        XCTAssertTrue(stubHeading.waitForExistence(timeout: 5), "Expected Start to navigate to the session stub")
-        // Not asserting the full composed sentence ("Starting Leg Day"): the
-        // wording isn't the contract (m2-01 review finding 6.2), but the
-        // correct routine reaching the stub is, so it's checked by
-        // containment instead of an exact match.
-        XCTAssertTrue(
-            stubHeading.label.contains("Leg Day"),
-            "Expected the session stub to name the routine that was started"
-        )
+        let exerciseName = app.staticTexts["exercisePage.name"]
+        XCTAssertTrue(exerciseName.waitForExistence(timeout: 10), "Expected Start to navigate to the real logging screen")
+        XCTAssertEqual(exerciseName.label, "Back Squat", "Expected Leg Day's own exercise on the logging screen")
 
-        attachScreenshot(from: app, name: "BurlyWatch-startStub")
+        attachScreenshot(from: app, name: "BurlyWatch-startLoggingScreen")
     }
 
     /// m2-01 review findings 2.1/2.2: once a recognized scenario is
