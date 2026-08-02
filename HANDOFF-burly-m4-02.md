@@ -19,3 +19,13 @@ Resume:
 Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m4-02 (branch task/burly-m4-02, do not push)
 Next action: dispatcher re-runs review/acceptance — in BurlyKit/: swift test && BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
 ```
+
+## 2026-08-02 — review round 2 closed (3 findings + minor), all gates green
+
+Done: watch refuses same-id completions inside the remembered acked-digest set (resurrection guard, bounded by phone retention); snapshot transfers identified by (version, generation) so cancelled same-version callbacks cannot clear the live slot; sessionStoreConfirmed correlated to a pending routing slot — at most once, duplicates/replays/never-routed ignored, pending slots aged out at the retention bound; seam import parser handles access-level modifiers and is itself pinned. Binding contract item 3 now requires at-most-once causal confirmations. All mutation-checked (11/3/17/7 failures). `swift test` 502/502; spike green. Commit 1ff8e00.
+Next: dispatcher re-review round 3.
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m4-02 (branch task/burly-m4-02, do not push)
+Next action: dispatcher re-runs review/acceptance — in BurlyKit/: swift test && BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+```
