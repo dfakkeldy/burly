@@ -75,7 +75,12 @@ public enum MuscleSplitStats {
         var attributedSetCount = 0.0
         var unattributedSetCount = 0.0
 
-        for slice in slices where !slice.set.isWarmup {
+        // Deterministic visitation order (m6-01 fix round 2, review item
+        // 8 — "anywhere else totals accumulate"): the same reasoning as
+        // `VolumeStats.weeklyVolume`'s doc applies here too — a fetch order
+        // `BurlyStore.loggedSetSlices` never promised should not be able to
+        // change the last few ULPs of a reported share.
+        for slice in slices.sortedForDeterministicSummation() where !slice.set.isWarmup {
             guard
                 let exerciseID = slice.exerciseID,
                 let groups = muscleGroupsByExerciseID[exerciseID],

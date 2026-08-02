@@ -3,13 +3,22 @@
 // adversarial-review finding that stats must not build on `sessions()`'s
 // unbounded, whole-graph fetch (session → items → sets fault
 // amplification). These tests exercise the *store's* half of the contract:
-// date bounds, exercise scoping, `.active`-session exclusion, that a
+// date bounds, exercise scoping, `.active`-session exclusion, and that a
 // `.hevyImport` session counts identically to a `.live` one (spec §7
-// acceptance #2), and — after the m6-01 fix round 1 cross-engine review,
-// major #7 — that an all-nil call is refused rather than silently served
-// as a full-table scan. The computation half (Epley, weekly volume,
-// fractional split, consistency) is fixture-truth tested in
-// BurlyCoreTests/Stats — this file never asserts a computed chart number.
+// acceptance #2). The computation half (Epley, weekly volume, fractional
+// split, consistency) is fixture-truth tested in BurlyCoreTests/Stats —
+// this file never asserts a computed chart number.
+//
+// m6-01 fix round 2, review item 7: the bounded-query guarantee is now
+// enforced by API shape rather than a runtime nil-check — `loggedSetSlices`
+// requires either a concrete `exerciseID` or a validated `TrailingWindow`,
+// and `loggedSessionDates`'s `since` is a plain non-optional `Date`, with
+// the genuinely-unbounded case promoted to its own named method,
+// `allLoggedSessionDates()`. There is no longer a "call it with everything
+// nil and expect a thrown error" scenario to test — the old all-nil call
+// simply cannot be written anymore, which is the point (see `BurlyStore`'s
+// stats-queries doc and `BurlyStoreError`'s doc on why `unboundedStatsQuery`
+// no longer exists).
 import Foundation
 import Testing
 import BurlyCore
@@ -17,6 +26,15 @@ import BurlyCore
 
 @Suite("m6-01 — loggedSetSlices / loggedSessionDates: bounded stats queries")
 struct StatsQueryTests {
+    /// A fixed, deterministic calendar for the `TrailingWindow`-based
+    /// queries — same rationale as every other §7 fixture in this
+    /// codebase: determinism comes from the test pinning its inputs, not
+    /// from production code (or the test) reaching for `.current`.
+    private static var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
 
     /// A one-exercise routine, and a **finished** session over it with one
     /// set added at `completedAt`, ready for `createSession`.
@@ -40,7 +58,7 @@ struct StatsQueryTests {
         )
     }
 
-    // MARK: - Date bounds
+    // MARK: - Date bounds (exercise-bounded form)
 
     @Test("since/through bound completedAt: a set outside the window is excluded, one at each edge is included")
     func dateBoundsAreInclusiveAtBothEdges() throws {
@@ -56,11 +74,11 @@ struct StatsQueryTests {
         try store.createSession(loggedSession(exercise: bench, startedAt: through, completedAt: through, weightKg: 30, reps: 3))
         try store.createSession(loggedSession(exercise: bench, startedAt: through.addingTimeInterval(10), completedAt: through.addingTimeInterval(1), weightKg: 40, reps: 4))
 
-        let slices = try store.loggedSetSlices(exerciseID: nil, since: since, through: through)
+        let slices = try store.loggedSetSlices(exerciseID: bench.id, since: since, through: through)
         #expect(slices.map(\.set.weight.kg).sorted() == [20, 30])
     }
 
-    @Test("through: nil is unbounded above, as long as since is given")
+    @Test("through: nil is unbounded above")
     func throughNilIsUnboundedAbove() throws {
         let store = try makeStore()
         let bench = Fixture.exercise(name: "Bench Press")
@@ -68,12 +86,12 @@ struct StatsQueryTests {
         try store.createSession(loggedSession(exercise: bench, startedAt: Fixture.epoch, completedAt: Fixture.epoch, weightKg: 10, reps: 1))
         try store.createSession(loggedSession(exercise: bench, startedAt: .distantFuture, completedAt: .distantFuture, weightKg: 20, reps: 1))
 
-        let all = try store.loggedSetSlices(exerciseID: nil, since: Fixture.epoch.addingTimeInterval(-1), through: nil)
+        let all = try store.loggedSetSlices(exerciseID: bench.id, since: Fixture.epoch.addingTimeInterval(-1), through: nil)
         #expect(all.count == 2)
     }
 
-    @Test("since: nil is unbounded below only when exerciseID is given — the PR chart's all-time, one-exercise shape")
-    func sinceNilIsUnboundedBelowWhenExerciseIDIsGiven() throws {
+    @Test("since: nil is unbounded below — the PR chart's all-time, one-exercise shape")
+    func sinceNilIsUnboundedBelow() throws {
         let store = try makeStore()
         let bench = Fixture.exercise(name: "Bench Press")
         try store.createExercise(bench)
@@ -84,7 +102,7 @@ struct StatsQueryTests {
         #expect(all.count == 2)
     }
 
-    @Test("loggedSessionDates bounds by startedAt the same way")
+    @Test("loggedSessionDates(since:through:) bounds by startedAt the same way")
     func sessionDatesRespectBounds() throws {
         let store = try makeStore()
         let bench = Fixture.exercise(name: "Bench Press")
@@ -100,7 +118,7 @@ struct StatsQueryTests {
 
     // MARK: - Exercise scoping
 
-    @Test("exerciseID scopes to one exercise's sets; nil (with a since bound) returns every exercise's")
+    @Test("exerciseID scopes loggedSetSlices(exerciseID:since:through:) to one exercise's sets")
     func exerciseIDScopesResults() throws {
         let store = try makeStore()
         let bench = Fixture.exercise(name: "Bench Press")
@@ -113,14 +131,79 @@ struct StatsQueryTests {
         let benchOnly = try store.loggedSetSlices(exerciseID: bench.id, since: nil, through: nil)
         #expect(benchOnly.map(\.set.weight.kg) == [100])
         #expect(benchOnly.allSatisfy { $0.exerciseID == bench.id })
+    }
 
-        let everything = try store.loggedSetSlices(exerciseID: nil, since: Fixture.epoch.addingTimeInterval(-1), through: nil)
-        #expect(everything.count == 2)
+    // MARK: - The all-exercises, TrailingWindow-bounded form (m6-01 fix round 2, review item 7)
+
+    @Test("loggedSetSlices(window:through:calendar:) returns every exercise's sets within the trailing window")
+    func trailingWindowFormReturnsEveryExercise() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
+        try store.createExercise(bench)
+        try store.createExercise(row)
+        let asOf = Fixture.epoch
+        try store.createSession(loggedSession(exercise: bench, startedAt: asOf, completedAt: asOf, weightKg: 100, reps: 5))
+        try store.createSession(loggedSession(exercise: row, startedAt: asOf, completedAt: asOf, weightKg: 60, reps: 8))
+        // Well outside a 2-week trailing window.
+        try store.createSession(loggedSession(exercise: bench, startedAt: asOf.addingTimeInterval(-30 * 86_400), completedAt: asOf.addingTimeInterval(-30 * 86_400), weightKg: 999, reps: 1))
+
+        let slices = try store.loggedSetSlices(window: .weeks(2), through: asOf, calendar: Self.utc)
+        #expect(slices.map(\.set.weight.kg).sorted() == [60, 100])
+    }
+
+    @Test("loggedSetSlices(window:through:calendar:) with .days(_:) bounds by a plain day count")
+    func trailingWindowDaysForm() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        try store.createExercise(bench)
+        let asOf = Fixture.epoch
+        try store.createSession(loggedSession(exercise: bench, startedAt: asOf, completedAt: asOf, weightKg: 10, reps: 1))
+        // 10 days back — outside a 5-day window.
+        try store.createSession(loggedSession(exercise: bench, startedAt: asOf.addingTimeInterval(-10 * 86_400), completedAt: asOf.addingTimeInterval(-10 * 86_400), weightKg: 20, reps: 1))
+
+        let slices = try store.loggedSetSlices(window: .days(5), through: asOf, calendar: Self.utc)
+        #expect(slices.map(\.set.weight.kg) == [10])
+    }
+
+    // MARK: - allLoggedSessionDates (m6-01 fix round 2, review item 7)
+
+    @Test("allLoggedSessionDates returns every .logged session's startedAt regardless of age")
+    func allLoggedSessionDatesReturnsEverything() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        try store.createExercise(bench)
+        try store.createSession(loggedSession(exercise: bench, startedAt: .distantPast, completedAt: .distantPast, weightKg: 10, reps: 1))
+        try store.createSession(loggedSession(exercise: bench, startedAt: Fixture.epoch, completedAt: Fixture.epoch, weightKg: 10, reps: 1))
+
+        let dates = try store.allLoggedSessionDates()
+        #expect(dates.sorted() == [.distantPast, Fixture.epoch])
+    }
+
+    @Test("allLoggedSessionDates still excludes .active sessions")
+    func allLoggedSessionDatesExcludesActive() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        try store.createExercise(bench)
+        let routine = Fixture.routine(over: [bench])
+        try store.createSession(loggedSession(exercise: bench, startedAt: Fixture.epoch, completedAt: Fixture.epoch, weightKg: 100, reps: 5))
+
+        var active = SessionBuilder.session(from: routine, clock: TestClock(Fixture.epoch.addingTimeInterval(3_600)))
+        try SessionMutator.logSet(
+            itemID: active.session.items[0].id,
+            weight: Weight(kg: 999),
+            reps: 1,
+            in: &active,
+            clock: TestClock(Fixture.epoch.addingTimeInterval(3_600))
+        )
+        try store.saveActiveSession(active)
+
+        #expect(try store.allLoggedSessionDates() == [Fixture.epoch])
     }
 
     // MARK: - State exclusion: an in-flight session is not history yet
 
-    @Test("an .active session's sets do not appear in either stats query")
+    @Test("an .active session's sets do not appear in any stats query")
     func activeSessionIsExcluded() throws {
         let store = try makeStore()
         let bench = Fixture.exercise(name: "Bench Press")
@@ -144,8 +227,11 @@ struct StatsQueryTests {
         try store.saveActiveSession(active)
 
         let since = Fixture.epoch.addingTimeInterval(-1)
-        let slices = try store.loggedSetSlices(exerciseID: nil, since: since, through: nil)
-        #expect(slices.map(\.set.weight.kg) == [100]) // the 999 kg active set never appears
+        let bySince = try store.loggedSetSlices(exerciseID: bench.id, since: since, through: nil)
+        #expect(bySince.map(\.set.weight.kg) == [100]) // the 999 kg active set never appears
+
+        let byWindow = try store.loggedSetSlices(window: .weeks(52), through: Fixture.epoch.addingTimeInterval(3_600), calendar: Self.utc)
+        #expect(byWindow.map(\.set.weight.kg) == [100])
 
         let dates = try store.loggedSessionDates(since: since, through: nil)
         #expect(dates == [Fixture.epoch]) // the active session's startedAt never appears
@@ -185,51 +271,5 @@ struct StatsQueryTests {
 
         let dates = try store.loggedSessionDates(since: Fixture.epoch.addingTimeInterval(-1), through: nil)
         #expect(dates.count == 2)
-    }
-
-    // MARK: - Major #7 fix: no bound at all is refused, not silently served as a full scan
-
-    @Test("loggedSetSlices with exerciseID: nil and since: nil throws .unboundedStatsQuery (major #7 fix)")
-    func loggedSetSlicesAllNilThrows() throws {
-        let store = try makeStore()
-        #expect(throws: BurlyStoreError.unboundedStatsQuery(function: "loggedSetSlices")) {
-            _ = try store.loggedSetSlices(exerciseID: nil, since: nil, through: nil)
-        }
-    }
-
-    @Test("loggedSetSlices with exerciseID: nil, since: nil still throws even when through is given")
-    func loggedSetSlicesNoLowerBoundThrowsEvenWithThrough() throws {
-        let store = try makeStore()
-        #expect(throws: BurlyStoreError.unboundedStatsQuery(function: "loggedSetSlices")) {
-            _ = try store.loggedSetSlices(exerciseID: nil, since: nil, through: Fixture.epoch)
-        }
-    }
-
-    @Test("loggedSessionDates with since: nil throws .unboundedStatsQuery (major #7 fix)")
-    func loggedSessionDatesNilSinceThrows() throws {
-        let store = try makeStore()
-        #expect(throws: BurlyStoreError.unboundedStatsQuery(function: "loggedSessionDates")) {
-            _ = try store.loggedSessionDates(since: nil, through: nil)
-        }
-    }
-
-    @Test("loggedSessionDates with since: nil still throws even when through is given")
-    func loggedSessionDatesNilSinceThrowsEvenWithThrough() throws {
-        let store = try makeStore()
-        #expect(throws: BurlyStoreError.unboundedStatsQuery(function: "loggedSessionDates")) {
-            _ = try store.loggedSessionDates(since: nil, through: Fixture.epoch)
-        }
-    }
-
-    @Test("an unbounded call is refused before touching the store — no partial or stale data leaks through")
-    func unboundedCallIsRefusedEvenWithExistingData() throws {
-        let store = try makeStore()
-        let bench = Fixture.exercise(name: "Bench Press")
-        try store.createExercise(bench)
-        try store.createSession(loggedSession(exercise: bench, startedAt: Fixture.epoch, completedAt: Fixture.epoch, weightKg: 100, reps: 5))
-
-        #expect(throws: BurlyStoreError.unboundedStatsQuery(function: "loggedSetSlices")) {
-            _ = try store.loggedSetSlices(exerciseID: nil, since: nil, through: nil)
-        }
     }
 }

@@ -103,29 +103,56 @@ public enum ExerciseProgressionStats {
             : lhs.date < rhs.date
     }
 
-    /// Quantum for treating two Epley estimates as equal rather than one
-    /// being a new record (m6-01 fix round 1, major #2): `87.5 kg × 10`
-    /// and `100 kg × 5` are mathematically identical Epley estimates
-    /// (`3500 / 30`), but binary64 evaluates the two multiplications to
-    /// values that differ by ~1.4e-14 depending on operand order, and a
-    /// strict `>` on the raw `Double`s reports the second as a new e1RM
-    /// PR. Rounding to the nearest 0.01 kg before comparing absorbs that
-    /// noise — many orders of magnitude below where two Epley estimates
-    /// could ever differ for a real weight/rep combination (plates load
-    /// in 0.25 kg / 0.5 lb steps at the finest) — without merging any
-    /// difference a chart could actually render, since no §7 display
-    /// shows more than one decimal place. This is this task's documented
-    /// choice, not a spec-mandated number.
-    private static let e1RMQuantumKg: Double = 0.01
+    /// Relative epsilon for treating two Epley estimates as equal rather
+    /// than one being a new record (m6-01 fix round 2, review item 2 —
+    /// replaces the round-1 fix's absolute 0.01 kg quantization, which
+    /// review round 2 showed suppresses genuine PRs at ordinary plate
+    /// increments).
+    ///
+    /// **Why absolute quantization was wrong:** `46 lb × 2` (`20.86524902
+    /// kg`, e1RM `22.2562656213…`) and `47.5 lb × 1` (`21.545637575 kg`,
+    /// e1RM `22.2638254942…`) are two different, ordinary half-pound-plate
+    /// sets with a genuinely higher second estimate — a real `0.00756 kg`
+    /// improvement — but both quantized to `22.26` under the old 0.01 kg
+    /// rule, so the second was wrongly dropped as a tie.
+    ///
+    /// **Why relative epsilon is the right shape:** the float-noise case
+    /// this exists to suppress (`87.5 kg × 10` vs. `100 kg × 5`, both
+    /// exactly `3500/30`) differs only in binary64 rounding — by
+    /// `~1.42e-14` absolute, `~1.22e-16` *relative* to the ~116.67 kg
+    /// magnitude of the estimate. The genuine-improvement case above
+    /// differs by `~3.4e-4` relative — **twelve orders of magnitude
+    /// larger**. `1e-9` sits in the middle of that twelve-decade gap (six
+    /// orders of headroom on either side), so it swallows binary64
+    /// rounding noise at any realistic e1RM magnitude while registering
+    /// any humanly-real weight/rep improvement, however small the plates.
+    /// Both figures were computed directly (not estimated) and are pinned
+    /// by `ExerciseProgressionStatsTests`:
+    /// `floatTiedEpleyEstimatesDoNotProduceFalsePR` (must stay a tie) and
+    /// `smallRealisticImprovementRegistersAsANewPR` (must register).
+    private static let e1RMRelativeEpsilon: Double = 1e-9
 
-    private static func quantizedEstimate(_ value: Double) -> Double {
-        (value / e1RMQuantumKg).rounded() / e1RMQuantumKg
+    /// True when `candidate` clears `runningMax` by more than float noise
+    /// — i.e. it is a genuine improvement, not a mathematically-equal
+    /// estimate that binary64 merely rounded differently.
+    ///
+    /// `runningMax` starts at `-Double.infinity` (see `personalRecords`
+    /// below): that case is handled directly, since scaling an epsilon by
+    /// an infinite magnitude would make every finite candidate compare as
+    /// "not different enough."
+    private static func isGenuineEstimateImprovement(candidate: Double, over runningMax: Double) -> Bool {
+        guard runningMax.isFinite else {
+            return candidate > runningMax
+        }
+        guard candidate > runningMax else { return false }
+        let scale = max(abs(candidate), abs(runningMax))
+        return (candidate - runningMax) > e1RMRelativeEpsilon * scale
     }
 
     /// Walks `points` chronologically and emits one `PersonalRecord` per
     /// session that **strictly** beats the running maximum on either
     /// series so far — a tie (including a float-tie within
-    /// `e1RMQuantumKg`, see above) is not a new record. A single session
+    /// `e1RMRelativeEpsilon`, see above) is not a new record. A single session
     /// can set both kinds; each is reported once, in chronological order.
     ///
     /// - Parameter points: any order — this sorts internally with the
@@ -149,14 +176,23 @@ public enum ExerciseProgressionStats {
     ///   filtering the resulting *records* down to `displayRange`
     ///   afterward gets the right answer without losing the point — a
     ///   chart showing "3 months" still only draws markers that belong in
-    ///   that window. Callers get all-time points via
-    ///   `BurlyStore.loggedSetSlices(exerciseID: id, since: nil, through:
-    ///   nil)` — the exercise-bounded, SQL-pushed-down form (SwiftDataStore
-    ///   pushes `exerciseID` into the fetch predicate; ~0.5 s at 50k
-    ///   SetRecords for one exercise's full history, measured by
-    ///   `StatsQueryBenchmarkTests`) — never `loggedSetSlices(exerciseID:
-    ///   nil, ...)` filtered in Swift afterward, which would reintroduce
-    ///   the unbounded all-exercise scan this API exists to avoid.
+    ///   that window.
+    ///
+    ///   **This function cannot enforce that precondition itself** — it is
+    ///   pure BurlyCore and has no store to fetch from, so a caller that
+    ///   violates it gets a silently wrong answer back, not an error
+    ///   (m6-01 fix round 2, review item 3). Callers with a real
+    ///   `BurlyStore` should not re-derive the fetch-then-compute sequence
+    ///   by hand; use `BurlyStore.exerciseProgression(exerciseID:
+    ///   displayRange:)` instead — it always fetches all-time via
+    ///   `loggedSetSlices(exerciseID: id, since: nil, through: nil)` (the
+    ///   exercise-bounded, SQL-pushed-down form; SwiftDataStore pushes
+    ///   `exerciseID` into the fetch predicate — ~0.5 s at 50k SetRecords
+    ///   for one exercise's full history, measured by
+    ///   `StatsQueryBenchmarkTests`) regardless of `displayRange`, so the
+    ///   precondition can never be violated by going through it. This
+    ///   function stays public only for fixture-truth tests that construct
+    ///   `[ExerciseSessionPoint]` by hand, with no store in the picture.
     public static func personalRecords(
         from points: [ExerciseSessionPoint],
         displayRange: ClosedRange<Date>? = nil
@@ -174,7 +210,7 @@ public enum ExerciseProgressionStats {
                     PersonalRecord(sessionID: point.sessionID, date: point.date, kind: .topWeight, value: point.topWeight.kg)
                 )
             }
-            if quantizedEstimate(point.estimatedOneRepMax) > quantizedEstimate(runningEstimate) {
+            if isGenuineEstimateImprovement(candidate: point.estimatedOneRepMax, over: runningEstimate) {
                 runningEstimate = point.estimatedOneRepMax
                 records.append(
                     PersonalRecord(sessionID: point.sessionID, date: point.date, kind: .estimatedOneRepMax, value: point.estimatedOneRepMax)

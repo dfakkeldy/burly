@@ -49,3 +49,28 @@ public struct SetRecordSlice: Sendable, Equatable, Hashable {
         self.set = set
     }
 }
+
+extension Array where Element == SetRecordSlice {
+    /// Deterministic visitation order for any computation that accumulates
+    /// a total over `SetRecordSlice`s (m6-01 fix round 2, review item 8):
+    /// sorted by the set's own `completedAt`, then by its stable `id` to
+    /// fully break ties on identical timestamps.
+    ///
+    /// `BurlyStore.loggedSetSlices` promises no fetch ordering, and
+    /// floating-point addition is not associative — even Kahan compensated
+    /// summation (see `VolumeStats.weeklyVolume`) is far more *accurate*
+    /// than naive `+=`, but it is not order-*independent*: summing the
+    /// same contributions in two different visitation orders can still
+    /// produce a bit-different total. Sorting into one canonical order
+    /// before accumulating is what makes the result depend only on which
+    /// SetRecords exist, never on the order the store happened to return
+    /// them in. `VolumeStats.weeklyVolume` and `MuscleSplitStats
+    /// .fractionalSplit` both sort with this before accumulating.
+    func sortedForDeterministicSummation() -> [SetRecordSlice] {
+        sorted { lhs, rhs in
+            lhs.set.completedAt == rhs.set.completedAt
+                ? lhs.set.id.uuidString < rhs.set.id.uuidString
+                : lhs.set.completedAt < rhs.set.completedAt
+        }
+    }
+}

@@ -622,20 +622,36 @@ public final class SwiftDataStore: BurlyStore {
     // MARK: - Stats queries (§7; see the protocol doc for why these exist)
 
     public func loggedSetSlices(
-        exerciseID: UUID?,
+        exerciseID: UUID,
         since: Date?,
         through: Date?
     ) throws -> [SetRecordSlice] {
-        // m6-01 fix round 1, major #7: an all-nil call has no legitimate
-        // §7 caller and would otherwise fall through to a `nil` predicate
-        // below — the full, unfiltered SetRecord table. See
-        // `BurlyStoreError.unboundedStatsQuery`'s doc.
-        guard exerciseID != nil || since != nil else {
-            throw BurlyStoreError.unboundedStatsQuery(function: "loggedSetSlices")
-        }
-        var descriptor = FetchDescriptor<SetRecord>(
-            predicate: Self.setRecordFilterPredicate(exerciseID: exerciseID, since: since, through: through)
+        try fetchSetSlices(
+            predicate: Self.setRecordFilterPredicate(exerciseID: exerciseID, since: since, through: through),
+            exerciseID: exerciseID
         )
+    }
+
+    public func loggedSetSlices(
+        window: TrailingWindow,
+        through asOf: Date,
+        calendar: Calendar
+    ) throws -> [SetRecordSlice] {
+        let (since, through) = window.dateRange(asOf: asOf, calendar: calendar)
+        return try fetchSetSlices(
+            predicate: Self.setRecordFilterPredicate(exerciseID: nil, since: since, through: through),
+            exerciseID: nil
+        )
+    }
+
+    /// Shared fetch/map body for both `loggedSetSlices` overloads above —
+    /// they differ only in how the predicate and `exerciseID` (for the
+    /// belt-and-suspenders Swift-side check) are produced.
+    private func fetchSetSlices(
+        predicate: Predicate<SetRecord>?,
+        exerciseID: UUID?
+    ) throws -> [SetRecordSlice] {
+        var descriptor = FetchDescriptor<SetRecord>(predicate: predicate)
         // One batched prefetch instead of one fault per row: every slice
         // needs its parent `SessionItem` (for the exercise reference) and
         // that item's `Session` (for `state`/`startedAt`) — the two hops
@@ -677,18 +693,22 @@ public final class SwiftDataStore: BurlyStore {
         return slices
     }
 
-    public func loggedSessionDates(since: Date?, through: Date?) throws -> [Date] {
-        // m6-01 fix round 1, major #7: unlike `loggedSetSlices`, there is
-        // no exercise dimension to bound this the other way, so `since`
-        // alone must be present. See `BurlyStoreError.unboundedStatsQuery`.
-        guard since != nil else {
-            throw BurlyStoreError.unboundedStatsQuery(function: "loggedSessionDates")
-        }
+    public func loggedSessionDates(since: Date, through: Date?) throws -> [Date] {
         // No relationship prefetching: this query never touches `.items`,
         // so there is nothing beyond the row itself to fault.
         let descriptor = FetchDescriptor<Session>(
             predicate: Self.sessionDatePredicate(since: since, through: through)
         )
+        return try context.fetch(descriptor)
+            .filter { $0.state == .logged }
+            .map(\.startedAt)
+    }
+
+    public func allLoggedSessionDates() throws -> [Date] {
+        // No predicate at all: the deliberate, documented exemption — see
+        // the protocol doc on this method for why an unbounded fetch is
+        // safe here specifically.
+        let descriptor = FetchDescriptor<Session>()
         return try context.fetch(descriptor)
             .filter { $0.state == .logged }
             .map(\.startedAt)
@@ -845,20 +865,16 @@ public final class SwiftDataStore: BurlyStore {
     /// `Session`'s counterpart to `setRecordFilterPredicate(exerciseID:
     /// since:through:)`, bounding `startedAt` instead of `completedAt` (and
     /// with no exercise dimension — `loggedSessionDates` never has one).
-    /// Kept as a separate function rather than a generic one over a key
-    /// path: `#Predicate` expands its closure body at compile time, so the
-    /// property name has to appear literally at each call site regardless.
-    private static func sessionDatePredicate(since: Date?, through: Date?) -> Predicate<Session>? {
-        switch (since, through) {
-        case let (since?, through?):
+    /// `since` is non-optional (m6-01 fix round 2, review item 7:
+    /// `loggedSessionDates(since:through:)`'s `since` parameter is now a
+    /// plain `Date`, so there is no `nil` case left to switch on here —
+    /// the fully-unbounded fetch lives only in `allLoggedSessionDates()`,
+    /// which builds its own predicate-less `FetchDescriptor` directly).
+    private static func sessionDatePredicate(since: Date, through: Date?) -> Predicate<Session> {
+        if let through {
             return #Predicate<Session> { $0.startedAt >= since && $0.startedAt <= through }
-        case let (since?, nil):
-            return #Predicate<Session> { $0.startedAt >= since }
-        case let (nil, through?):
-            return #Predicate<Session> { $0.startedAt <= through }
-        case (nil, nil):
-            return nil
         }
+        return #Predicate<Session> { $0.startedAt >= since }
     }
 
     /// Single fetch-by-id helper. `id` is unique on every model, so

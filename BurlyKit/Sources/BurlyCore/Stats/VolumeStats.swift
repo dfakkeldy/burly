@@ -44,14 +44,24 @@ public enum VolumeStats {
     /// associative — the same set of SetRecords, summed in two different
     /// orders, measurably produced two different totals (25,002,500 vs.
     /// 25,002,500.000037253 for 25,000 contributions of 1000 and 25,000 of
-    /// 0.1). Kahan summation was chosen over "sort the slices into a
-    /// canonical order first" because it is not just order-stable but
-    /// materially more accurate at this scale, and it costs one extra
-    /// running `Double` per bucket rather than a sort.
+    /// 0.1).
+    ///
+    /// **Kahan alone is not enough** (m6-01 fix round 2, review item 8):
+    /// compensated summation is far more *accurate* than naive `+=`, but
+    /// it is still not order-*independent* — summing the identical
+    /// contributions in two different visitation orders can still produce
+    /// a bit-different compensation term and therefore a bit-different
+    /// total. So `slices` is sorted into one canonical order
+    /// (`sortedForDeterministicSummation()`: by `completedAt`, then by the
+    /// set's own stable `id`) *before* accumulating, and Kahan is kept on
+    /// top of that for its accuracy at scale — determinism from the sort,
+    /// precision from the compensation, neither one alone gave both.
+    /// Pinned by `VolumeStatsTests
+    /// .summationIsIdenticalAcrossArbitraryShuffles`.
     public static func weeklyVolume(from slices: [SetRecordSlice], calendar: Calendar) -> [WeeklyVolume] {
         var totals: [Date: Double] = [:]
         var compensations: [Date: Double] = [:]
-        for slice in slices where !slice.set.isWarmup {
+        for slice in slices.sortedForDeterministicSummation() where !slice.set.isWarmup {
             let weekStart = CalendarBucketing.weekStart(for: slice.set.completedAt, calendar: calendar)
             let value = slice.set.weight.kg * Double(slice.set.reps)
 

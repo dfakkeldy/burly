@@ -105,23 +105,21 @@ public enum BurlyStoreError: Error, Equatable {
     /// failure rather than handing a poisoned `Weight` back into equality,
     /// sorting, volume, PR, or chart math.
     case corruptedWeight(id: UUID, underlying: WeightValidationError)
-    /// `loggedSetSlices`/`loggedSessionDates` were called with no bound at
-    /// all — `loggedSetSlices` with both `exerciseID` and `since` `nil`,
-    /// or `loggedSessionDates` with `since` `nil` (m6-01 fix round 1,
-    /// major #7).
-    ///
-    /// Both queries exist specifically so a §7 chart never has to choose
-    /// between "hydrate the whole session graph" (`sessions()`) and
-    /// "fetch every SetRecord ever logged" — see `BurlyStore`'s
-    /// stats-queries doc. An all-nil call defeated that on purpose-built
-    /// infrastructure: the fetch predicate falls through to `nil`, i.e.
-    /// the unfiltered table, silently, with no signal that the caller got
-    /// a full-history scan instead of the bounded query the surface
-    /// promises. There is legitimately no unbounded §7 range — even the
-    /// PR chart's "all" range is bounded to one exercise
-    /// (`loggedSetSlices(exerciseID: id, since: nil, through: nil)` is
-    /// still allowed and is the one query this API lets run over full
-    /// history, because it is bounded the other way). A caller with no
-    /// legitimate use case has to be refused rather than silently obliged.
-    case unboundedStatsQuery(function: String)
+    // There is deliberately no `unboundedStatsQuery` case (m6-01 fix round
+    // 2, review item 7 — reverting round 1's fix for this same finding).
+    // Round 1 refused an all-nil `loggedSetSlices`/`loggedSessionDates`
+    // call at runtime, but a runtime check on an *optional* `Date` cannot
+    // stop a non-nil sentinel (`since: .distantPast`) from meaning the
+    // same "unbounded" thing while satisfying "not nil" — and round 1's
+    // own benchmark had quietly started relying on exactly that sentinel
+    // to express "all-time". Round 2 closes the gap by API shape instead:
+    // `loggedSetSlices` split into an exercise-bounded form (mandatory
+    // `UUID`, no way to omit it) and an all-exercises form that takes a
+    // validated `TrailingWindow` domain type instead of a `Date` a caller
+    // could sentinel past; `loggedSessionDates`'s `since` became a plain
+    // non-optional `Date`, with the genuinely-unbounded case promoted to
+    // its own explicit, documented method, `allLoggedSessionDates()`. None
+    // of `BurlyStore`'s stats-query methods can express an unbounded call
+    // anymore, so there is no longer a runtime error to throw for one —
+    // see `BurlyStore`'s stats-queries doc for the full reasoning.
 }

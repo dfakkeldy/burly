@@ -62,23 +62,32 @@ struct StatsQueryBenchmarkTests {
         // it just wrote".
         let store = try SwiftDataStore(kind: .phone, at: .file(url))
 
+        // A fixed, deterministic calendar for the TrailingWindow-based
+        // query below — same rationale as every other §7 fixture: this
+        // benchmark's numbers should not vary with the host's local time
+        // zone.
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+
         // (a) A realistic trailing-window query — the shape every §7 range
-        // except the PR chart's "all" actually uses. Bounded by date, so
-        // this should touch a small fraction of the 50k rows regardless of
-        // total history size.
-        let trailingWindowStart = seed.newestSessionDate.addingTimeInterval(-90 * 24 * 60 * 60)
+        // except the PR chart's "all" actually uses, now expressed through
+        // the validated `TrailingWindow` domain type rather than a raw
+        // `Date` (m6-01 fix round 2, review item 7: the all-exercises form
+        // no longer accepts an arbitrary `since` at all). Bounded by date,
+        // so this should touch a small fraction of the 50k rows regardless
+        // of total history size.
         let (trailingSlices, trailingTime, trailingPeak) = try measure {
-            try store.loggedSetSlices(exerciseID: nil, since: trailingWindowStart, through: nil)
+            try store.loggedSetSlices(window: .days(90), through: seed.newestSessionDate, calendar: utc)
         }
         print("[m6-01 stats benchmark] loggedSetSlices(all exercises, trailing 90d): \(trailingSlices.count) slices in \(String(format: "%.4f", trailingTime))s, process high-water RSS \(formatBytes(trailingPeak))")
         #expect(trailingSlices.isEmpty == false)
 
         // (b) The worst case this API still allows: one exercise,
-        // `since: nil` — the PR chart's "all" range (m6-01 fix round 1,
-        // major #7 closed off the OTHER worst case, `exerciseID: nil,
-        // since: nil`, which now throws `.unboundedStatsQuery` rather than
-        // running at all). `setRecordFilterPredicate` pushes `exerciseID`
-        // into the SwiftData fetch predicate itself
+        // `since: nil` — the PR chart's "all" range (the exercise-bounded
+        // overload's only all-time form; there is no all-exercises form
+        // that takes an arbitrary `since` at all — see (a) above and
+        // `BurlyStore`'s stats-queries doc). `setRecordFilterPredicate`
+        // pushes `exerciseID` into the SwiftData fetch predicate itself
         // (`sessionItem?.exercise?.id == exerciseID`), so this is bounded
         // by *that exercise's* row count, not the store's total size —
         // there is no Swift-side filter step left doing the narrowing.
@@ -91,12 +100,15 @@ struct StatsQueryBenchmarkTests {
 
         // (c) Session-level dates only, all-time — bounded by session
         // count (~3k), not set count (~50k), since this never touches
-        // `.items`. `since: .distantPast` is the explicit "all-time" bound
-        // major #7 now requires (`since: nil` throws `.unboundedStatsQuery`).
+        // `.items`. `allLoggedSessionDates()` is the honest name for this
+        // query (m6-01 fix round 2, review item 7 — replaces the previous
+        // round's `since: .distantPast` workaround, which the round-2
+        // review correctly called out as a sentinel bypassing the
+        // bound-mandatory rule rather than an honestly-unbounded query).
         let (dates, datesTime, datesPeak) = try measure {
-            try store.loggedSessionDates(since: .distantPast, through: nil)
+            try store.allLoggedSessionDates()
         }
-        print("[m6-01 stats benchmark] loggedSessionDates(all-time): \(dates.count) dates in \(String(format: "%.4f", datesTime))s, process high-water RSS \(formatBytes(datesPeak))")
+        print("[m6-01 stats benchmark] allLoggedSessionDates(): \(dates.count) dates in \(String(format: "%.4f", datesTime))s, process high-water RSS \(formatBytes(datesPeak))")
         #expect(dates.count == seed.sessionCount)
 
         print("[m6-01 stats benchmark] done\n")

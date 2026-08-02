@@ -472,55 +472,131 @@ public protocol BurlyStore: AnyObject {
     // adversarial review flagged exactly this session→items→sets
     // amplification and carried the fix into this task's brief.
     //
-    // These two queries exist instead: bounded by a `Date` predicate (safe
-    // to filter at the SwiftData layer, unlike `SessionState` — see
+    // These queries exist instead: bounded by a `Date` predicate (safe to
+    // filter at the SwiftData layer, unlike `SessionState` — see
     // `ActiveSessionJournal.swift`'s pinned finding and
     // `swiftDataCannotPredicateOnSessionState`), and shaped flat —
     // `SetRecordSlice`, or a bare `[Date]` — rather than as the nested
     // domain graph, so a chart's data flows through exactly the fields it
     // needs and nothing shaped like a lazy relationship escapes the store.
-    // Both restrict to `.logged` sessions: an `.active` workout is not
+    // All restrict to `.logged` sessions: an `.active` workout is not
     // history yet.
+    //
+    // **m6-01 fix round 2, review item 7 — bound enforced by API shape,
+    // not by a runtime nil-check.** Round 1 refused an all-`nil` call with
+    // `BurlyStoreError.unboundedStatsQuery`, but a runtime check on an
+    // *optional* `Date` cannot stop a non-nil sentinel from meaning the
+    // same thing — `since: .distantPast` satisfies "not nil" while still
+    // fetching the whole table, and round 1's own benchmark had quietly
+    // started relying on exactly that to express "all-time". The shapes
+    // below close that off structurally instead:
+    //
+    // - `loggedSetSlices(exerciseID:since:through:)` requires a concrete
+    //   `exerciseID` — there is no all-exercises form that takes an
+    //   arbitrary optional `Date`. `since`/`through` stay optional here
+    //   only because the exercise bound itself keeps the query SQL-pushed-
+    //   down and cheap even at "all-time" (see the method's doc).
+    // - `loggedSetSlices(window:through:calendar:)` is the only
+    //   all-exercises form, and it takes a `TrailingWindow` — a small,
+    //   closed domain type with no `Date` in its public API at all (see
+    //   that type's doc) — instead of a `Date` a caller could sentinel
+    //   past.
+    // - `loggedSessionDates(since:through:)`'s `since` is now a plain,
+    //   non-optional `Date`: there is no `nil` state left to guard against
+    //   in the first place. A caller that genuinely wants every session
+    //   says so by name, via `allLoggedSessionDates()`, rather than by
+    //   constructing a sentinel that happens to mean the same thing.
+    //
+    // `BurlyStoreError.unboundedStatsQuery` no longer exists: every call
+    // this section's methods can express is, by construction, a bounded
+    // one (`allLoggedSessionDates()` is a deliberate, documented exemption
+    // — see its own doc — not an unbounded call slipping through a gap).
 
-    /// Flat set-level projections for §7's PR, volume, and muscle-split
-    /// charts — never the full session graph.
+    /// Flat set-level projections for one exercise's PR chart — never the
+    /// full session graph.
     ///
     /// - Parameters:
-    ///   - exerciseID: scopes to one exercise's sets (the PR chart's
-    ///     shape); `nil` returns every exercise's (volume and
-    ///     muscle-split's shape).
+    ///   - exerciseID: scopes to this exercise's sets — mandatory (see the
+    ///     section doc above): there is no form of this query that returns
+    ///     every exercise's sets without going through `loggedSetSlices
+    ///     (window:through:calendar:)` instead.
     ///   - since: lower bound on the set's `completedAt`, inclusive; `nil`
-    ///     is unbounded below — legal only when `exerciseID` is non-nil
-    ///     (the PR chart's "all" range for one exercise is the only §7
-    ///     range that ever passes `since: nil`; every other range names a
-    ///     trailing window).
+    ///     is unbounded below — legal here specifically because
+    ///     `exerciseID` still bounds the fetch the other way (the PR
+    ///     chart's "all" range, spec §7 #1). `setRecordFilterPredicate`
+    ///     pushes `exerciseID` into the SQL predicate, so this stays
+    ///     bounded by *that exercise's* row count, not the store's total
+    ///     size (~0.5 s at 50k SetRecords for one exercise's full history,
+    ///     measured by `StatsQueryBenchmarkTests`).
     ///   - through: upper bound, inclusive; `nil` is unbounded above — the
     ///     common case, since every §7 range reads "since X, through now"
     ///     and callers do not have to compute "now" just to bound it.
     ///
-    /// **`exerciseID` and `since` cannot both be `nil`** (m6-01 fix round
-    /// 1, major #7): that combination has no legitimate §7 caller and
-    /// silently degenerates into an unfiltered full-table fetch — see
-    /// `BurlyStoreError.unboundedStatsQuery`'s doc for why this is
-    /// refused rather than served. Throws `.unboundedStatsQuery` before
-    /// touching the store when both are `nil`.
+    /// No ordering is promised; every current caller sorts what it gets
+    /// back (see `ExerciseProgressionStats.sessionPoints`). See
+    /// `BurlyStore.exerciseProgression(exerciseID:displayRange:)` for the
+    /// blessed way to turn this query's result into PR-correct progression
+    /// data — do not hand a range-bounded call of *this* method to
+    /// `ExerciseProgressionStats.personalRecords` (m6-01 fix round 2,
+    /// review item 3; see that extension's doc).
+    func loggedSetSlices(exerciseID: UUID, since: Date?, through: Date?) throws -> [SetRecordSlice]
+
+    /// Flat set-level projections across **every** exercise, bounded to a
+    /// validated trailing window — the volume and muscle-split charts'
+    /// shape (spec §7 #2/#3), neither of which ever names an "all" range
+    /// (only the PR chart does, and only for one exercise — see
+    /// `loggedSetSlices(exerciseID:since:through:)`).
+    ///
+    /// - Parameters:
+    ///   - window: how far back from `asOf` to bound the fetch — see
+    ///     `TrailingWindow`'s doc for why this is a validated domain type
+    ///     rather than a `Date`.
+    ///   - asOf: "now" for the purposes of the window — a parameter rather
+    ///     than `Date()` so this stays fixture-testable, matching every
+    ///     other §7 reference-date parameter (e.g.
+    ///     `ConsistencyStats.summarize`'s).
+    ///   - calendar: the user's calendar (time zone + week-start
+    ///     convention), used to convert `window` into a calendar-aligned
+    ///     `[since, through]` bound the same way
+    ///     `CalendarBucketing.trailingWeekWindow` already does for named
+    ///     week ranges (m6-01 fix round 1, major #5) — an unaligned bound
+    ///     can pull in one extra partial bucket at the edge.
     ///
     /// No ordering is promised; every current caller sorts what it gets
-    /// back (see `ExerciseProgressionStats.sessionPoints`).
-    func loggedSetSlices(exerciseID: UUID?, since: Date?, through: Date?) throws -> [SetRecordSlice]
+    /// back.
+    func loggedSetSlices(window: TrailingWindow, through asOf: Date, calendar: Calendar) throws -> [SetRecordSlice]
 
-    /// `startedAt` for every `.logged` session in the window — no item or
-    /// set graph — for §7's consistency chart (sessions/week, calendar
-    /// dots), which never looks inside a session. `through` is bounded the
-    /// same way as `loggedSetSlices`'s (`nil` is unbounded above).
+    /// `startedAt` for every `.logged` session in `[since, through]` — no
+    /// item or set graph — for §7's consistency chart (sessions/week,
+    /// calendar dots), which never looks inside a session.
     ///
-    /// **`since` is mandatory** (m6-01 fix round 1, major #7): unlike
-    /// `loggedSetSlices`, there is no exercise dimension here to bound an
-    /// all-nil call the other way, so `since: nil` has no legitimate §7
-    /// caller at all — every consistency-chart range names a trailing
-    /// window. Throws `.unboundedStatsQuery` before touching the store
-    /// when `since` is `nil`.
+    /// - Parameters:
+    ///   - since: lower bound on the session's `startedAt`, inclusive —
+    ///     mandatory (see the section doc above): every consistency-chart
+    ///     range names a trailing window, so there is no legitimate caller
+    ///     that has no lower bound at all. A caller that genuinely wants
+    ///     every session uses `allLoggedSessionDates()` instead.
+    ///   - through: upper bound, inclusive; `nil` is unbounded above, same
+    ///     as `loggedSetSlices`'s.
     ///
     /// No ordering promised.
-    func loggedSessionDates(since: Date?, through: Date?) throws -> [Date]
+    func loggedSessionDates(since: Date, through: Date?) throws -> [Date]
+
+    /// Every `.logged` session's `startedAt`, no date bound at all (m6-01
+    /// fix round 2, review item 7).
+    ///
+    /// **This is a deliberate, documented exemption from the "every §7
+    /// stats query is window-bounded" rule above, not a gap in it.** The
+    /// rule exists to prevent the session → item → set fault-amplification
+    /// `loggedSetSlices` is built to avoid; this query never touches
+    /// `.items` at all — it is a flat projection of one scalar column
+    /// (`startedAt`) across the `Session` table, so its cost is
+    /// proportional to *session count* (~3,600 at the architecture doc's
+    /// stated decade-of-lifting scale) regardless of how far back the
+    /// caller looks. Measured by `StatsQueryBenchmarkTests` at a
+    /// 50,000-SetRecord scale: 0.137 s / 3,600 dates, an order of
+    /// magnitude under the cost profile the window rule exists to
+    /// prevent. Bounding this with a manufactured window would buy no
+    /// safety and would just be a window for its own sake.
+    func allLoggedSessionDates() throws -> [Date]
 }

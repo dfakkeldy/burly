@@ -81,4 +81,27 @@ public enum CalendarBucketing {
             ?? currentWeekStart
         return (since, referenceDate)
     }
+
+    /// `trailingWeekWindow`'s counterpart for a day-count window rather
+    /// than a week-count one (m6-01 fix round 2, review item 7 —
+    /// `TrailingWindow.days(_:)`'s conversion): the `[since, through]`
+    /// window, both inclusive, that contains exactly `dayCount` calendar
+    /// days — the day containing `asOf`, plus the preceding `dayCount - 1`
+    /// calendar days. Same alignment reasoning as `trailingWeekWindow`
+    /// applied to days instead of weeks: a naive `asOf - dayCount ×
+    /// 86,400s` does not land on a day boundary in general (and never
+    /// does across a DST transition), so aligning `since` to a day start
+    /// is what keeps this to exactly `dayCount` day buckets rather than
+    /// `dayCount + 1`.
+    public static func trailingDayWindow(
+        dayCount: Int,
+        asOf referenceDate: Date,
+        calendar: Calendar
+    ) -> (since: Date, through: Date) {
+        precondition(dayCount > 0, "trailingDayWindow requires dayCount > 0, got \(dayCount)")
+        let currentDayStart = dayStart(for: referenceDate, calendar: calendar)
+        let since = calendar.date(byAdding: .day, value: -(dayCount - 1), to: currentDayStart)
+            ?? currentDayStart
+        return (since, referenceDate)
+    }
 }

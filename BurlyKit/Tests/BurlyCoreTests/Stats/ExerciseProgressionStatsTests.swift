@@ -147,10 +147,40 @@ struct ExerciseProgressionStatsTests {
         #expect(points[0].estimatedOneRepMax != points[1].estimatedOneRepMax)
 
         let records = ExerciseProgressionStats.personalRecords(from: points)
-        // Only session 1 sets the e1RM record; session 2's estimate
-        // quantizes to the same value, so it is a tie, not a new PR.
+        // Only session 1 sets the e1RM record; session 2's estimate is
+        // within the relative epsilon of session 1's, so it is a tie, not
+        // a new PR.
         #expect(records.filter { $0.kind == .estimatedOneRepMax }.count == 1)
         #expect(records.first { $0.kind == .estimatedOneRepMax }?.sessionID == s1)
+    }
+
+    // MARK: - Review round 2, item 2 fix: a real plate-increment improvement is not swallowed by the tie tolerance
+
+    @Test("a genuine half-pound-plate e1RM improvement registers as a new PR even though it used to quantize to the same 0.01 kg bucket (review round 2 fix)")
+    func smallRealisticImprovementRegistersAsANewPR() {
+        // The round-2 review's exact counter-example to the round-1 fix's
+        // absolute 0.01 kg quantization: 46 lb × 2 then 47.5 lb × 1, two
+        // ordinary half-pound-plate sets whose Epley estimates differ by a
+        // genuine ~0.00756 kg (~3.4e-4 relative) — a real improvement that
+        // the old absolute quantum wrongly rounded away because both
+        // values happened to land on "22.26" to two decimal places.
+        let s1 = UUID()
+        let s2 = UUID()
+        let slices = [
+            Self.slice(session: s1, date: Self.day0, weightKg: Weight(pounds: 46).kg, reps: 2),
+            Self.slice(session: s2, date: Self.day1, weightKg: Weight(pounds: 47.5).kg, reps: 1)
+        ]
+        let points = ExerciseProgressionStats.sessionPoints(from: slices)
+
+        // Sanity: this really is the small-but-real gap the fix must
+        // preserve, not an accidental exact tie.
+        let gap = points[1].estimatedOneRepMax - points[0].estimatedOneRepMax
+        #expect(gap > 0)
+        #expect(gap < 0.01) // small enough that 0.01 kg quantization used to erase it
+
+        let records = ExerciseProgressionStats.personalRecords(from: points)
+        #expect(records.filter { $0.kind == .estimatedOneRepMax }.count == 2)
+        #expect(records.filter { $0.kind == .estimatedOneRepMax }.map(\.sessionID) == [s1, s2])
     }
 
     // MARK: - Major #3 fix: PRs are computed over all-time history, then filtered to the display range

@@ -115,6 +115,51 @@ struct VolumeStatsTests {
         #expect(forwardVolume[0].totalVolumeKg == 25_002_500)
     }
 
+    // MARK: - Review round 2, item 8 fix: deterministic pre-sort makes the total order-independent for ANY permutation, not just forward/reverse
+
+    /// A minimal, self-contained xorshift64 RNG so this file doesn't need a
+    /// dependency on BurlyFixtures' `SeededGenerator` just to produce a
+    /// handful of reproducible shuffles.
+    private struct DeterministicRNG: RandomNumberGenerator {
+        private var state: UInt64
+        init(seed: UInt64) { self.state = seed == 0 ? 0x9E37_79B9 : seed }
+        mutating func next() -> UInt64 {
+            state ^= state << 13
+            state ^= state >> 7
+            state ^= state << 17
+            return state
+        }
+    }
+
+    @Test("weeklyVolume's total is bit-identical across many random shuffles of the same slices, not just forward/reverse order (review round 2, item 8 fix)")
+    func summationIsIdenticalAcrossArbitraryShuffles() {
+        // A richer fixture than the forward/reverse test above: 200 sets
+        // with varied weight/rep/timestamp combinations, all within one
+        // week, so a summation that is merely order-*stable* for two
+        // specific orderings (forward and its exact reverse) but not truly
+        // order-*independent* has many more chances to disagree.
+        var slices: [SetRecordSlice] = []
+        for i in 0..<200 {
+            slices.append(
+                Self.slice(
+                    offsetSeconds: Double(i % 5) * 3_600,
+                    weightKg: Double(i % 37) + 0.1,
+                    reps: (i % 12) + 1
+                )
+            )
+        }
+
+        let baseline = VolumeStats.weeklyVolume(from: slices, calendar: Self.utcThursdayCalendar)
+        #expect(baseline.count == 1)
+
+        for seed in UInt64(1)...5 {
+            var rng = DeterministicRNG(seed: seed)
+            let shuffled = slices.shuffled(using: &rng)
+            let result = VolumeStats.weeklyVolume(from: shuffled, calendar: Self.utcThursdayCalendar)
+            #expect(result == baseline)
+        }
+    }
+
     // MARK: - Major #5 fix: named 8-week range produces exactly 8 buckets
 
     @Test("an 8-week named range produces exactly 8 volume buckets, not 9 (major #5 fix)")

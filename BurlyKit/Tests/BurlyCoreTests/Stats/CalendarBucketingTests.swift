@@ -150,4 +150,76 @@ struct CalendarBucketingTests {
         #expect(since == CalendarBucketing.weekStart(for: asOf, calendar: calendar))
         #expect(through == asOf)
     }
+
+    // MARK: - Review round 2, item 5: DST spring-forward is bucketed correctly, not assumed
+
+    /// 2026-03-08 is the US spring-forward Sunday (clocks jump 02:00 local
+    /// straight to 03:00, so 02:00-02:59 does not exist that day), and it
+    /// is itself a Sunday — a `firstWeekday = 1` (Sunday) calendar's week
+    /// boundary lands exactly on it, so the calendar week `[Mar 8, Mar 15)`
+    /// contains the transition instead of merely being adjacent to it.
+    private static var newYork: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        calendar.firstWeekday = 1 // Sunday
+        return calendar
+    }
+
+    @Test("a spring-forward week is 167 hours, not the naive 168 — CalendarBucketing relies on calendar arithmetic, not a fixed 7×86,400s span")
+    func springForwardWeekIsOneHourShort() {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 3
+        components.day = 8
+        let weekStartSunday = Self.newYork.date(from: components)!
+
+        let interval = Self.newYork.dateInterval(of: .weekOfYear, for: weekStartSunday)!
+        // A naive fixed 7×86,400-second week would be 604,800 seconds; the
+        // real calendar week containing a spring-forward transition is
+        // exactly one hour shorter.
+        #expect(interval.duration == 167 * 3_600)
+        #expect(interval.duration != 168 * 3_600)
+    }
+
+    @Test("sessions on either side of the spring-forward gap still bucket into the same calendar day and week (review round 2, item 5 fix)")
+    func springForwardTransitionBucketsCorrectlyOnBothSides() {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 3
+        components.day = 8
+
+        let weekStartSunday = Self.newYork.date(from: components)!
+
+        // 1:30 AM EST (before the jump) and 3:30 AM EDT (right after —
+        // 2:00-2:59 local does not exist that day).
+        components.hour = 1
+        components.minute = 30
+        let beforeJump = Self.newYork.date(from: components)!
+        components.hour = 3
+        components.minute = 30
+        let afterJump = Self.newYork.date(from: components)!
+
+        // Sanity: this pair really does straddle the UTC-offset change —
+        // otherwise this fixture would not exercise DST at all.
+        #expect(Self.newYork.timeZone.secondsFromGMT(for: beforeJump) != Self.newYork.timeZone.secondsFromGMT(for: afterJump))
+
+        #expect(CalendarBucketing.dayStart(for: beforeJump, calendar: Self.newYork) == CalendarBucketing.dayStart(for: afterJump, calendar: Self.newYork))
+        #expect(CalendarBucketing.weekStart(for: beforeJump, calendar: Self.newYork) == weekStartSunday)
+        #expect(CalendarBucketing.weekStart(for: afterJump, calendar: Self.newYork) == weekStartSunday)
+
+        // The last moment of the short week and the first moment of the
+        // next one must still land in different week buckets — the
+        // 167-hour week doesn't bleed into its neighbor.
+        components.day = 14
+        components.hour = 23
+        components.minute = 59
+        let lastMomentOfWeek = Self.newYork.date(from: components)!
+        components.day = 15
+        components.hour = 0
+        components.minute = 1
+        let firstMomentOfNextWeek = Self.newYork.date(from: components)!
+
+        #expect(CalendarBucketing.weekStart(for: lastMomentOfWeek, calendar: Self.newYork) == weekStartSunday)
+        #expect(CalendarBucketing.weekStart(for: firstMomentOfNextWeek, calendar: Self.newYork) != weekStartSunday)
+    }
 }
