@@ -182,12 +182,79 @@ Done:
     / `...AndFinishResolvesIt` (6.1, 13s/11s). Only one attempt was needed;
     this round's second sim-run budget slot was not used.
 
-Task status: review round 1 fully closed, pending dispatcher re-review.
+Task status: **CORRECTION (see 2026-08-02 round 2 entry below) -- this was
+overstated.** All 32 sim tests were genuinely green, but "fully closed" was
+this implementer's own verification claim, not a review verdict. The
+follow-up cross-engine re-review found 3 of the 6 findings not actually
+closed (1 major, 2 minor) plus 1 new coverage gap -- see below. The correct
+framing at this point should have been "all fixes attempted, sim green,
+pending re-review," not "fully closed."
 
 Resume:
 ```
 Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-06
 Branch: task/burly-m2-06 (HEAD 9ca1b46, HANDOFF commit on top)
-Review round 1 closed, all 32 sim tests green — start from:
+Review round 1 fixes sim-green, pending re-review — start from:
 git -C /Users/dfakkeldy/Developer/worktrees/burly-m2-06 log --oneline -5
+```
+
+## 2026-08-02 — Cross-engine re-review round 2: 1 major + 2 minors + 1 new-defect fixed
+
+Re-review (`/Users/dfakkeldy/Developer/health-apps/.scratch/m2-06-review-2.md`)
+confirmed 3 of round 1's 6 findings genuinely closed (finding 2 —
+`.sessionNoLongerInFlight`; finding 3 — current-item persistence, no
+schema change; finding 4 — store-token UUID validation) and found 3
+NOT-CLOSED plus 1 new defect. Fixed on top of `b85bcb1`, commit `63ead7f`:
+
+Done:
+- **§1 (major)**: unreadable-journal recovery was wired at the primary
+  launch path only. Two secondary `SessionEntryView` call sites --
+  the defensive new-session preflight (`resumableActiveSession()`) and
+  `.resume`'s own fetch (`activeSession(id:)`) -- still folded the error
+  into generic `.failed` (a dead-end `StoreUnavailableView`). Both now
+  catch `.unreadableActiveSessionJournal` distinctly via a new
+  `SessionEntryView.Phase.unreadableSession`, reusing the same
+  `UnreadableSessionView` Discard recovery; `discardUnreadableSession(_:)`
+  deletes the session then `dismiss()`s back to the shell. Pinned by two
+  new faults (`injectUnreadableActiveSessionOnDefensivePreflight`,
+  `resumeFetchUnreadable`) and two new `SessionRecoveryUITests`.
+- **§5 (minor)**: `activeConflict`'s seed marker now writes and checks
+  `FileManager.createFile`'s result **before** the seed commits (was:
+  commit-then-unchecked-marker-write) -- fails closed
+  (`SeedError.activeConflictMarkerWriteFailed`) rather than risking a
+  reseed. Inverts the failure mode to "at most once."
+- **§6 (minor)**: the `SessionConflictView` race fault was wall-clock-gated
+  (fire ≥1.5s after construction) -- correctly flagged as flaky, since the
+  shell can call `resumableActiveSession()` more than once before the
+  lifter's tap (`.task`, `RoutineListView.onAppear`, an unpredictably-
+  delayed `scenePhase` transition). Replaced with a caller-identifying
+  check (`Thread.callStackSymbols` contains `"SessionEntryView"`) --
+  deterministic, no timing assumption. Removed the now-unneeded explicit
+  sleeps from the two tests.
+- **New defect**: `resolveInitialItem` (round 1's fix) had no pin proving
+  the restored page beats "first incomplete" -- the single-item Leg Day UI
+  test can't distinguish the two. Relocated the policy from
+  `SessionViewModel` (untestable -- no unit-test target hosts `BurlyWatch`)
+  to `ActiveSession.initialPageItemID` (BurlyCore, testable via
+  `swift test`) -- pure policy with no view/store dependency, so this is
+  also the architecturally correct home per this codebase's "engine owns
+  logic" convention. Pinned by a new BurlyCoreTests case with a 3-item
+  routine that fails under the old algorithm.
+- Verification: `swift test` 736 tests green (was 735); migration spike
+  green; `xcodebuild build`/`build-for-testing` both schemes green before
+  spending any sim budget.
+- `Scripts/acceptance-sim.sh` run launched in the background (log:
+  `scratchpad/acceptance-run-3.log`) -- result pending as of this entry.
+
+Next: read the run 3 result. If green, report done with an accurate
+closure claim this time (all findings addressed + sim evidence, not
+"fully closed" as an implementer assertion). If it fails, this round's
+budget allows exactly one more attempt after triage; if that also fails,
+stop and report per the dispatcher's guardrail.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-06
+Branch: task/burly-m2-06 (HEAD 63ead7f)
+Check the sim run: cat /private/tmp/claude-501/-Users-dfakkeldy-Developer-health-apps/6797db06-aea3-4cdc-acde-97a45503f65e/scratchpad/acceptance-run-3.log | tail -60
 ```

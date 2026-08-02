@@ -135,7 +135,7 @@ final class SessionConflictUITests: XCTestCase {
 
     // MARK: - Finding 6.1: SessionConflictView's own defensive path
 
-    /// m2-06 review finding 6.1 (round 2): the shell-level Resume gate makes
+    /// m2-06 review finding 6.1 (round 3): the shell-level Resume gate makes
     /// `SessionConflictView` unreachable in *ordinary* use, but
     /// `SessionEntryView.start()`'s own defensive `resumableActiveSession()`
     /// pre-check still exists for the race the gate cannot fully close --
@@ -143,13 +143,14 @@ final class SessionConflictUITests: XCTestCase {
     /// nothing and rendered the routine list) and this view's independent
     /// re-check a moment later. `WatchDemoSeed`'s
     /// `injectActiveSessionOnLateResumableCheck` fault makes that race
-    /// deterministic by identifying the *caller* (`SessionEntryView.start()`
-    /// specifically, via the call stack) rather than guessing at timing --
-    /// see that fault case's doc for why round 1's wall-clock version was
-    /// flaky and had to be replaced. No sleep is needed here: the fault
-    /// simply never fires for any of the shell's own
-    /// `resumableActiveSession()` calls, however many of those happen
-    /// first, so the tap below can fire the instant the row exists.
+    /// deterministic via a quiet-period gate on the store method itself --
+    /// see that fault case's doc for the full history: round 1's fixed
+    /// wall-clock-from-construction gate was flagged as theoretically
+    /// flaky, and round 2's attempt to identify the caller via
+    /// `Thread.callStackSymbols` turned out to be empirically wrong (fired
+    /// on the shell's own first call). The explicit sleep below is what
+    /// clears the quiet-period gate -- it needs to comfortably exceed the
+    /// gate's threshold, not just "feel safe."
     func testLateActiveSessionRaceReachesSessionConflictViewAndDiscardResolvesIt() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
@@ -160,6 +161,10 @@ final class SessionConflictUITests: XCTestCase {
         // routine list renders normally.
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        // Clears WatchDemoSeed's quiet-period gate (1.0 s) with margin, so
+        // this tap -- not any shell-side reload -- is what the fault fires
+        // on.
+        Thread.sleep(forTimeInterval: 4)
         legDayRow.tap()
 
         // SessionEntryView's own defensive pre-check is where the fault's
@@ -200,6 +205,7 @@ final class SessionConflictUITests: XCTestCase {
 
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        Thread.sleep(forTimeInterval: 4)
         legDayRow.tap()
 
         let conflictHeading = app.staticTexts["sessionConflict.heading"]

@@ -81,9 +81,11 @@ final class SessionRecoveryUITests: XCTestCase {
     /// fold it into `StoreUnavailableView`. Nothing is active at launch --
     /// the shell's own gate sees nothing, the routine list renders, and
     /// the fault injects a session that is both active AND unreadable
-    /// strictly at the moment `SessionEntryView` makes its own check
-    /// (identified by caller, not timing -- see `Fault
-    /// .injectUnreadableActiveSessionOnDefensivePreflight`'s doc).
+    /// once a quiet period on `resumableActiveSession()` has passed (see
+    /// `Fault.injectUnreadableActiveSessionOnDefensivePreflight`'s doc for
+    /// why this gates on a quiet period rather than an absolute delay or a
+    /// caller check -- the latter was tried in round 2 and was empirically
+    /// wrong).
     func testUnreadableJournalAtDefensivePreflightOffersDiscardAndAppIsUsableAfterward() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
@@ -92,6 +94,11 @@ final class SessionRecoveryUITests: XCTestCase {
 
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15), "Expected the routine list -- nothing is active at launch")
+        // Clears WatchDemoSeed's quiet-period gate on resumableActiveSession()
+        // (1.5 s, see Fault.injectActiveSessionOnLateResumableCheck's doc)
+        // with margin, so this tap -- not any shell-side reload -- is what
+        // the fault fires on.
+        Thread.sleep(forTimeInterval: 4)
         legDayRow.tap()
 
         let heading = app.staticTexts["unreadableSession.heading"]

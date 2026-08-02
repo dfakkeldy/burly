@@ -454,51 +454,63 @@ final class FaultInjectingStore: BurlyStore {
         /// One-shot: fires on the first `saveActiveSession` call only, via
         /// `forcedSessionOutOfFlight` below.
         case forceSessionOutOfFlightBeforeNextSave
-        /// m2-06 review finding 6.1 (round 2 fix for round-1's flaky wall-
-        /// clock gate): injects a real active session (via the wrapped
-        /// store, for a routine named "Push/Pull") the first time
-        /// `resumableActiveSession()` is called *from `SessionEntryView
-        /// .start()`'s own defensive check* -- simulating a session
-        /// becoming active between the home shell's own gate check (which
-        /// found nothing and let the routine list render) and that
-        /// defensive re-check a moment later, the race `SessionConflictView`
-        /// exists to catch.
+        /// m2-06 review finding 6.1: injects a real active session (via
+        /// the wrapped store, for a routine named "Push/Pull") the first
+        /// time `resumableActiveSession()` is called after a **quiet
+        /// period** on this exact method -- simulating a session becoming
+        /// active between the home shell's own gate check (which found
+        /// nothing and let the routine list render) and `SessionEntryView
+        /// .start()`'s own defensive re-check a moment later, the race
+        /// `SessionConflictView` exists to catch.
         ///
-        /// **Identifies the caller, not the timing** -- round 1's version
-        /// fired on the first call at least 1.5 s after construction,
-        /// which a cross-engine review correctly flagged as flaky: the
-        /// shell can call `resumableActiveSession()` more than once before
-        /// the lifter's first tap (`ContentView`'s `.task`, `RoutineListView
-        /// .onAppear`, and an `.inactive` → `.active` `scenePhase`
-        /// transition at an unpredictable delay are all real, confirmed
-        /// triggers), and this file does not control or bound how many of
-        /// those land after the 1.5 s mark. A delayed shell-side call could
-        /// consume the one-shot fault before `SessionEntryView` ever ran,
-        /// silently routing the shell to Resume instead and timing out the
-        /// test's Leg Day tap.
+        /// **History of this fault's gate, and why it landed here:**
         ///
-        /// `isCalledFromSessionEntryView()` below answers "who called this"
-        /// directly instead of inferring it from timing: Swift's name
-        /// mangling embeds the literal source type name into the compiled
-        /// symbol, which `Thread.callStackSymbols` reports in an
-        /// unoptimized DEBUG build (this whole mechanism is `#if DEBUG`,
-        /// unstripped, `-Onone` -- see `Scripts/acceptance-sim.sh`'s Debug
-        /// build config). No wall-clock assumption, no call-count
-        /// assumption -- the fault simply never fires for a call it did
-        /// not originate from `SessionEntryView`, however many shell-side
-        /// calls happen first or how long they take.
+        /// - Round 1 fired on the first call at least 1.5 s after this
+        ///   store was *constructed*. A cross-engine review correctly
+        ///   flagged this as flaky: the shell can call
+        ///   `resumableActiveSession()` more than once before the lifter's
+        ///   first tap (`ContentView`'s `.task`, `RoutineListView
+        ///   .onAppear`, and an `.inactive` → `.active` `scenePhase`
+        ///   transition at an unpredictable delay are all real triggers),
+        ///   and a delayed one landing after the 1.5 s mark could consume
+        ///   the fault first.
+        /// - Round 2 tried identifying the *caller* instead
+        ///   (`Thread.callStackSymbols.contains("SessionEntryView")`).
+        ///   This was **empirically wrong**, not just theoretically risky:
+        ///   a real `acceptance-sim.sh` run showed it firing on the
+        ///   shell's own very first call, before the routine list ever
+        ///   rendered -- `dladdr`-based symbolication in an unoptimized
+        ///   Swift build is best-effort nearest-symbol matching, not an
+        ///   exact call-graph, and evidently misattributed a shell-side
+        ///   frame. Abandoned outright rather than patched, since a
+        ///   mechanism that failed on the very first (not a rare/delayed)
+        ///   call had no verified fix available without spending another
+        ///   sim run to find out.
+        /// - This version (round 3) gates on a **quiet period since the
+        ///   previous call to this exact method**, tracked in
+        ///   `lastResumableActiveSessionCallAt` below, not on an absolute
+        ///   time from construction and not on guessing who is calling.
+        ///   Every real shell-triggered call (`.task`, `.onAppear`, a
+        ///   `scenePhase` transition) happens within a fraction of a
+        ///   second of the *previous* one, because they are all synchronous
+        ///   SwiftUI lifecycle events clustered at launch -- none of them
+        ///   individually sees a quiet gap. An XCUITest tap only ever
+        ///   happens well after `waitForExistence` already confirmed the
+        ///   UI settled, which -- combined with the deliberate sleep the
+        ///   tests using this fault add before tapping -- reliably clears
+        ///   the gate. This adapts to whatever the real call pattern turns
+        ///   out to be instead of asserting a fixed count or a fixed
+        ///   absolute delay.
         case injectActiveSessionOnLateResumableCheck
         /// m2-06 review round 2, finding 1(a): pins `SessionEntryView
         /// .start()`'s own *defensive new-session preflight* -- the same
-        /// caller-identification as `.injectActiveSessionOnLateResumableCheck`
-        /// (fires only when called from `SessionEntryView`, never the
-        /// shell's own gate check), but reports the real decode-failure
-        /// shape for the session it injects instead of a plain readable
-        /// one. Simulates a session becoming active AND already
-        /// unreadable strictly between the shell's own check (which must
-        /// see nothing, so the routine list renders and the lifter can
-        /// tap Start) and this view's independent re-check a moment
-        /// later.
+        /// quiet-period gate as `.injectActiveSessionOnLateResumableCheck`,
+        /// but reports the real decode-failure shape for the session it
+        /// injects instead of a plain readable one. Simulates a session
+        /// becoming active AND already unreadable strictly between the
+        /// shell's own check (which must see nothing, so the routine list
+        /// renders and the lifter can tap Start) and this view's
+        /// independent re-check a moment later.
         case injectUnreadableActiveSessionOnDefensivePreflight
         /// m2-06 review round 2, finding 1(b): pins `.resume`'s own
         /// `activeSession(id:)` fetch. Simulates the journal becoming
@@ -524,18 +536,23 @@ final class FaultInjectingStore: BurlyStore {
     private var failuresToProduce: Int
     /// One-shot latch for `.forceSessionOutOfFlightBeforeNextSave`.
     private var hasForcedSessionOutOfFlight = false
-    /// One-shot latch for `.injectActiveSessionOnLateResumableCheck`.
+    /// One-shot latch for `.injectActiveSessionOnLateResumableCheck` /
+    /// `.injectUnreadableActiveSessionOnDefensivePreflight`.
     private var hasInjectedLateActiveSession = false
-
-    /// m2-06 review round 2, finding 3 -- see `Fault
-    /// .injectActiveSessionOnLateResumableCheck`'s doc for the full
-    /// rationale. `Thread.callStackSymbols` walks the *current* thread's
-    /// frames; everything in this file runs on the main actor (a single
-    /// serial thread), so the frame that called into this method is
-    /// always present here, not on some other thread this can't see.
-    private static func isCalledFromSessionEntryView() -> Bool {
-        Thread.callStackSymbols.contains { $0.contains("SessionEntryView") }
-    }
+    /// When `resumableActiveSession()` was last called -- `.distantPast`
+    /// until the first call. See `Fault.injectActiveSessionOnLateResumableCheck`'s
+    /// doc for why this file gates on the *gap since the previous call*
+    /// rather than a caller identity or an absolute delay from
+    /// construction.
+    private var lastResumableActiveSessionCallAt = Date.distantPast
+    /// How long a gap since the previous `resumableActiveSession()` call
+    /// counts as "quiet" -- comfortably longer than the sub-second spacing
+    /// between the shell's own clustered launch-time calls (even under
+    /// simulator/CI load), comfortably shorter than the real wall-clock
+    /// gap before an XCUITest's deliberately-delayed tap (see the tests
+    /// that set this fault, which sleep well past this value before
+    /// tapping).
+    private static let resumableActiveSessionQuietPeriod: TimeInterval = 1.5
 
     init(
         wrapping store: SwiftDataStore,
@@ -643,23 +660,33 @@ final class FaultInjectingStore: BurlyStore {
         return try wrapped.activeSession(id: id)
     }
     func resumableActiveSession() throws -> ActiveSession? {
-        let calledFromSessionEntryView = Self.isCalledFromSessionEntryView()
+        // See `Fault.injectActiveSessionOnLateResumableCheck`'s doc for
+        // the full history/rationale. `hasPriorCall` matters: without it,
+        // the very first call ever (nothing to compare against but
+        // `.distantPast`) would trivially satisfy "quiet period elapsed"
+        // and fire immediately -- exactly the bug this gate exists to
+        // avoid, just introduced a different way.
+        let now = Date()
+        let hasPriorCall = lastResumableActiveSessionCallAt != .distantPast
+        let quietPeriodElapsed = hasPriorCall
+            && now.timeIntervalSince(lastResumableActiveSessionCallAt) >= Self.resumableActiveSessionQuietPeriod
+        lastResumableActiveSessionCallAt = now
 
         if
             fault == .injectActiveSessionOnLateResumableCheck,
             !hasInjectedLateActiveSession,
-            calledFromSessionEntryView
+            quietPeriodElapsed
         {
             hasInjectedLateActiveSession = true
             try injectActivePushPullSession()
         }
 
         // m2-06 review round 2, finding 1(a): reports the real decode-
-        // failure shape too, but ONLY when called from `SessionEntryView`
-        // -- the shell's own earlier check must see nothing at all, or
+        // failure shape too, but ONLY once a quiet period has passed --
+        // the shell's own earlier check(s) must see nothing at all, or
         // the routine list never renders and the lifter never reaches
         // Start to trigger the defensive preflight this pins.
-        if fault == .injectUnreadableActiveSessionOnDefensivePreflight, calledFromSessionEntryView {
+        if fault == .injectUnreadableActiveSessionOnDefensivePreflight, quietPeriodElapsed {
             if !hasInjectedLateActiveSession {
                 hasInjectedLateActiveSession = true
                 try injectActivePushPullSession()
