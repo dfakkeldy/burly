@@ -73,3 +73,14 @@ and XCUITest remain for the dispatcher environment to verify.
 - The required 46 mm simulator acceptance is blocked solely by sandbox access
   to the simulator service. Re-run `Scripts/acceptance-sim.sh` in the dispatcher
   environment to compile the Watch target and execute the new UI test.
+
+## 2026-08-02 — post-review defensive fixes, dispatcher-verified green
+
+Done: `RestTimerBanner.swift` two-fix review pass — `remaining(at:)` now calls
+`RestTimerState.remaining(at:)` instead of restating its formula; the active
+row's spacing (8→6) and ring (72→64) shrink the intrinsic width 176pt→164pt
+for 41mm headroom, ±15 44x44 hit targets untouched. `swift test` 645/68,
+`MigrationSpikeTests` 2/2, `Scripts/acceptance-sim.sh` on the 46mm pair: PASS
+(phone 7/7, watch 16/16, `runs/20260802T103200Z`). Committed, not pushed.
+Next: none — task-complete pending dispatcher merge decision.
+Resume: n/a.

@@ -19,7 +19,7 @@ struct RestTimerBanner: View {
         // the required Always-On resolution and all a wall-clock countdown
         // needs; there is no accumulating Timer anywhere in this view.
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = max(0, timer.endDate.timeIntervalSince(context.date))
+            let remaining = timer.remaining(at: context.date)
 
             if isLuminanceReduced {
                 lowFrequencyCountdown(remaining: remaining)
@@ -31,8 +31,15 @@ struct RestTimerBanner: View {
 
     /// The full, active rendering: a progress ring around the remaining
     /// time, flanked by explicit 44 pt adjustment targets.
+    ///
+    /// The row's intrinsic width is kept deliberately below a 41 mm watch's
+    /// content width, not merely equal to it: 44 (−15) + 6 + 64 (ring) + 6 +
+    /// 44 (+15) = 164 pt, vs. 176 pt at the previous 8 pt spacing / 72 pt
+    /// ring. The ±15 buttons' own 44×44 hit targets (`adjustmentButton`) are
+    /// untouched -- only the decorative ring shrinks, and its 64 pt
+    /// tap-to-skip region still clears the 44 pt minimum.
     private func activeCountdown(remaining: TimeInterval) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             adjustmentButton(delta: -15, title: "-15", identifier: "restTimer.decreaseButton")
 
             ZStack {
@@ -46,7 +53,7 @@ struct RestTimerBanner: View {
 
                 remainingLabel(remaining: remaining)
             }
-            .frame(width: 72, height: 72)
+            .frame(width: 64, height: 64)
             .contentShape(Circle())
             .onTapGesture(perform: onSkip)
 
