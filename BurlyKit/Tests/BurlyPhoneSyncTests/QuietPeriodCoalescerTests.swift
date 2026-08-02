@@ -131,6 +131,97 @@ struct QuietPeriodCoalescerTests {
         await coalescer.drain()
         #expect(await gate.completedPayloads == [1, 2])
     }
+
+    // MARK: - Round 2, finding 6: wake-before-fire supersession
+
+    @Test("round 2, finding 6 — a coalesce() landing after wake but before fire backs off rather than firing the newer payload at the OLD deadline")
+    func supersessionAfterWakeBeforeFireBacksOff() async throws {
+        let scheduler = ManualTriggerScheduler()
+        let recorder = PayloadRecorder()
+        let coalescer = QuietPeriodCoalescer<Int>(scheduler: scheduler, quietPeriod: .seconds(5))
+        let gate = WakeGate()
+
+        // Deterministically opens the exact window finding 6 closes: A's
+        // sleep resolves and it enters the actor-isolated "about to fire"
+        // hook, which suspends on an external signal — releasing the
+        // coalescer actor's exclusivity, exactly as an unlucky real
+        // executor interleaving would, so a `coalesce()` from elsewhere can
+        // land and run to completion before A's own `fire` call resumes.
+        await coalescer.setAfterWakeTestHookForTesting { await gate.waitForRelease() }
+
+        await coalescer.coalesce(1) { payload in await recorder.record(payload) }
+        let aWaiterID = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(5)) // A's sleep resolves; A is now parked inside the hook
+
+        await gate.waitUntilEntered()
+
+        // B arrives while A sits in that exact "woke, not yet fired"
+        // window. The actor is free during A's suspension, so this runs to
+        // completion: installs B's own token/task, and cancels A's task
+        // (a no-op here — cancellation is cooperative and A's code path
+        // never checks `Task.isCancelled`, matching the finding's premise
+        // that cancellation alone cannot close this race).
+        await coalescer.coalesce(2) { payload in await recorder.record(payload) }
+        _ = await scheduler.waitForFreshWaiter(excluding: [aWaiterID])
+
+        // B's own eventual wake must not be intercepted by the same hook.
+        await coalescer.setAfterWakeTestHookForTesting(nil)
+
+        // Release A. Pre-fix: `fire` trusted "I was told to run" and had no
+        // way to notice it had been superseded — it would consume payload
+        // 2 immediately, at A's OLD (already-elapsed) deadline, denying B
+        // its own quiet period, and then null out `currentTask`, losing
+        // the reference `drain()` needs to find B's still-sleeping task.
+        // Post-fix: `fire(token:)` re-checks freshness and backs off with
+        // NO side effects at all.
+        await gate.release()
+        await settleRealWork()
+
+        #expect(await recorder.values.isEmpty, "A's stale fire must not have consumed B's payload at A's old deadline")
+        #expect(scheduler.pendingCount == 1, "B's own countdown must still be the one live pending waiter — not dropped, not double-counted")
+
+        // B's own full quiet period elapses next — it must still get to
+        // fire, on its own schedule, exactly once.
+        scheduler.advance(by: .seconds(5))
+        await coalescer.drain()
+
+        #expect(await recorder.values == [2], "B fires exactly once, with its own payload, after its own full quiet period")
+    }
+}
+
+/// A single-entry gate a test can park a specific async call at, and later
+/// release — `waitUntilEntered()` lets the test confirm the call has
+/// actually reached the gate (not merely that it was invoked) before
+/// proceeding, the same "wait for a real checkpoint, not a guessed delay"
+/// discipline `PerformGate` above follows.
+private actor WakeGate {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var hasEntered = false
+    private var enterWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitForRelease() async {
+        hasEntered = true
+        let waiters = enterWaiters
+        enterWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilEntered() async {
+        if hasEntered { return }
+        await withCheckedContinuation { continuation in
+            enterWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
 }
 
 private actor PayloadRecorder {

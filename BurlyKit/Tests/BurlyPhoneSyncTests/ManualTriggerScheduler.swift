@@ -152,6 +152,28 @@ final class ManualTriggerScheduler: TriggerScheduling, @unchecked Sendable {
         return waiters.count
     }
 
+    /// Resumes exactly the named waiter, regardless of its deadline — a
+    /// precise, id-targeted alternative to `advance(by:)` for tests that
+    /// need to force one specific timer to fire ahead of another whose
+    /// nominal deadline is earlier or equal (m4-04 review round 2, finding
+    /// 5: a retry and a fresh edit scheduled `catalogEditDebounce` apart
+    /// from the same instant compute the IDENTICAL deadline — an exact tie
+    /// on paper that real OS-level timer scheduling has no obligation to
+    /// resolve in either particular order). Returns `false`, doing
+    /// nothing, if no waiter with that id is currently parked.
+    @discardableResult
+    func resumeWaiter(id: UUID) -> Bool {
+        lock.lock()
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+            lock.unlock()
+            return false
+        }
+        let waiter = waiters.remove(at: index)
+        lock.unlock()
+        waiter.continuation.resume()
+        return true
+    }
+
     /// Cooperatively yields a generous, fixed number of times — enough, in
     /// this single-process cooperative-scheduling test environment with
     /// nothing else contending, for a burst of `coalesce()` calls' `Task

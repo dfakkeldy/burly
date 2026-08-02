@@ -354,6 +354,43 @@ struct ReplicatedSessionApplyTests {
         #expect(try store.exercise(id: placeholder.id) == nil)
     }
 
+    @Test("round 2, finding 3 — a fault during the SECOND placeholder's existence check rolls back the FIRST placeholder's insert too")
+    func faultDuringSecondPlaceholderExistenceCheckRollsBackTheFirst() throws {
+        let store = try makeStore()
+        let placeholderA = Fixture.exercise(name: "Custom A", origin: .custom)
+        let placeholderB = Fixture.exercise(name: "Custom B", origin: .custom)
+
+        struct InjectedFault: Error, Equatable {}
+        store.placeholderExistenceCheckFaultForTesting = { index, _ in
+            if index == 1 { throw InjectedFault() }
+        }
+
+        let session = SessionData(
+            startedAt: Fixture.epoch,
+            state: .logged,
+            origin: .live,
+            items: [SessionItemData(exerciseID: placeholderA.id, order: 0)]
+        )
+
+        #expect(throws: InjectedFault()) {
+            try store.applyReplicatedSession(session, upsertingPlaceholderExercises: [placeholderA, placeholderB])
+        }
+
+        // Placeholder A's insert (staged before the fault on B) must not
+        // survive. Pre-fix, the existence-check loop ran OUTSIDE the
+        // do/catch, so the injected throw on B propagated straight out of
+        // the method with no rollback — A's insert stayed pending in this
+        // long-lived context, invisible to a fresh fetch but silently
+        // committed whole by the next unrelated successful save.
+        #expect(try store.exercise(id: placeholderA.id) == nil, "A must not even be visible via the context's own pending-insert view")
+        #expect(try store.session(id: session.id) == nil)
+
+        // Durability check: an unrelated successful call afterward must
+        // not surface it either.
+        try store.createExercise(Fixture.exercise(name: "Unrelated"))
+        #expect(try store.exercise(id: placeholderA.id) == nil)
+    }
+
     @Test("major 1 — an already-known placeholder exercise is never overwritten, even when bundled with the session apply")
     func knownPlaceholderIsNotOverwrittenViaTheBundledPath() throws {
         let store = try makeStore()

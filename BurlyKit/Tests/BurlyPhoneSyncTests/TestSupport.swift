@@ -89,6 +89,24 @@ func makePhoneStore(clock: any WallClock = TestClock()) throws -> SwiftDataStore
     try SwiftDataStore(kind: .phone, at: .inMemory, clock: clock)
 }
 
+/// Settles a detached, UNTRACKED `Task` (m4-04 review round 2, findings 5
+/// and 6: a catalog-retry `Task` is not held by any `QuietPeriodCoalescer`,
+/// so `drainPendingDebounces()` cannot await it; `ManualTriggerScheduler
+/// .settle()`'s pure `Task.yield()` loop was observed to be insufficient on
+/// its own in a busy test context — with several concurrent chains recently
+/// active, 50 cooperative yields did not reliably let a freshly-resumed
+/// background `Task` reach and complete its own actor calls before the
+/// calling test's own continuation ran again). A brief, bounded REAL sleep
+/// is the standard mitigation for exactly this class of "confirm an effect
+/// did NOT happen" assertion when no other completion signal is available:
+/// it can only make the assertion MORE likely to catch a real straggling
+/// effect, never less, so it does not introduce a wrong-direction flake —
+/// the risk it trades away is a slower test, not a less trustworthy one.
+func settleRealWork() async {
+    await Task.yield()
+    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+}
+
 // MARK: - Transport / publisher fakes
 
 /// A `TransmitFailure`-throwing, gate-able fake transport.
@@ -177,5 +195,46 @@ actor FakeDigestPublisher: PhoneDigestPublishing {
 
     func publishDigest(_ payload: BurlyDigestPayloadDTO) async {
         published.append(payload)
+    }
+}
+
+/// A `PhoneSyncStatePersisting` whose `save()` can be told to fail its next
+/// N calls (m4-04 review round 2, finding 4): pins that a catalog-edit
+/// STATE PERSISTENCE failure is surfaced/retried exactly like a transport
+/// failure, rather than being swallowed by the generic `deliver(_:)`
+/// helper's `try?`, which is what round-1 code still did for this one
+/// specific failure path. A plain lock-protected class, not an actor:
+/// `PhoneSyncStatePersisting.save` is synchronous by protocol design (see
+/// that file's doc), and `PhoneSyncCoordinator` calls it from `@MainActor`
+/// context — an actor here would need a fire-and-forget hop to record
+/// state, reintroducing an ordering gap this double has no reason to have.
+final class FailableStatePersisting: PhoneSyncStatePersisting, @unchecked Sendable {
+    struct SaveFailure: Error, Equatable {}
+
+    private let lock = NSLock()
+    private var stored: PhoneSyncRuntimeState?
+    private var failNextSaveCount = 0
+
+    func setFailNextSaveCount(_ count: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        failNextSaveCount = count
+    }
+
+    func load() throws -> PhoneSyncLoadResult? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored.map { PhoneSyncLoadResult(runtimeState: $0, recoveredFromCorruption: false) }
+    }
+
+    func save(_ state: PhoneSyncRuntimeState) throws {
+        lock.lock()
+        if failNextSaveCount > 0 {
+            failNextSaveCount -= 1
+            lock.unlock()
+            throw SaveFailure()
+        }
+        stored = state
+        lock.unlock()
     }
 }

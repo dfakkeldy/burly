@@ -213,9 +213,23 @@ struct PhoneSyncStatePersistingTests {
                 latestSnapshotVersion: -1, lastTransferGeneration: 0
             ).makeRuntimeState()
         }
+        // m4-04 review round 2, finding 2: the upper bound, not just the
+        // lower one — a hostile-but-syntactically-valid `Int.max` used to
+        // sail through this same validator and trap on the next
+        // `PhoneSyncMachine` `+= 1`.
+        #expect(throws: PhoneSyncStateCorruptionError.snapshotVersionTooLarge(Int.max)) {
+            _ = try FileBackedPhoneSyncStatePersisting.Snapshot(
+                latestSnapshotVersion: Int.max, lastTransferGeneration: 0
+            ).makeRuntimeState()
+        }
         #expect(throws: PhoneSyncStateCorruptionError.negativeTransferGeneration(-2)) {
             _ = try FileBackedPhoneSyncStatePersisting.Snapshot(
                 latestSnapshotVersion: 0, lastTransferGeneration: -2
+            ).makeRuntimeState()
+        }
+        #expect(throws: PhoneSyncStateCorruptionError.transferGenerationTooLarge(Int.max)) {
+            _ = try FileBackedPhoneSyncStatePersisting.Snapshot(
+                latestSnapshotVersion: 0, lastTransferGeneration: Int.max
             ).makeRuntimeState()
         }
         #expect(throws: PhoneSyncStateCorruptionError.negativeAckAge(sessionID: sessionID, age: -5)) {
@@ -229,6 +243,114 @@ struct PhoneSyncStatePersistingTests {
                 latestSnapshotVersion: 0, lastTransferGeneration: 0
             ).makeRuntimeState()
         }
+    }
+
+    // MARK: - Round 2, finding 2: an Int.max high-water record must not trap downstream
+
+    @Test("round 2, finding 2 — a high-water line containing Int.max is skipped as corrupt, not restored and later trapped")
+    func highWaterLineWithIntMaxIsSkippedNotRestored() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let hwURL = highWaterURL(for: url)
+
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL)
+        // A legitimate, small value first...
+        try persisting.save(PhoneSyncRuntimeState(machineState: .init(latestSnapshotVersion: 3, lastTransferGeneration: 2)))
+
+        // ...then a hostile line appended directly: `Int.max` for both
+        // fields. Before this fix, the log's only bound was `>= 0`, so
+        // this line WON the max — reconstructing a state at `Int.max`,
+        // which traps the very next `.catalogChanged` or push
+        // (`PhoneSyncMachine`'s `+= 1`).
+        let handle = try FileHandle(forWritingTo: hwURL)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        var hostileLine = try JSONEncoder().encode(["version": Int.max, "generation": Int.max])
+        hostileLine.append(UInt8(ascii: "\n"))
+        try handle.write(contentsOf: hostileLine)
+
+        // Corrupt the primary too, forcing recovery to depend entirely on
+        // the (now partially-hostile) high-water log.
+        try Data("garbage".utf8).write(to: url)
+
+        let reloaded = try #require(try persisting.load())
+        #expect(reloaded.runtimeState.machineState.latestSnapshotVersion == 3, "the Int.max line must be skipped as corrupt, leaving the last legitimate value")
+        #expect(reloaded.runtimeState.machineState.lastTransferGeneration == 2)
+    }
+
+    // MARK: - Round 2, finding 1: "both unreadable" must not degrade to zero
+
+    @Test("round 2, finding 1 — both files genuinely absent is a clean first launch, not a recovery")
+    func bothFilesAbsentIsACleanFirstLaunch() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        #expect(try persisting.load() == nil, "neither file has ever existed — zero is correct here, not a recovery")
+    }
+
+    @Test("round 2, finding 1 — primary AND high-water log both unreadable throws an unrecoverable error rather than silently resetting to zero")
+    func primaryAndHighWaterBothUnreadableIsUnrecoverable() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let hwURL = highWaterURL(for: url)
+
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL)
+        try persisting.save(PhoneSyncRuntimeState(
+            machineState: BurlyPhoneSyncMachine.State(latestSnapshotVersion: 9, lastTransferGeneration: 6)
+        ))
+
+        // Corrupt BOTH — the primary undecodable garbage, the high-water
+        // log's only line unparseable. Before this fix, the high-water
+        // read degraded to `(0, 0)` here indistinguishably from "never
+        // written," and `load()` silently reconstructed a state at zero —
+        // ready to reuse generation 1 next and regress the snapshot
+        // version the watch had already seen at 9.
+        try Data("not json {{{".utf8).write(to: url)
+        try Data("also not json {{{".utf8).write(to: hwURL)
+
+        #expect(throws: PhoneSyncStateUnrecoverableError()) {
+            _ = try persisting.load()
+        }
+    }
+
+    @Test("round 2, finding 1 — a present-but-corrupt high-water log alongside an absent primary is also unrecoverable, not treated as first launch")
+    func highWaterCorruptWithNoPrimaryIsUnrecoverable() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let hwURL = highWaterURL(for: url)
+
+        // Write ONLY a corrupt high-water log; no primary was ever written
+        // at this path — e.g. a crash between the log append and the
+        // primary write on the very first save. The log's mere presence
+        // means this is NOT a genuine first launch, and must not be
+        // conflated with that case.
+        try FileManager.default.createDirectory(at: hwURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("garbage\n".utf8).write(to: hwURL)
+
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL)
+        #expect(throws: PhoneSyncStateUnrecoverableError()) {
+            _ = try persisting.load()
+        }
+    }
+
+    @Test("round 2, finding 1 — PhoneSyncCoordinator surfaces the unrecoverable case distinctly and still constructs safely")
+    func coordinatorSurfacesSyncStateUnrecoverable() async throws {
+        struct AlwaysUnrecoverableStatePersisting: PhoneSyncStatePersisting {
+            func load() throws -> PhoneSyncLoadResult? { throw PhoneSyncStateUnrecoverableError() }
+            func save(_ state: PhoneSyncRuntimeState) throws {}
+        }
+
+        let store = try makePhoneStore()
+        let coordinator = PhoneSyncCoordinator(
+            store: store, transport: FakeTransport(), digestPublisher: FakeDigestPublisher(),
+            statePersisting: AlwaysUnrecoverableStatePersisting(),
+            clock: TestClock(), scheduler: ManualTriggerScheduler()
+        )
+
+        #expect(coordinator.syncStateUnrecoverable, "the specific 'both sources exhausted' case must be distinctly flagged")
+        #expect(coordinator.recoveredFromCorruptState, "still a corruption recovery in the broader sense")
+        #expect(coordinator.currentMachineState == BurlyPhoneSyncMachine.State(), "constructs a safe, functional fresh state rather than crashing or refusing to initialize")
     }
 
     @Test("the high-water log tolerates its own corruption: a garbled line is skipped, valid lines still contribute to the max")

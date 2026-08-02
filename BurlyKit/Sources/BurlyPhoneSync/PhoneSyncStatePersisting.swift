@@ -74,9 +74,61 @@
 // `PhoneSyncStateCorruptionError` on the first violation, so a hand-edited
 // or bit-flipped negative value is recoverable (falls into the same
 // high-water-preserving path as an unreadable file) instead of fatal.
+//
+// ## Round 2, finding 2: an upper bound, not just a lower one
+//
+// The round-1 validator above only ever checked `>= 0` — a syntactically
+// valid line/file carrying `Int.max` for `latestSnapshotVersion` or
+// `lastTransferGeneration` sailed through both `Snapshot.makeRuntimeState()`
+// and `HighWaterMarkLog.currentHighWater()`'s per-line check, and then
+// trapped on the very next `PhoneSyncMachine` `+= 1` (`.catalogChanged`'s
+// version bump, `replaceOutstandingTransfer`'s generation bump) — the exact
+// same class of hole `SessionData.maximumRevision` (m4-04 review round 1,
+// major 7) closed for wire/store revisions, just left open here.
+// `maximumPhoneSyncIdentity` below is that same "generous ceiling far below
+// `Int.max`" pattern, applied at BOTH deserialization boundaries this file
+// owns: the primary state's fields, and the high-water log's per-line
+// records.
+//
+// ## Round 2, finding 1: "both unreadable" must not degrade to zero
+//
+// Round 1's fix restores `latestSnapshotVersion`/`lastTransferGeneration`
+// from the high-water log whenever the *primary* is missing, unreadable, or
+// semantically invalid. It missed the case where the high-water log
+// *itself* cannot be trusted either — `HighWaterMarkLog`'s old
+// `currentHighWater()` returned the tuple `(0, 0)` both when the log file
+// had never been written (genuine first launch) AND when it existed but
+// every line failed to parse (a real prior install whose recovery record is
+// now gone) — two very different situations, silently conflated into the
+// same "safe to start from zero" answer. The fix distinguishes them
+// explicitly:
+//
+// - **Both files genuinely absent** (never written) — a true first launch.
+//   Zero is the correct, uncontroversial answer; `load()` returns `nil`.
+// - **Either file is *present* but unreadable/corrupt** — this phone has
+//   synced before, and least one of the two records of that fact cannot be
+//   trusted. If the OTHER one still holds a usable value, round 1's
+//   recovery already handles it. But if *neither* can produce a usable
+//   value, there is no true high-water left to recover, and reconstructing
+//   a state at zero here would reopen the exact "generation reuse aliases a
+//   live transfer" / "regressed version wedges the watch" hazard round 1
+//   closed for the single-file case. `load()` throws
+//   `PhoneSyncStateUnrecoverableError` instead — a typed, catchable signal
+//   `PhoneSyncCoordinator` surfaces as `syncStateUnrecoverable`, whose
+//   correct operator response is re-pairing/rebuilding the sync
+//   relationship from scratch, a deliberate and visible reset, not a
+//   runtime that quietly reused or lost identities without telling anyone.
 import Foundation
 import BurlySync
 import BurlySyncMachine
+
+/// m4-04 review round 2, finding 2 — see this file's header. Shared by both
+/// `Snapshot.makeRuntimeState()` (the primary state's fields) and
+/// `HighWaterMarkLog`'s per-line validation (the append-only log's
+/// records): the one upper bound that keeps `PhoneSyncMachine`'s `+= 1`
+/// increments forever below the value that would overflow, however many
+/// more edits or pushes a phone racks up over its lifetime.
+let maximumPhoneSyncIdentity = 1_000_000_000
 
 /// Everything `PhoneSyncCoordinator` needs to survive a relaunch: the
 /// protocol machine's own state, plus the coordinator's daily-push
@@ -115,9 +167,24 @@ public struct PhoneSyncLoadResult: Sendable, Equatable {
 /// reconstructing a `State` from untrusted JSON.
 public enum PhoneSyncStateCorruptionError: Error, Equatable {
     case negativeSnapshotVersion(Int)
+    /// m4-04 review round 2, finding 2 — see this file's header.
+    case snapshotVersionTooLarge(Int)
     case negativeTransferGeneration(Int)
+    /// m4-04 review round 2, finding 2 — see this file's header.
+    case transferGenerationTooLarge(Int)
     case negativeAckAge(sessionID: UUID, age: TimeInterval)
     case negativePendingAge(sessionID: UUID, age: TimeInterval)
+}
+
+/// Thrown by `load()` (m4-04 review round 2, finding 1 — see this file's
+/// header): neither the primary state file nor the high-water-mark log
+/// could produce a trustworthy identity. Deliberately distinct from
+/// `PhoneSyncStateCorruptionError` (which names one bad field inside an
+/// otherwise-readable source) — this means the *combination* of both
+/// sources this type relies on gives no usable answer at all, not that one
+/// of them named a specific violation.
+public struct PhoneSyncStateUnrecoverableError: Error, Equatable {
+    public init() {}
 }
 
 /// Durably persists `PhoneSyncRuntimeState` across relaunch. Conformances
@@ -169,42 +236,76 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
     }
 
     public func load() throws -> PhoneSyncLoadResult? {
-        let highWater = highWaterLog.currentHighWater()
+        let primaryExists = fileManager.fileExists(atPath: url.path)
+        let highWaterOutcome = highWaterLog.read()
 
-        guard fileManager.fileExists(atPath: url.path) else {
-            // No primary file. Genuine first launch unless the high-water
-            // log somehow holds a real record with no primary ever written
-            // (defensive — should not happen in normal operation, but
-            // "restore at-or-above the true high-water" must hold even
-            // here).
-            guard highWater != (0, 0) else { return nil }
-            return PhoneSyncLoadResult(
-                runtimeState: PhoneSyncRuntimeState(machineState: Self.stateRestoringHighWater(highWater)),
-                recoveredFromCorruption: true
-            )
+        if primaryExists == false {
+            switch highWaterOutcome {
+            case .absent:
+                // m4-04 review round 2, finding 1: BOTH files are
+                // genuinely absent — the one combination where "nothing
+                // saved, start at zero" is actually correct, not a guess.
+                return nil
+            case .corrupt:
+                // The high-water log EXISTS (this phone has synced
+                // before) but nothing in it could be trusted, and the
+                // primary is simply gone. There is no true high-water
+                // left to recover; resetting to zero here is exactly the
+                // fail-open reset round 1 closed for "one file corrupt" —
+                // it must not reopen for "both."
+                throw PhoneSyncStateUnrecoverableError()
+            case let .value(version, generation):
+                // The primary was lost but the high-water log survived
+                // intact — round 1's fix, unchanged.
+                return PhoneSyncLoadResult(
+                    runtimeState: PhoneSyncRuntimeState(
+                        machineState: Self.stateRestoringHighWater((version, generation))
+                    ),
+                    recoveredFromCorruption: true
+                )
+            }
         }
 
         do {
             let data = try Data(contentsOf: url)
             let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
             var runtime = try snapshot.makeRuntimeState()
-            // Defensive max-merge even on a clean decode: `save()` always
-            // writes the high-water log before the primary file (see this
-            // file's header), so the primary should already be at or above
-            // the log — this only ever matters if something wrote the
-            // primary file through a path other than `save()`.
-            runtime.machineState = Self.mergingHighWater(into: runtime.machineState, highWater)
+            if case let .value(version, generation) = highWaterOutcome {
+                // Defensive max-merge even on a clean decode: `save()`
+                // always writes the high-water log before the primary
+                // file (see this file's header), so the primary should
+                // already be at or above the log — this only ever matters
+                // if something wrote the primary file through a path
+                // other than `save()`. A `.corrupt`/`.absent` log
+                // alongside a primary that decoded fine is NOT this
+                // finding's scenario — the primary is trustworthy on its
+                // own here, so there is nothing to merge.
+                runtime.machineState = Self.mergingHighWater(into: runtime.machineState, (version, generation))
+            }
             return PhoneSyncLoadResult(runtimeState: runtime, recoveredFromCorruption: false)
         } catch {
-            // Primary unreadable (I/O) or semantically invalid
-            // (`PhoneSyncStateCorruptionError` from `makeRuntimeState`) —
-            // either way, a **surfaced** recovery: every self-healing fact
-            // resets to empty, but the monotonic identities are restored
-            // from the high-water log, never reused from zero.
-            return PhoneSyncLoadResult(
-                runtimeState: PhoneSyncRuntimeState(machineState: Self.stateRestoringHighWater(highWater)),
-                recoveredFromCorruption: true
-            )
+            // Primary EXISTS but is unreadable (I/O) or semantically
+            // invalid (`PhoneSyncStateCorruptionError` from
+            // `makeRuntimeState`).
+            switch highWaterOutcome {
+            case let .value(version, generation):
+                // A **surfaced** recovery: every self-healing fact resets
+                // to empty, but the monotonic identities are restored
+                // from the high-water log, never reused from zero.
+                return PhoneSyncLoadResult(
+                    runtimeState: PhoneSyncRuntimeState(
+                        machineState: Self.stateRestoringHighWater((version, generation))
+                    ),
+                    recoveredFromCorruption: true
+                )
+            case .absent, .corrupt:
+                // m4-04 review round 2, finding 1: the primary is present
+                // but untrustworthy AND the high-water log gives nothing
+                // to fall back on either — the exact "both unreadable"
+                // scenario that used to silently degrade to zero.
+                // Surfaced, not swallowed.
+                throw PhoneSyncStateUnrecoverableError()
+            }
         }
     }
 
@@ -327,8 +428,15 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
             guard latestSnapshotVersion >= 0 else {
                 throw PhoneSyncStateCorruptionError.negativeSnapshotVersion(latestSnapshotVersion)
             }
+            // m4-04 review round 2, finding 2 — see this file's header.
+            guard latestSnapshotVersion <= maximumPhoneSyncIdentity else {
+                throw PhoneSyncStateCorruptionError.snapshotVersionTooLarge(latestSnapshotVersion)
+            }
             guard lastTransferGeneration >= 0 else {
                 throw PhoneSyncStateCorruptionError.negativeTransferGeneration(lastTransferGeneration)
+            }
+            guard lastTransferGeneration <= maximumPhoneSyncIdentity else {
+                throw PhoneSyncStateCorruptionError.transferGenerationTooLarge(lastTransferGeneration)
             }
             for (id, age) in ackAge where age < 0 {
                 throw PhoneSyncStateCorruptionError.negativeAckAge(sessionID: id, age: age)
@@ -363,6 +471,24 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
     }
 }
 
+/// `HighWaterMarkLog.read()`'s result (m4-04 review round 2, finding 1):
+/// distinguishes "this log was never written" from "this log exists but
+/// nothing in it can be trusted" — two situations round 1's `(0, 0)`-tuple
+/// return conflated into the same answer, which is exactly the gap that let
+/// "primary absent, log corrupt" (a real prior install, not a first launch)
+/// silently degrade to zero.
+enum HighWaterReadOutcome: Equatable {
+    /// The log file does not exist on disk at all.
+    case absent
+    /// The log file exists, but no line in it yielded a trustworthy record
+    /// (parse failure, a negative field, or a field above
+    /// `maximumPhoneSyncIdentity` — round 2, finding 2).
+    case corrupt
+    /// At least one line parsed to a valid, in-range record; this is the
+    /// max across every such line.
+    case value(version: Int, generation: Int)
+}
+
 /// The append-only high-water-mark log (blocker 1): one line per `save()`
 /// call, `{"version":N,"generation":M}\n`, appended via `FileHandle` rather
 /// than read-modify-rewrite — a crash mid-append can only corrupt the last
@@ -370,14 +496,14 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
 /// atomically-overwritten record has no earlier line to fall back on if
 /// *its* one write is the one that's damaged).
 ///
-/// `currentHighWater()` tolerates the log's own corruption: a line that
-/// fails to parse, or parses to a negative value, is skipped rather than
-/// aborting the read, and the result is the max of every field across every
-/// line that *did* parse. If every line is corrupt (a double failure far
-/// rarer than either file corrupting alone), this degrades to `(0, 0)` —
-/// the same starting point a genuine first launch has — rather than
-/// throwing; there is no more truth to recover at that point; both durable
-/// records of it disagree with everything.
+/// `read()` tolerates the log's own corruption: a line that fails to parse,
+/// or parses to a field that is negative or above `maximumPhoneSyncIdentity`
+/// (round 2, finding 2), is skipped rather than aborting the read, and the
+/// result is the max of every field across every line that *did* parse. If
+/// every line is corrupt (a double failure far rarer than either file
+/// corrupting alone), this reports `.corrupt`, not a silent `(0, 0)` — see
+/// `HighWaterReadOutcome`'s doc and this file's header for why that
+/// distinction is now load-bearing.
 ///
 /// Compacted opportunistically once the line count crosses a small bound,
 /// via the same atomic-write guarantee the primary state file uses, so the
@@ -397,19 +523,36 @@ private struct HighWaterMarkLog {
         self.fileManager = fileManager
     }
 
-    func currentHighWater() -> (version: Int, generation: Int) {
-        guard let data = try? Data(contentsOf: url), data.isEmpty == false else { return (0, 0) }
-        var maxVersion = 0
-        var maxGeneration = 0
+    func read() -> HighWaterReadOutcome {
+        guard fileManager.fileExists(atPath: url.path) else { return .absent }
+        guard let data = try? Data(contentsOf: url), data.isEmpty == false else { return .corrupt }
+
+        var maxVersion: Int?
+        var maxGeneration: Int?
         for line in data.split(separator: UInt8(ascii: "\n")) {
             guard
                 let record = try? JSONDecoder().decode(Record.self, from: Data(line)),
-                record.version >= 0, record.generation >= 0
+                record.version >= 0, record.version <= maximumPhoneSyncIdentity,
+                record.generation >= 0, record.generation <= maximumPhoneSyncIdentity
             else { continue }
-            maxVersion = max(maxVersion, record.version)
-            maxGeneration = max(maxGeneration, record.generation)
+            maxVersion = max(maxVersion ?? 0, record.version)
+            maxGeneration = max(maxGeneration ?? 0, record.generation)
         }
-        return (maxVersion, maxGeneration)
+        guard let version = maxVersion, let generation = maxGeneration else { return .corrupt }
+        return .value(version: version, generation: generation)
+    }
+
+    /// A plain-tuple convenience for `append`'s own compaction step, which
+    /// only ever needs "what's the max to fold in" for a write already in
+    /// progress — never a signal to surface to a caller — so
+    /// `.absent`/`.corrupt` collapsing to `(0, 0)` here costs nothing
+    /// `read()`'s callers care about (see `HighWaterReadOutcome`'s doc for
+    /// why that collapse is exactly the thing `load()` itself must NOT do).
+    private func currentHighWater() -> (version: Int, generation: Int) {
+        if case let .value(version, generation) = read() {
+            return (version, generation)
+        }
+        return (0, 0)
     }
 
     func append(version: Int, generation: Int) throws {

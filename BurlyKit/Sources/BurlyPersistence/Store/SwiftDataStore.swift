@@ -46,6 +46,18 @@ public final class SwiftDataStore: BurlyStore {
     /// replicates someone else's authored timestamp.
     private let clock: any WallClock
 
+    /// Test-only fault injection (m4-04 review round 2, finding 3): called
+    /// with the 0-based index and id of each placeholder exercise
+    /// `applyReplicatedSession(_:upsertingPlaceholderExercises:)` is about
+    /// to check for existence, immediately before the fetch. Throwing from
+    /// it simulates a genuine `context.fetch` I/O failure landing on that
+    /// exact iteration — a real one cannot be deterministically timed to
+    /// one specific loop iteration in a test. `nil` in production and in
+    /// every test that isn't specifically pinning the rollback boundary
+    /// this seam exists to test; internal (not `private`), matching this
+    /// file's other test-only seams, so `@testable import` can reach it.
+    var placeholderExistenceCheckFaultForTesting: ((_ index: Int, _ placeholderID: UUID) throws -> Void)?
+
     /// Internal — see BurlyContainer.swift's boundary doc: `ModelContainer`
     /// must never appear in a public signature of this module. Construct a
     /// store publicly through `.phone(at:)` / `.watch(at:)` /
@@ -643,36 +655,52 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.activeSessionRequiresSaveActiveSession(sessionID: session.id)
         }
 
-        // m4-04 review round 1, major 1: placeholder exercises land in the
-        // SAME transaction as the session, inserted (not yet saved) before
-        // `preflightSessionGraph` resolves the session's own exercise
-        // references, so a session naming a placeholder this very call
-        // introduces resolves without a nested save.
-        for placeholder in placeholders where try model(Exercise.self, id: placeholder.id) == nil {
-            context.insert(
-                Exercise(
-                    id: placeholder.id,
-                    name: placeholder.name,
-                    muscleGroups: placeholder.muscleGroups,
-                    origin: placeholder.origin,
-                    needsNaming: placeholder.needsNaming,
-                    archivedAt: placeholder.archivedAt
-                )
-            )
-        }
-
-        // Everything from here on is wrapped in an explicit rollback-on-
-        // throw, not just `commit()`'s own: the placeholder inserts above
-        // are already staged in the context, and `preflightSessionGraph`
-        // below can itself throw (a dangling exercise reference elsewhere
-        // in the payload, a duplicate item/set id) *before* `commit()` is
-        // ever reached. Without this, a rejected delivery would leave the
-        // placeholder pending-but-uncommitted in this long-lived context —
-        // invisible to a fresh reader, but silently committed whole by the
-        // next unrelated successful `save()`, exactly the create-residue
-        // hazard m1-06 review M1 closed for every *other* insert-then-
-        // validate sequence in this file (see `commit()`'s own doc).
+        // Everything from here on — INCLUDING the placeholder existence
+        // checks and inserts, not merely `preflightSessionGraph` and after
+        // — is wrapped in an explicit rollback-on-throw, not just
+        // `commit()`'s own (m4-04 review round 1, major 1, tightened by
+        // round 2 finding 3). Round 1's fix left the placeholder loop
+        // itself OUTSIDE this block: a throw from the loop's own existence
+        // fetch (a genuine I/O/fetch error on, say, the second placeholder,
+        // not merely `preflightSessionGraph`'s dangling-reference check)
+        // would escape uncaught, leaving any placeholder already inserted
+        // earlier in the same loop pending-but-uncommitted in this
+        // long-lived context — invisible to a fresh reader, but silently
+        // committed whole by the next unrelated successful `save()`,
+        // exactly the create-residue hazard m1-06 review M1 closed for
+        // every *other* insert-then-validate sequence in this file (see
+        // `commit()`'s own doc). Moving the loop inside closes that gap:
+        // ANY throw between the first placeholder insert and `commit()` —
+        // wherever it originates — now rolls back everything staged so far.
         do {
+            // m4-04 review round 1, major 1: placeholder exercises land in
+            // the SAME transaction as the session, inserted (not yet
+            // saved) before `preflightSessionGraph` resolves the session's
+            // own exercise references, so a session naming a placeholder
+            // this very call introduces resolves without a nested save.
+            for (index, placeholder) in placeholders.enumerated() {
+                // Test-only fault injection (round 2, finding 3's pin): a
+                // real `context.fetch` I/O failure cannot be deterministically
+                // timed to land on one specific loop iteration — moving the
+                // whole store out from under the context (the technique
+                // `SaveRollbackTests` uses for a save failure) cannot be
+                // scoped to a single iteration of this synchronous loop.
+                // `nil` in production and in every test that isn't
+                // specifically pinning this exact rollback boundary.
+                try placeholderExistenceCheckFaultForTesting?(index, placeholder.id)
+                guard try model(Exercise.self, id: placeholder.id) == nil else { continue }
+                context.insert(
+                    Exercise(
+                        id: placeholder.id,
+                        name: placeholder.name,
+                        muscleGroups: placeholder.muscleGroups,
+                        origin: placeholder.origin,
+                        needsNaming: placeholder.needsNaming,
+                        archivedAt: placeholder.archivedAt
+                    )
+                )
+            }
+
             let resolved = try preflightSessionGraph(session, ownedBy: stored)
             let journal = try journalModel(sessionID: session.id)
 

@@ -285,3 +285,184 @@ Status: all 12 review findings fixed + pinned, 684 tests green, release
 build clean. Committed on top of f224412 (not pushed).
 Next action: hand off for dispatcher re-review; no local work pending.
 ```
+
+## 2026-08-02 — review round 2 fix pass (1 blocker edge + 5 majors), closing round
+
+Re-review of `e5b908e` confirmed the `@MainActor`, revision, fire-time
+digest, batch-lock, and independent-oracle fixes closed, but found 6 new
+items — mostly edge cases the round-1 async rewrites introduced. Fixed
+all 6 on top of `e5b908e` in this same worktree, each pinned by a test
+verified to fail on the pre-fix behavior (confirmed by temporarily
+reverting each fix and re-running its pin — see "verification method"
+note at the end of this entry).
+
+Per-finding fix + pin:
+
+- **Blocker edge — dual-unreadable reset.**
+  `BurlyKit/Sources/BurlyPhoneSync/PhoneSyncStatePersisting.swift`:
+  `HighWaterMarkLog.currentHighWater()`'s tuple return (which conflated
+  "log never written" with "log exists but every line is corrupt" into
+  the same `(0, 0)`) is replaced by `read() -> HighWaterReadOutcome`
+  (`.absent` / `.corrupt` / `.value`). `load()` now distinguishes: both
+  files genuinely absent → `nil` (a true first launch); either file
+  *present* but unreadable/corrupt with nothing usable from the other →
+  throws a new `PhoneSyncStateUnrecoverableError` rather than silently
+  reconstructing a zeroed state. `PhoneSyncCoordinator` catches this
+  distinctly and sets a new `public private(set) var
+  syncStateUnrecoverable: Bool` (alongside the existing
+  `recoveredFromCorruptState`), documented as needing a host-app
+  re-pair/rebuild response, not an automatic mitigation. Pins: 4 new
+  tests in `PhoneSyncStatePersistingTests.swift`
+  (`bothFilesAbsentIsACleanFirstLaunch`,
+  `primaryAndHighWaterBothUnreadableIsUnrecoverable`,
+  `highWaterCorruptWithNoPrimaryIsUnrecoverable`,
+  `coordinatorSurfacesSyncStateUnrecoverable`). Verified the two
+  "unrecoverable" tests fail (no error thrown) against the old
+  tuple-based `load()`; the "both absent" test correctly still passes
+  either way (proving it isn't a false-positive pin).
+- **Major — Int.max high-water record traps downstream.** Added
+  `maximumPhoneSyncIdentity = 1_000_000_000` (the same
+  `SessionData.maximumRevision`-style ceiling, round 1, major 7) and
+  applied it as an upper bound at BOTH JSON deserialization boundaries
+  this file owns: `HighWaterMarkLog.read()`'s per-line validation (a
+  line with `version`/`generation` above the bound is now skipped as
+  corrupt, matching the existing negative-value skip) and
+  `Snapshot.makeRuntimeState()` (new `.snapshotVersionTooLarge`/
+  `.transferGenerationTooLarge` thrown cases) — the review named the
+  high-water-log path specifically, but the identical hole existed in
+  the primary-state path too (a corrupted primary carrying `Int.max`
+  would sail through the round-1 `>= 0` check just the same), so both
+  were closed together rather than leaving a twin gap. Pins:
+  `highWaterLineWithIntMaxIsSkippedNotRestored` (new) plus two new
+  assertions added to the existing
+  `makeRuntimeStateThrowsForEveryInvalidField`. Verified the high-water
+  test fails (reconstructs at `Int.max`) with the upper-bound check
+  removed.
+- **Major — throw during the 2nd placeholder existence fetch escapes
+  rollback.** `BurlyKit/Sources/BurlyPersistence/Store/SwiftDataStore.swift`:
+  the placeholder existence-check-and-insert loop in
+  `applyReplicatedSession(_:upsertingPlaceholderExercises:)` was still
+  OUTSIDE the round-1 rollback-on-throw block — only
+  `preflightSessionGraph` and after were covered. Moved the whole loop
+  inside the `do`/`catch { context.rollback(); throw error }` block, so
+  any throw from the loop's own fetch (not just a dangling-reference
+  preflight failure) now rolls back every placeholder inserted earlier
+  in the same call. Added a test-only seam,
+  `placeholderExistenceCheckFaultForTesting: ((Int, UUID) throws ->
+  Void)?`, since a real `context.fetch` I/O failure cannot be
+  deterministically timed to one specific loop iteration. Pin:
+  `faultDuringSecondPlaceholderExistenceCheckRollsBackTheFirst` in
+  `ReplicatedSessionApplyTests.swift` — injects a fault on the 2nd
+  placeholder, confirms the 1st placeholder's insert does not survive
+  (neither via the context's own pending-insert view nor after an
+  unrelated successful save). Verified it fails (placeholder A survives)
+  against the pre-fix loop placement.
+- **Major — catalog state-persistence failure silently swallowed.**
+  `BurlyKit/Sources/BurlyPhoneSync/PhoneSyncCoordinator.swift`:
+  `deliverCatalogChanged` used to route through the generic `deliver(_:)`
+  helper, whose `try?` swallowed a `persistRuntimeState()` failure
+  outright — no surfaced failure, no retry, unlike every other trigger's
+  failure class (major 3). Inlined the machine call and persistence step
+  into `deliverCatalogChanged`/`persistThenExecuteCatalogCommands`, so a
+  persistence failure now sets `lastCatalogPushFailure` and retries
+  through the same `catalogPushRetryCount` loop a transport failure
+  already used. Pin: `catalogPersistenceFailureIsSurfacedAndRetried` in
+  `PushTriggerTests.swift`, using a new `FailableStatePersisting` test
+  double (`TestSupport.swift`) that fails its next N `save()` calls.
+  Verified: with the old `try? deliver(...)` shape restored, the test
+  hangs forever waiting for a retry waiter that pre-fix code never
+  schedules — itself conclusive proof of the swallow.
+- **Major — stale catalog retry runs after a newer successful batch.**
+  Same file: added `catalogBatchEpoch`, incremented once per
+  `deliverCatalogChanged` invocation. Every entry into
+  `persistThenExecuteCatalogCommands`/`executeCatalogCommands` — the
+  first attempt AND every scheduled retry — re-checks its captured epoch
+  against the current counter first and backs off with no side effects
+  on a mismatch, so a retry from an older edit can never replay stale
+  commands (resurrecting a transfer a newer edit's own cancel already
+  retired) once a newer edit's batch has run. Pin:
+  `staleCatalogRetryDoesNotResurrectASupersededTransfer` in
+  `PushTriggerTests.swift` — edit A fails and queues a retry; edit B's
+  own debounce computes the IDENTICAL deadline (both `catalogEditDebounce`
+  after the same instant — an exact tie a real OS scheduler has no
+  obligation to resolve one particular way), so a new
+  `ManualTriggerScheduler.resumeWaiter(id:)` helper forces B to resolve
+  on its own regardless of the tie; B succeeds (cancel(1)/transmit(2,2)),
+  then A's retry is released and must be a complete no-op. Verified it
+  fails (transmissions become `[2, 1]` — the resurrection) with the
+  epoch guards removed, across 5 repeated runs. Note: this exact test
+  needed a `settleRealWork()` helper (`Task.yield()` + a real 50ms sleep)
+  instead of `ManualTriggerScheduler.settle()`'s pure yield-loop — in
+  this specific busy context (right after edit B's whole batch just
+  completed), 50 cooperative yields were not reliably sufficient to let
+  the detached, untracked retry `Task` complete before the assertion ran
+  (confirmed both ways empirically: this is a real synchronization gap
+  in the test's own reliability, not a hint of a code bug — the
+  underlying fix behaves identically either way).
+- **Major — coalescer supersede-after-wake-before-fire.**
+  `BurlyKit/Sources/BurlyPhoneSync/QuietPeriodCoalescer.swift`: `fire`
+  used to trust "the scheduler resumed me and `Task.isCancelled` reads
+  false" as proof it was still current — but a fresh `coalesce()` can
+  install a new task between a countdown's wake and its `fire` call
+  actually reaching the actor (cancellation is cooperative, not
+  preemptive). Fixed by giving every countdown an opaque `UUID` token;
+  `fire(token:)` now re-checks `token == currentToken` — read fresh,
+  actor-isolated, at the moment it would consume the pending payload —
+  and backs off with NO side effects (does not touch `pendingPayload`,
+  `currentTask`, or `currentToken`) on a mismatch, rather than firing the
+  newer payload at the stale deadline and then nulling out the live
+  task reference. Added a test-only `afterWakeTestHook` seam (an
+  actor-isolated suspension point right after wake, before the token
+  check) so the exact interleaving is reproducible deterministically
+  rather than by scheduling luck. Pin:
+  `supersessionAfterWakeBeforeFireBacksOff` in
+  `QuietPeriodCoalescerTests.swift`, using a new `WakeGate` test actor.
+  Verified it fails (records B's payload at A's stale deadline) with the
+  `guard token == currentToken` check removed, across 3 repeated runs.
+
+Verification:
+- `swift test` (full suite): **693 tests, 72 suites, all pass** (up from
+  684/72 — 9 new tests: 4 for the blocker edge, 1 for the Int.max
+  high-water record, 1 for the placeholder-rollback gap, 1 for catalog
+  persistence-failure surfacing, 1 for the stale-retry epoch check, 1 for
+  the coalescer wake-before-fire race).
+- `BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests`:
+  2/2 pass.
+- `BURLY_RUN_DIGEST_BENCHMARK=1 swift test --filter
+  DigestGenerationBenchmarkTests`: still gated correctly (skips without
+  the env var; the benchmark itself was untouched this round).
+- `swift build -c release`: clean.
+- Flakiness check: full suite run 3x back to back — consistently green;
+  `QuietPeriodCoalescerTests`/`PushTriggerTests` (the two timing-sensitive
+  suites this round touched) run 3x in isolation — consistently green.
+- Verification method note: for every one of the 6 fixes, the fix was
+  temporarily reverted (or its guard/check removed) in-place, the new pin
+  re-run to confirm it fails on that exact pre-fix code (not merely "some
+  other assertion elsewhere fails"), and then the fix was restored and
+  re-verified green — the backup/restore used `cp` to a scratch path
+  outside the repo, never a git operation, so the working tree's history
+  stays a single clean forward diff.
+
+Disagreements / flags: none for this round — all 6 findings were
+concrete, reproducible, and fixed as described; no finding is disputed.
+
+Commit: see the commit immediately following this HANDOFF update in the
+branch's log for the SHA.
+
+Next:
+- Nothing blocking. Hand off for dispatcher re-review — this was
+  characterized as the closing round.
+- Same two follow-ups as before remain out of scope for this task: real
+  `PhoneSyncCoordinator` wiring into BurlyPhone's app lifecycle, and the
+  real WCSession-backed `PhoneSyncTransporting`/`PhoneDigestPublishing`
+  conformers (both still m4-03/m4-06 work).
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m4-04
+Branch: task/burly-m4-04 (based on main 5ab56d1; two review-fix rounds
+on top of f224412: e5b908e round 1, then round 2 below)
+Status: all 18 cumulative review findings (12 round 1 + 6 round 2) fixed
++ pinned, 693 tests green, release build clean. Committed (not pushed).
+Next action: hand off for dispatcher re-review; no local work pending.
+```

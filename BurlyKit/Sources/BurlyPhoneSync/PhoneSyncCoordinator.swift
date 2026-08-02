@@ -140,11 +140,38 @@ public final class PhoneSyncCoordinator {
     /// can observe and log/report it; the retry loop in
     /// `deliverCatalogChanged` also acts on it independently.
     public private(set) var lastCatalogPushFailure: (any Error)?
+    /// m4-04 review round 2, finding 5: incremented once per catalog-edit
+    /// batch (`deliverCatalogChanged` invocation — the debounced fire for
+    /// one coalesced edit). A retry scheduled by an OLDER batch captures
+    /// its own epoch and re-checks it immediately before doing anything
+    /// that could touch persistence or the transport, against whatever
+    /// this counter currently holds. A mismatch means a NEWER catalog edit
+    /// has already run its own full delivery in the meantime — that
+    /// edit's commands (built from the machine's state as of ITS delivery,
+    /// which by construction already reflects and supersedes whatever the
+    /// older batch saw) are the only ones that should still be trying to
+    /// land; the older batch's retry chain has nothing useful left to
+    /// contribute and must not run (it would otherwise resurrect a
+    /// transfer the newer batch's own cancel already retired).
+    private var catalogBatchEpoch = 0
     /// Blocker 1: `true` when `init` had to reconstruct state from the
     /// high-water-mark log alone because the primary sidecar was
     /// missing/unreadable/semantically invalid — a surfaced recovery event,
     /// not a silent reset. See `PhoneSyncStatePersisting`'s doc.
     public private(set) var recoveredFromCorruptState = false
+    /// m4-04 review round 2, finding 1: `true` when `init` could get NO
+    /// trustworthy identity from EITHER the primary state file or the
+    /// high-water-mark log (`PhoneSyncStateUnrecoverableError`) — the
+    /// "both unreadable" edge blocker 1's original fix missed. The
+    /// coordinator still constructs and functions (a fresh, zeroed `State`
+    /// — there is nothing else to build one from), but that zero is NOT a
+    /// resumed identity here; it is an explicit "the sync relationship's
+    /// own bookkeeping is gone" flag. Deliberately not auto-mitigated
+    /// (e.g. by refusing to push) — the correct response, re-pairing or
+    /// rebuilding the sync relationship, is a decision only a host app
+    /// (and ultimately the user) can make; this just makes sure it is
+    /// never made silently.
+    public private(set) var syncStateUnrecoverable = false
 
     private let catalogDebouncer: QuietPeriodCoalescer<Void>
     private let digestCoalescer: QuietPeriodCoalescer<Void>
@@ -191,12 +218,7 @@ public final class PhoneSyncCoordinator {
         self.configuration = configuration
 
         // Blocker 1: `load()` itself no longer silently resets a monotonic
-        // identity — see `PhoneSyncStatePersisting`'s doc. A `load()` call
-        // that throws outright (as opposed to returning a
-        // `recoveredFromCorruption: true` result) is a harder failure than
-        // "the primary file was corrupt" — e.g. the high-water log's own
-        // directory is unreadable — and is treated the same way: fail-safe,
-        // still surfaced.
+        // identity — see `PhoneSyncStatePersisting`'s doc.
         do {
             if let result = try statePersisting.load() {
                 self.state = result.runtimeState.machineState
@@ -206,7 +228,25 @@ public final class PhoneSyncCoordinator {
                 self.state = BurlyPhoneSyncMachine.State()
                 self.lastDailyPushAt = nil
             }
+        } catch is PhoneSyncStateUnrecoverableError {
+            // m4-04 review round 2, finding 1: neither the primary nor the
+            // high-water log gave a trustworthy identity — construct a
+            // fresh state (there is nothing else to build one from) but
+            // flag it distinctly from an ordinary single-file corruption
+            // recovery, since "start fresh" here genuinely risks
+            // reusing/aliasing an identity a live transfer or the watch's
+            // own records might still remember.
+            self.state = BurlyPhoneSyncMachine.State()
+            self.lastDailyPushAt = nil
+            self.recoveredFromCorruptState = true
+            self.syncStateUnrecoverable = true
         } catch {
+            // Any other thrown error (e.g. a conformer with its own
+            // failure modes) is a harder failure than a single documented
+            // corruption case but not the specific "both sources
+            // exhausted" one above — treated the same fail-safe way round
+            // 1 established: fresh state, surfaced as a corruption
+            // recovery.
             self.state = BurlyPhoneSyncMachine.State()
             self.lastDailyPushAt = nil
             self.recoveredFromCorruptState = true
@@ -359,23 +399,59 @@ public final class PhoneSyncCoordinator {
     /// debounce, up to `catalogPushRetryCount` extra times — never by
     /// re-delivering `.catalogChanged` to the machine again, which would
     /// bump `latestSnapshotVersion` a second time for one edit.
+    ///
+    /// The machine call itself (`machine.handle`) cannot throw; only
+    /// persisting its result can. m4-04 review round 2, finding 4: that
+    /// persistence step used to run through the generic `deliver(_:)`
+    /// helper, whose `try?` swallowed a persistence failure outright — no
+    /// surfaced failure, no retry, unlike every other trigger's failure.
+    /// It is inlined here instead so a persistence failure gets the exact
+    /// same retry treatment as a transport failure, through
+    /// `persistThenExecuteCatalogCommands` below.
     private func deliverCatalogChanged() async {
-        guard let commands = try? deliver(.catalogChanged) else {
-            // `deliver` itself failing (the machine call or persisting its
-            // result) is a harder failure than a transport/store hiccup
-            // during execution — the machine never even recorded the edit,
-            // so there are no commands to retry. Surfaced; a later genuine
-            // edit is this trigger's only recovery path here, the same as
-            // it always was.
+        catalogBatchEpoch += 1
+        let epoch = catalogBatchEpoch
+        let commands = machine.handle(.catalogChanged, &state, now: clock.now)
+        await persistThenExecuteCatalogCommands(commands, epoch: epoch, retriesRemaining: configuration.catalogPushRetryCount)
+    }
+
+    /// Persists the state `.catalogChanged` already mutated, then executes
+    /// the commands it produced — retrying either half's failure through
+    /// the same loop (finding 4). Every entry point into this loop — the
+    /// first attempt and every subsequent retry — re-checks `epoch`
+    /// against `catalogBatchEpoch` first (finding 5): once a newer edit's
+    /// own batch has run, this older one backs off unconditionally,
+    /// whether it was about to retry a failed persist or a failed
+    /// transport call, rather than replaying stale commands after
+    /// something newer already superseded them.
+    private func persistThenExecuteCatalogCommands(
+        _ commands: [BurlyPhoneSyncMachine.Command],
+        epoch: Int,
+        retriesRemaining: Int
+    ) async {
+        guard epoch == catalogBatchEpoch else { return }
+        do {
+            try persistRuntimeState()
+        } catch {
+            lastCatalogPushFailure = error
+            guard retriesRemaining > 0 else { return }
+            let scheduler = self.scheduler
+            let quietPeriod = configuration.catalogEditDebounce
+            Task { [weak self] in
+                try? await scheduler.sleep(for: quietPeriod)
+                await self?.persistThenExecuteCatalogCommands(commands, epoch: epoch, retriesRemaining: retriesRemaining - 1)
+            }
             return
         }
-        await executeCatalogCommands(commands, retriesRemaining: configuration.catalogPushRetryCount)
+        await executeCatalogCommands(commands, epoch: epoch, retriesRemaining: retriesRemaining)
     }
 
     private func executeCatalogCommands(
         _ commands: [BurlyPhoneSyncMachine.Command],
+        epoch: Int,
         retriesRemaining: Int
     ) async {
+        guard epoch == catalogBatchEpoch else { return }
         do {
             try await execute(commands, originalPayload: nil)
             lastCatalogPushFailure = nil
@@ -386,7 +462,7 @@ public final class PhoneSyncCoordinator {
             let quietPeriod = configuration.catalogEditDebounce
             Task { [weak self] in
                 try? await scheduler.sleep(for: quietPeriod)
-                await self?.executeCatalogCommands(commands, retriesRemaining: retriesRemaining - 1)
+                await self?.executeCatalogCommands(commands, epoch: epoch, retriesRemaining: retriesRemaining - 1)
             }
         }
     }

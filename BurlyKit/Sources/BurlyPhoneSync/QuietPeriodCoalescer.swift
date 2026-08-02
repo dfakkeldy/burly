@@ -40,6 +40,34 @@
 //   schedules the next countdown once it returns. Two `perform` calls for
 //   the same coalescer are therefore never in flight at once, and no
 //   payload a caller handed in is silently dropped.
+//
+// ## Wake-before-fire supersession (m4-04 review round 2, finding 6)
+//
+// The round-1 design above still had a narrower race: a countdown's `Task`
+// wakes from `scheduler.sleep`, and its next line (`Task.isCancelled` at
+// the time) reads `false` — but before that task's own `await self?.fire(
+// perform:)` actually reaches the actor (a plain `await` on a possibly-busy
+// actor is itself a suspension point), a *fresh* `coalesce()` call can run
+// to completion first: it sets `pendingPayload` to ITS OWN value, cancels
+// the old task (too late — cancellation is cooperative, not preemptive; the
+// old task already passed its cancellation check and is merely queued for
+// the actor), and installs a brand new task. When the OLD task's queued
+// `fire` call finally runs, `Task.isCancelled` is never re-checked inside
+// `fire` itself — it would consume the NEW payload, immediately, at the
+// OLD (already-elapsed) deadline, denying the new arrival its own quiet
+// period, and then (finding no rerun requested) null out `currentTask` —
+// discarding the live reference to the genuinely-current task the fresh
+// `coalesce()` call just installed, which `drain()` needs to find it.
+//
+// The fix: `fire` no longer trusts "I was told to run" as proof that I am
+// still the current countdown. Every scheduled wait carries its own opaque
+// `token`; `fire(token:)` re-checks `token == currentToken` — read fresh,
+// actor-isolated, at the moment it would actually consume the pending
+// payload — and backs off with no side effects at all if a newer token has
+// since taken over. The genuinely-current task (the one that installed that
+// newer token) is always the one actually sleeping out its own full quiet
+// period; a stale `fire` finding itself superseded does not need to
+// "re-arm" anything — the current task already owns that job.
 import Foundation
 
 /// Coalesces a burst of `coalesce(_:perform:)` calls into exactly one
@@ -59,6 +87,14 @@ public actor QuietPeriodCoalescer<Payload: Sendable> {
     /// running `fire` (which itself awaits `perform`) — never more than one
     /// at a time (major 6).
     private var currentTask: Task<Void, Never>?
+    /// The identity of whichever countdown is CURRENTLY the authoritative
+    /// one (round 2, finding 6) — set every time a fresh countdown is
+    /// scheduled, alongside `currentTask`. `fire(token:)` treats a mismatch
+    /// between the token it was scheduled with and this value as
+    /// conclusive proof it has been superseded, regardless of what
+    /// `Task.isCancelled` says (cancellation is cooperative and can lose
+    /// this exact race — see the file doc).
+    private var currentToken: UUID?
     /// True for exactly the duration of an active `await perform(payload)`
     /// call — the re-entrancy gate a `coalesce()` arriving mid-`perform`
     /// checks before deciding whether it may start a fresh countdown itself.
@@ -68,6 +104,18 @@ public actor QuietPeriodCoalescer<Payload: Sendable> {
     /// countdown for the payload that arrived meanwhile, so a coalesce
     /// during an active perform is delayed, never dropped.
     private var rerunRequested = false
+
+    /// Test-only reentrancy hook (m4-04 review round 2, finding 6): when
+    /// set, every "woke from sleep, about to fire" transition suspends
+    /// here first, actor-isolated. An actor-isolated `await` on an
+    /// external signal releases the actor to run other enqueued jobs —
+    /// exactly the reentrancy window an unlucky executor interleaving
+    /// would open in production — which is what lets a test deterministically
+    /// land a `coalesce()` call from another task inside that window,
+    /// rather than depending on incidental scheduling luck to reproduce a
+    /// timing-sensitive race. `nil` (a no-op) in production and in every
+    /// test that isn't specifically pinning this exact interleaving.
+    private var afterWakeTestHook: (@Sendable () async -> Void)?
 
     public init(scheduler: any TriggerScheduling, quietPeriod: Duration) {
         self.scheduler = scheduler
@@ -91,11 +139,21 @@ public actor QuietPeriodCoalescer<Payload: Sendable> {
             return
         }
 
-        // Not performing: cancel whatever is still waiting (harmless no-op
-        // if it already fired or was never scheduled) and restart the
-        // countdown fresh.
+        // Not performing: cancel whatever is still waiting (a best-effort
+        // optimization — it stops an old sleep early when the cancellation
+        // wins the race — and install a fresh token identifying THIS
+        // countdown as the current one. `fire(token:)`'s own check is what
+        // actually guarantees correctness even when cancellation loses the
+        // race (finding 6); this cancel call is not load-bearing for that,
+        // only for not wasting a sleep.
         currentTask?.cancel()
-        currentTask = scheduleFire(perform: perform)
+        let token = UUID()
+        currentToken = token
+        currentTask = scheduleFire(token: token, perform: perform)
+    }
+
+    func setAfterWakeTestHookForTesting(_ hook: (@Sendable () async -> Void)?) {
+        afterWakeTestHook = hook
     }
 
     /// Awaits the in-flight chain — the task currently waiting to fire or
@@ -112,7 +170,7 @@ public actor QuietPeriodCoalescer<Payload: Sendable> {
         }
     }
 
-    private func scheduleFire(perform: @escaping @Sendable (Payload) async -> Void) -> Task<Void, Never> {
+    private func scheduleFire(token: UUID, perform: @escaping @Sendable (Payload) async -> Void) -> Task<Void, Never> {
         let scheduler = self.scheduler
         let quietPeriod = self.quietPeriod
         return Task { [weak self] in
@@ -122,14 +180,41 @@ public actor QuietPeriodCoalescer<Payload: Sendable> {
                 // Cancelled by a newer `coalesce()` call — nothing to fire.
                 return
             }
-            guard Task.isCancelled == false else { return }
-            await self?.fire(perform: perform)
+            // Round 2, finding 6: a test-only reentrancy window (see the
+            // property's doc) — a no-op unless a test has specifically
+            // armed it to pin the wake-before-fire race deterministically.
+            await self?.awaitAfterWakeTestHookIfSet()
+            // Deliberately NOT `guard Task.isCancelled == false else {
+            // return }` here anymore — that check is exactly the one the
+            // finding shows losing the race (it can read `false` and then
+            // still lose ownership before `fire` reaches the actor).
+            // `fire(token:)` below is the sole, authoritative freshness
+            // check now, evaluated atomically with the payload consumption
+            // it guards.
+            await self?.fire(token: token, perform: perform)
         }
     }
 
-    private func fire(perform: @escaping @Sendable (Payload) async -> Void) async {
+    private func awaitAfterWakeTestHookIfSet() async {
+        if let hook = afterWakeTestHook {
+            await hook()
+        }
+    }
+
+    private func fire(token: UUID, perform: @escaping @Sendable (Payload) async -> Void) async {
+        // Round 2, finding 6: the authoritative freshness check, made
+        // atomically with the payload consumption below rather than
+        // earlier (pre-suspension) where a supersession racing this exact
+        // moment could still slip through. A stale `fire` backs off with
+        // NO side effects — it must not touch `pendingPayload`,
+        // `currentTask`, or `currentToken`, all of which the genuinely
+        // current countdown (the one holding the winning token) already
+        // owns.
+        guard token == currentToken else { return }
+
         guard let payload = pendingPayload else {
             currentTask = nil
+            currentToken = nil
             return
         }
         pendingPayload = nil
@@ -143,10 +228,13 @@ public actor QuietPeriodCoalescer<Payload: Sendable> {
             // immediately (still a debounce, restarted from "perform just
             // finished", not skipped).
             rerunRequested = false
-            currentTask = scheduleFire(perform: perform)
+            let nextToken = UUID()
+            currentToken = nextToken
+            currentTask = scheduleFire(token: nextToken, perform: perform)
         } else {
             rerunRequested = false
             currentTask = nil
+            currentToken = nil
         }
     }
 }

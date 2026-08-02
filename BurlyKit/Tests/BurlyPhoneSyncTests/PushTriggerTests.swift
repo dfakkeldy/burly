@@ -197,6 +197,7 @@ struct PushTriggerTests {
         #expect(await transport.transmissions.count == 1)
     }
 
+
     @Test("major 3 — a catalog push failure is surfaced on lastCatalogPushFailure and retried automatically, without re-bumping the snapshot version")
     func catalogPushSurfacesAndRetriesOnFailure() async throws {
         let store = try makePhoneStore()
@@ -226,6 +227,95 @@ struct PushTriggerTests {
         #expect(await transport.transmissions.count == 1, "the retry must succeed and land the transmission")
         #expect(coordinator.lastCatalogPushFailure == nil, "a subsequent success clears the surfaced failure")
         #expect(coordinator.currentMachineState.latestSnapshotVersion == 1, "still exactly one version bump for the one edit")
+    }
+
+    @Test("round 2, finding 4 — a catalog-edit STATE PERSISTENCE failure is surfaced and retried, exactly like a transport failure")
+    func catalogPersistenceFailureIsSurfacedAndRetried() async throws {
+        let store = try makePhoneStore()
+        let transport = FakeTransport()
+        let scheduler = ManualTriggerScheduler()
+        let persisting = FailableStatePersisting()
+        let coordinator = PhoneSyncCoordinator(
+            store: store, transport: transport, digestPublisher: FakeDigestPublisher(),
+            statePersisting: persisting, clock: TestClock(), scheduler: scheduler,
+            configuration: .init(catalogEditDebounce: .seconds(1), digestPublishDebounce: .seconds(1), catalogPushRetryCount: 2)
+        )
+
+        persisting.setFailNextSaveCount(1)
+        await coordinator.catalogDidChange()
+        _ = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(1)) // fires; persistRuntimeState() fails
+        await coordinator.drainPendingDebounces()
+
+        // Pre-fix: `deliver`'s generic `try?` swallowed this outright — no
+        // surfaced failure, no retry, ever, for this edit; the transport
+        // was never even reached because `deliverCatalogChanged` bailed
+        // out before computing anything to execute.
+        #expect(await transport.transmissions.isEmpty, "the transport must not have been reached yet — persistence failed first")
+        #expect(coordinator.lastCatalogPushFailure != nil, "a persistence failure must be surfaced exactly like a transport failure")
+
+        _ = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(1)) // the retry: persistence now succeeds
+        await coordinator.drainPendingDebounces()
+
+        #expect(await transport.transmissions.count == 1, "the retried persist-then-execute must land the transmission")
+        #expect(coordinator.lastCatalogPushFailure == nil)
+        #expect(coordinator.currentMachineState.latestSnapshotVersion == 1, "still exactly one version bump for the one edit, despite the persistence retry")
+    }
+
+    @Test("round 2, finding 5 — a stale catalog retry does not resurrect a transfer a newer, already-completed catalog batch already superseded")
+    func staleCatalogRetryDoesNotResurrectASupersededTransfer() async throws {
+        let store = try makePhoneStore()
+        let transport = FakeTransport()
+        let scheduler = ManualTriggerScheduler()
+        let coordinator = makeCoordinator(
+            store: store, transport: transport, scheduler: scheduler,
+            configuration: .init(catalogEditDebounce: .seconds(1), digestPublishDebounce: .seconds(1), catalogPushRetryCount: 1)
+        )
+
+        // Edit A: its one and only transport attempt fails, scheduling a
+        // retry that will replay A's captured commands — [transmit(1,1)] —
+        // exactly as built at THIS delivery, before B ever ran.
+        await transport.setFailNextTransmitCount(1)
+        await coordinator.catalogDidChange()
+        let editWaiterID = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(1))
+        await coordinator.drainPendingDebounces()
+
+        #expect(await transport.transmissions.isEmpty, "A's only attempt failed")
+        #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 1)
+        let retryWaiterID = await scheduler.waitForFreshWaiter(excluding: [editWaiterID])
+
+        // Edit B arrives next. Its own debounce ties A's retry EXACTLY on
+        // paper (both scheduled `catalogEditDebounce` after the same
+        // instant) — the same ambiguity real OS timer scheduling has no
+        // obligation to resolve one particular way. `resumeWaiter(id:)`
+        // forces B's timer to fire on its own, modeling whichever real
+        // ordering could actually occur, without this test depending on
+        // which one the scheduler happens to process first.
+        await coordinator.catalogDidChange()
+        let bWaiterID = await scheduler.waitForFreshWaiter(excluding: [editWaiterID, retryWaiterID])
+
+        scheduler.resumeWaiter(id: bWaiterID)
+        await coordinator.drainPendingDebounces()
+
+        // B fully succeeded: cancel(1) then transmit(2,2), and it is now
+        // the outstanding transfer.
+        #expect(await transport.cancellations.map(\.generation) == [1])
+        #expect(await transport.transmissions.map(\.generation) == [2])
+        #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 2)
+
+        // NOW let A's stale retry fire. Pre-fix, this replays transmit(1,1)
+        // unconditionally, resurrecting the generation B's own cancel(1)
+        // just retired. Post-fix, the retry's captured epoch no longer
+        // matches — B's delivery bumped `catalogBatchEpoch` — so the retry
+        // backs off without touching the transport at all.
+        scheduler.resumeWaiter(id: retryWaiterID)
+        await settleRealWork()
+
+        #expect(await transport.transmissions.map(\.generation) == [2], "A's stale retry must NOT have resurrected generation 1")
+        #expect(await transport.cancellations.map(\.generation) == [1], "no new cancel either — the stale retry must be a complete no-op")
+        #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 2, "B's transfer remains outstanding, untouched by the stale retry")
     }
 
     // MARK: - Digest-publish coalescing (binding contract item 6)
