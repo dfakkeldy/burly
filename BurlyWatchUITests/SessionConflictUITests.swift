@@ -135,19 +135,21 @@ final class SessionConflictUITests: XCTestCase {
 
     // MARK: - Finding 6.1: SessionConflictView's own defensive path
 
-    /// m2-06 review finding 6.1: the shell-level Resume gate makes
+    /// m2-06 review finding 6.1 (round 2): the shell-level Resume gate makes
     /// `SessionConflictView` unreachable in *ordinary* use, but
     /// `SessionEntryView.start()`'s own defensive `resumableActiveSession()`
     /// pre-check still exists for the race the gate cannot fully close --
     /// a session becoming active between the shell's own check (which found
     /// nothing and rendered the routine list) and this view's independent
     /// re-check a moment later. `WatchDemoSeed`'s
-    /// `injectActiveSessionOnSecondResumableCheck` fault makes that race
-    /// deterministic: it injects a real active Push/Pull session exactly on
-    /// the SECOND `resumableActiveSession()` call in the process (the
-    /// shell's own first check already ran and found nothing, or this test
-    /// would never reach the routine list to tap Leg Day in the first
-    /// place).
+    /// `injectActiveSessionOnLateResumableCheck` fault makes that race
+    /// deterministic by identifying the *caller* (`SessionEntryView.start()`
+    /// specifically, via the call stack) rather than guessing at timing --
+    /// see that fault case's doc for why round 1's wall-clock version was
+    /// flaky and had to be replaced. No sleep is needed here: the fault
+    /// simply never fires for any of the shell's own
+    /// `resumableActiveSession()` calls, however many of those happen
+    /// first, so the tap below can fire the instant the row exists.
     func testLateActiveSessionRaceReachesSessionConflictViewAndDiscardResolvesIt() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
@@ -158,12 +160,6 @@ final class SessionConflictUITests: XCTestCase {
         // routine list renders normally.
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
-        // Explicit margin past `lateSessionInjectionDelay` (1.5 s) --
-        // guarantees the tap below lands after the fault's injection
-        // window regardless of how quickly this simulator happened to
-        // render, rather than depending on `waitForExistence` having
-        // incidentally taken long enough on its own.
-        Thread.sleep(forTimeInterval: 2)
         legDayRow.tap()
 
         // SessionEntryView's own defensive pre-check is where the fault's
@@ -204,7 +200,6 @@ final class SessionConflictUITests: XCTestCase {
 
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
-        Thread.sleep(forTimeInterval: 2)
         legDayRow.tap()
 
         let conflictHeading = app.staticTexts["sessionConflict.heading"]

@@ -419,6 +419,60 @@ struct SessionEngineTests {
         #expect(restored.currentItemID == secondItemID)
     }
 
+    @Test("initialPageItemID prefers the restored page over the first-incomplete fallback, with a multi-item session that can actually distinguish the two (m2-06 review round 2, 'new defect')")
+    func initialPageItemIDPrefersRestoredPageOverFirstIncomplete() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        let first = engine.session.items[0].id
+        let second = engine.session.items[1].id
+
+        // Log once on the first item -- it still has empty slots (1 of 3
+        // logged), so a "first incomplete" algorithm that ignores
+        // currentItemID would land back on it. This is exactly the
+        // scenario a single-item routine (Leg Day, in the UI suite)
+        // cannot distinguish, and exactly the one reverting the fix would
+        // leave green everywhere else: log on item A, page to item B,
+        // both still incomplete.
+        try engine.logSet(itemID: first, weight: Weight(kg: 60), reps: 8, makeID: ids.make)
+        engine.setCurrentItem(second)
+
+        #expect(
+            engine.session.initialPageItemID == second,
+            "Expected the restored page (item 2) to win over the first-incomplete item (item 1)"
+        )
+
+        // Fallback 1: nothing restored yet (a brand-new session, or one
+        // saved before this field existed) -- first incomplete wins, same
+        // as the pre-fix behavior.
+        var fresh = engine.session
+        fresh.currentItemID = nil
+        #expect(fresh.initialPageItemID == first)
+
+        // Fallback 2: the restored page names an item that is no longer
+        // unskipped (skipped after being viewed) -- falls back rather
+        // than trusting a stale reference, same graceful-degradation
+        // posture as a stale RestTimerState duration.
+        var skippedTarget = engine.session
+        skippedTarget.plans[second]?.isSkipped = true
+        #expect(
+            skippedTarget.initialPageItemID == first,
+            "Expected a restored page naming a now-skipped item to fall back, not to trust the stale reference"
+        )
+
+        // Fallback 3: every item is fully logged -- falls back to the
+        // first unskipped item even though it has nothing left to log,
+        // rather than returning nil while unskipped items still exist.
+        var allLogged = engine
+        allLogged.setCurrentItem(nil)
+        for item in allLogged.session.items {
+            while allLogged.session.hasEmptySetSlot(item.id) {
+                try allLogged.logSet(itemID: item.id, weight: Weight(kg: 40), reps: 5, makeID: ids.make)
+            }
+        }
+        #expect(allLogged.session.initialPageItemID == first)
+    }
+
     @Test("A full three-set exercise produces the expected haptic log end to end")
     func endToEndHapticLog() throws {
         let ids = SequentialIDs()

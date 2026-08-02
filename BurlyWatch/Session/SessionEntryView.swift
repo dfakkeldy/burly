@@ -46,6 +46,24 @@
 // `WatchHomeViewModel.load()` is what actually *finds* the resumable
 // session and offers `ResumeSessionView`; this view's job stays narrow --
 // resolve the route it's handed into a live `SessionEngine`.
+//
+// ## Every `resumableActiveSession()`/`activeSession(id:)` call here must
+// catch `.unreadableActiveSessionJournal` distinctly too (m2-06 review
+// round 2, finding 1)
+//
+// `WatchHomeViewModel.load()` was fixed to do this for the shell's own
+// gate check, but this view makes the *same* two calls independently --
+// the defensive new-session preflight below, and `.resume`'s own fetch --
+// and both used to fold that error into the generic `.failed` state,
+// which `StoreUnavailableView` renders with no Retry and no recovery
+// action at all: a dead end narrower than the original global wedge (only
+// reachable via a late-arriving corruption after the shell's own check
+// already passed), but a dead end regardless. Both now route to the same
+// `.unreadableSession` phase / `UnreadableSessionView` the shell uses --
+// `discardUnreadableSession(_:)` below deletes the named corrupt session
+// (safe: `deleteSession` never reads the payload) and `dismiss()`s back to
+// the shell, whose own `.onAppear` reload (`ContentView`'s existing
+// reappearance-reload pattern) then finds a clean store.
 import SwiftUI
 import BurlyCore
 import BurlyPersistence
@@ -54,10 +72,16 @@ struct SessionEntryView: View {
     let route: HomeRoute
     let store: BurlyStore
 
+    @Environment(\.dismiss) private var dismiss
+
     private enum Phase {
         case checking
         case conflict(ActiveSession)
         case ready(SessionEngine, startInSummary: Bool)
+        /// m2-06 review round 2, finding 1: the session this view was
+        /// about to check or reattach to has an undecodable journal.
+        /// Distinct from `.failed` on purpose -- see the file doc.
+        case unreadableSession(sessionID: UUID)
         case failed(String)
     }
 
@@ -72,6 +96,10 @@ struct SessionEntryView: View {
                 SessionConflictView(existing: existing, store: store, onResolved: start)
             case .ready(let engine, let startInSummary):
                 LoggingScreenView(engine: engine, store: store, startInSummary: startInSummary)
+            case .unreadableSession(let sessionID):
+                UnreadableSessionView {
+                    discardUnreadableSession(sessionID)
+                }
             case .failed(let message):
                 StoreUnavailableView(message: message)
             }
@@ -110,6 +138,8 @@ struct SessionEntryView: View {
                     return
                 }
                 phase = .ready(SessionEngine(session: existing), startInSummary: enterSummary)
+            } catch BurlyStoreError.unreadableActiveSessionJournal(let corruptID) {
+                phase = .unreadableSession(sessionID: corruptID)
             } catch {
                 phase = .failed(String(describing: error))
             }
@@ -121,6 +151,9 @@ struct SessionEntryView: View {
                 phase = .conflict(existing)
                 return
             }
+        } catch BurlyStoreError.unreadableActiveSessionJournal(let corruptID) {
+            phase = .unreadableSession(sessionID: corruptID)
+            return
         } catch {
             phase = .failed(String(describing: error))
             return
@@ -155,6 +188,30 @@ struct SessionEntryView: View {
         do {
             try store.saveActiveSession(engine.session)
             phase = .ready(engine, startInSummary: false)
+        } catch {
+            phase = .failed(String(describing: error))
+        }
+    }
+
+    /// m2-06 review round 2, finding 1: the only way out of
+    /// `.unreadableSession` -- mirrors `WatchHomeViewModel
+    /// .discardUnreadableSession(_:)` exactly, for the two call sites in
+    /// this view that can reach the same error. `deleteSession` never
+    /// reads the corrupt payload (only deletes rows by id), so this is
+    /// safe regardless of which of the two preflights found it.
+    ///
+    /// `dismiss()` rather than re-running `start()`: whatever this view
+    /// was about to do (reattach to `.resume`, or start a new `.emptySession`/
+    /// `.start` session) is no longer the right next step once the session
+    /// in the way has been discarded -- popping back to the shell lets
+    /// `WatchHomeViewModel.load()`'s own `.onAppear` reload (`ContentView`'s
+    /// existing reappearance pattern) decide the correct next state fresh,
+    /// the same way a resolved Finish/Discard from `LoggingScreenView`
+    /// already does.
+    private func discardUnreadableSession(_ sessionID: UUID) {
+        do {
+            _ = try store.deleteSession(id: sessionID)
+            dismiss()
         } catch {
             phase = .failed(String(describing: error))
         }

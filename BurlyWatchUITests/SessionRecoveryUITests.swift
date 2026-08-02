@@ -11,11 +11,20 @@ import XCTest
 ///   to it) was treated as an ordinary retryable save failure, which can
 ///   never resolve and left Finish's `isFinishing` stuck `true` forever.
 ///
-/// Both drive `WatchDemoSeed`'s `FaultInjectingStore` faults added for
-/// this fix round (`resumableActiveSessionUnreadable`,
-/// `forceSessionOutOfFlightBeforeNextSave`) -- see that file's doc for why
-/// a UI test needs a deliberate seam here rather than trying to induce a
-/// real corrupt payload or a real concurrent writer from black-box taps.
+/// Round 2 (finding 1) found the round-1 fix incomplete: `WatchHomeViewModel
+/// .load()`'s shell-level gate caught `.unreadableActiveSessionJournal`
+/// distinctly, but `SessionEntryView` makes the same two calls
+/// independently and both still folded the error into the generic
+/// `.failed` state (a dead-end `StoreUnavailableView`, no Retry, no
+/// recovery) -- the defensive new-session preflight
+/// (`resumableActiveSession()`) and `.resume`'s own fetch
+/// (`activeSession(id:)`). Both now route to the same `UnreadableSessionView`
+/// Discard recovery the shell uses.
+///
+/// All of this drives `WatchDemoSeed`'s `FaultInjectingStore` faults --
+/// see that file's doc for why a UI test needs a deliberate seam here
+/// rather than trying to induce a real corrupt payload or a real
+/// concurrent writer from black-box taps.
 final class SessionRecoveryUITests: XCTestCase {
     private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
     private static let faultKey = "BURLY_WATCH_UI_TEST_FAULT"
@@ -61,6 +70,96 @@ final class SessionRecoveryUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["unreadableSession.heading"].exists)
         legDayRow.tap()
 
+        let exerciseName = app.staticTexts["exercisePage.name"]
+        XCTAssertTrue(exerciseName.waitForExistence(timeout: 10))
+        XCTAssertEqual(exerciseName.label, "Back Squat")
+    }
+
+    /// Round 2, finding 1(a): the defensive new-session preflight
+    /// (`SessionEntryView.start()`'s own `resumableActiveSession()` check)
+    /// must catch `.unreadableActiveSessionJournal` distinctly too, not
+    /// fold it into `StoreUnavailableView`. Nothing is active at launch --
+    /// the shell's own gate sees nothing, the routine list renders, and
+    /// the fault injects a session that is both active AND unreadable
+    /// strictly at the moment `SessionEntryView` makes its own check
+    /// (identified by caller, not timing -- see `Fault
+    /// .injectUnreadableActiveSessionOnDefensivePreflight`'s doc).
+    func testUnreadableJournalAtDefensivePreflightOffersDiscardAndAppIsUsableAfterward() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.faultKey] = "injectUnreadableActiveSessionOnDefensivePreflight"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15), "Expected the routine list -- nothing is active at launch")
+        legDayRow.tap()
+
+        let heading = app.staticTexts["unreadableSession.heading"]
+        XCTAssertTrue(
+            heading.waitForExistence(timeout: 10),
+            "Expected the targeted unreadable-session recovery at the defensive preflight, not a dead-end StoreUnavailableView"
+        )
+        XCTAssertFalse(app.staticTexts["storeUnavailableView.heading"].exists)
+        XCTAssertFalse(
+            app.staticTexts["exercisePage.name"].exists,
+            "No unsaved logging screen must ever appear while a (corrupt) session is already active"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-unreadableSession-defensivePreflight")
+
+        let discardButton = app.buttons["unreadableSession.discardButton"]
+        XCTAssertTrue(discardButton.waitForExistence(timeout: 5))
+        discardButton.tap()
+
+        // The app is usable afterward: back at the routine list, and the
+        // originally-requested Start proceeds normally.
+        XCTAssertTrue(
+            legDayRow.waitForExistence(timeout: 10),
+            "Expected the routine list once the unreadable session was discarded"
+        )
+        legDayRow.tap()
+        let exerciseName = app.staticTexts["exercisePage.name"]
+        XCTAssertTrue(exerciseName.waitForExistence(timeout: 10))
+        XCTAssertEqual(exerciseName.label, "Back Squat")
+    }
+
+    /// Round 2, finding 1(b): `.resume`'s own `activeSession(id:)` fetch
+    /// must catch `.unreadableActiveSessionJournal` distinctly too. The
+    /// shell's own Resume preview is unaffected (only `activeSession(id:)`
+    /// is intercepted, not `resumableActiveSession()`), so Resume is
+    /// offered normally; the journal only turns out to be unreadable once
+    /// `.resume` tries to actually fetch it.
+    func testUnreadableJournalAtResumeFetchOffersDiscardAndAppIsUsableAfterward() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "activeConflict"
+        app.launchEnvironment[Self.faultKey] = "resumeFetchUnreadable"
+        app.launch()
+
+        let resumeHeading = app.staticTexts["resumeSession.heading"]
+        XCTAssertTrue(resumeHeading.waitForExistence(timeout: 15), "Expected Resume to be offered -- the shell's own preview is unaffected")
+        let resumeButton = app.buttons["resumeSession.resumeButton"]
+        XCTAssertTrue(resumeButton.waitForExistence(timeout: 5))
+        resumeButton.tap()
+
+        let heading = app.staticTexts["unreadableSession.heading"]
+        XCTAssertTrue(
+            heading.waitForExistence(timeout: 10),
+            "Expected the targeted unreadable-session recovery at the resume fetch, not a dead-end StoreUnavailableView"
+        )
+        XCTAssertFalse(app.staticTexts["storeUnavailableView.heading"].exists)
+
+        attachScreenshot(from: app, name: "BurlyWatch-unreadableSession-resumeFetch")
+
+        let discardButton = app.buttons["unreadableSession.discardButton"]
+        XCTAssertTrue(discardButton.waitForExistence(timeout: 5))
+        discardButton.tap()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(
+            legDayRow.waitForExistence(timeout: 10),
+            "Expected the routine list once the unreadable session was discarded"
+        )
+        legDayRow.tap()
         let exerciseName = app.staticTexts["exercisePage.name"]
         XCTAssertTrue(exerciseName.waitForExistence(timeout: 10))
         XCTAssertEqual(exerciseName.label, "Back Squat")

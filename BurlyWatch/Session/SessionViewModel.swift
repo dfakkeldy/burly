@@ -177,37 +177,17 @@ final class SessionViewModel {
         self.store = store
         self.haptics = haptics
         self.now = now
-        self.currentItemID = Self.resolveInitialItem(engine.session)
+        // m2-06 review round 2, finding "new defect": the page-selection
+        // policy itself now lives on `ActiveSession.initialPageItemID`
+        // (BurlyCore) -- see that property's doc for why, and for the
+        // full "prefer the restored page, else first-incomplete, else
+        // first" resolution order this used to duplicate here as a
+        // private static func.
+        self.currentItemID = engine.session.initialPageItemID
         refreshPrefill()
         if startInSummary {
             requestEndWorkout()
         }
-    }
-
-    /// The page to land on when this view model is constructed -- for a
-    /// fresh Start *and* for Resume (m2-06 review finding 1.1).
-    ///
-    /// Prefers `ActiveSession.currentItemID`, the item last recorded via
-    /// `applyCurrentItem`/`engine.setCurrentItem` and journaled with the
-    /// rest of the scaffolding -- so Resume genuinely lands where the
-    /// lifter left off, including a page move made *after* the last set
-    /// they logged, which a "first item with an empty slot" heuristic can
-    /// never recover (m2-06 review round 1 finding 1.1's own example: log
-    /// on A, page to B, kill with both still incomplete -- the old
-    /// heuristic landed back on A). Falls back to the first item that
-    /// still has something left to log, then to the first unskipped item,
-    /// when the restored id is `nil` (a brand-new session, or a session
-    /// saved before this field existed) or names an item that is no longer
-    /// unskipped (the lifter skipped it after being on it, or moved on)
-    /// -- the same graceful-degradation posture the pre-fix heuristic
-    /// already took, kept as a fallback rather than a hard requirement.
-    private static func resolveInitialItem(_ active: ActiveSession) -> UUID? {
-        let unskipped = active.unskippedItems
-        if let restored = active.currentItemID, unskipped.contains(where: { $0.id == restored }) {
-            return restored
-        }
-        return unskipped.first { active.hasEmptySetSlot($0.id) }?.id
-            ?? unskipped.first?.id
     }
 
     // MARK: - Reads
