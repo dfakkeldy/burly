@@ -13,6 +13,12 @@
 //
 // `applyDigest` is the fix: validate the whole payload, then upsert every
 // entry and prune every eligible acked session in a single `save()`.
+//
+// Round D finished the job at the *surface* (see BurlyStore.swift): the two
+// half-payload methods are module-internal, and BurlySync's receipt cannot
+// be built without both halves — so "apply the whole digest" is not merely
+// the recommended call, it is the only one a caller outside this module
+// has. The seam tests at the bottom drive that shape.
 
 import Foundation
 import SwiftData
@@ -53,12 +59,13 @@ struct DigestTransactionTests {
         try store.createExercise(row)
         try store.createRoutine(routine)
 
-        var logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        logged.state = .logged
-        let active = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(3_600))
+        let logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
         try store.createSession(logged)
-        try store.createSession(active)
-        return (bench, row, logged, active)
+        let active = Fixture.activeSession(
+            from: routine, startedAt: Fixture.epoch.addingTimeInterval(3_600)
+        )
+        try store.saveActiveSession(active)
+        return (bench, row, logged, active.session)
     }
 
     // MARK: - Both halves, one save
@@ -273,8 +280,8 @@ struct DigestTransactionTests {
         #expect(try store.lastPerformance(exerciseID: seeded.bench.id) == nil)
     }
 
-    @Test("the BurlySync ack seam now runs through the digest transaction, and still prunes exactly what it did before")
-    func ackSeamRoutesThroughApplyDigest() throws {
+    @Test("the BurlySync digest seam runs through the digest transaction, applying its entries and its prune together")
+    func digestSeamRoutesThroughApplyDigest() throws {
         let store = try makeStore(.watch)
         let seeded = try seededWatchStore(store)
         // A digest entry already on the watch — the seam must not disturb
@@ -284,22 +291,59 @@ struct DigestTransactionTests {
             ackedSessionIDs: []
         )
 
-        let sync: SessionAckApplying = store
-        try sync.apply(SessionAckReceipt(sessionIDs: [seeded.logged.id, seeded.active.id]))
+        let sync: SessionDigestApplying = store
+        try sync.apply(
+            SessionDigestReceipt(
+                lastPerformance: [digestEntry(for: seeded.row.id, kg: 70, reps: 10)],
+                ackedSessionIDs: [seeded.logged.id, seeded.active.id]
+            )
+        )
 
         #expect(try store.session(id: seeded.logged.id) == nil)
         #expect(try store.session(id: seeded.active.id)?.state == .active)
         #expect(try store.lastPerformance(exerciseID: seeded.bench.id)?.sets.first?.weightKg == 100)
+        // The receipt's own entry landed in the same call that pruned —
+        // the half the ids-only seam could not carry (m1-06 review round D).
+        #expect(try store.lastPerformance(exerciseID: seeded.row.id)?.sets.first?.reps == 10)
     }
 
-    @Test("the ack seam keeps its phone-kind refusal now that it routes through applyDigest")
-    func ackSeamStillRefusesPhoneStores() throws {
+    @Test("a receipt carrying a bad entry commits neither half: the digest is refused and the acked session survives")
+    func digestSeamRefusesAPartialPayloadWhole() throws {
+        let store = try makeStore(.watch)
+        let seeded = try seededWatchStore(store)
+        let sync: SessionDigestApplying = store
+
+        // Two entries claiming latest-wins for one exercise: ambiguous, so
+        // the whole payload is refused — including the prune it carried.
+        // Routing an ack through the seam cannot smuggle it past the
+        // entry-level validation.
+        #expect(throws: BurlyStoreError.duplicateID(seeded.bench.id)) {
+            try sync.apply(
+                SessionDigestReceipt(
+                    lastPerformance: [
+                        digestEntry(for: seeded.bench.id, kg: 100),
+                        digestEntry(for: seeded.bench.id, kg: 110)
+                    ],
+                    ackedSessionIDs: [seeded.logged.id]
+                )
+            )
+        }
+
+        #expect(try store.lastPerformance(exerciseID: seeded.bench.id) == nil)
+        #expect(try store.session(id: seeded.logged.id) != nil)
+        #expect(try store.loggedSessionsAwaitingAck().map(\.id) == [seeded.logged.id])
+    }
+
+    @Test("the digest seam keeps its phone-kind refusal now that it routes through applyDigest")
+    func digestSeamStillRefusesPhoneStores() throws {
         let store = try makeStore(.phone)
         let seeded = try seededWatchStore(store)
-        let sync: SessionAckApplying = store
+        let sync: SessionDigestApplying = store
 
         #expect(throws: BurlyStoreError.operationRequiresWatchStore) {
-            try sync.apply(SessionAckReceipt(sessionIDs: [seeded.logged.id]))
+            try sync.apply(
+                SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [seeded.logged.id])
+            )
         }
         #expect(try store.session(id: seeded.logged.id) != nil)
     }
@@ -313,23 +357,33 @@ struct DigestTransactionTests {
         try store.createExercise(bench)
         try store.createRoutine(routine)
 
-        let clock = TestClock()
-        var active = SessionBuilder.session(from: routine, clock: clock)
+        let active = Fixture.activeSession(from: routine)
         try store.saveActiveSession(active)
         #expect(try rowCount(ActiveSessionJournal.self, in: container) == 1)
 
-        // Finish the session *without* going back through the store — the
-        // shape a crash between Finish and its save would leave behind.
-        try SessionMutator.finish(&active, clock: clock)
-        var loggedRow = try #require(try store.session(id: active.id))
-        loggedRow.state = .logged
-        try store.applyPhoneEdit(loggedRow)
+        // Strand the journal the way only something outside the store can
+        // now: flip the row to `.logged` behind the store's back. Every
+        // in-API path out of `.active` retires the journal in the same save
+        // (m1-06 review round D), so this state is no longer reachable
+        // through `applyPhoneEdit` — but a crash mid-migration or an
+        // out-of-band writer could still produce it, and the prune's
+        // defensive cleanup is what keeps it from becoming a Resume pointer
+        // into a deleted row.
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let sessionID = active.id
+        var descriptor = FetchDescriptor<Session>(predicate: #Predicate { $0.id == sessionID })
+        descriptor.fetchLimit = 1
+        let row = try #require(try context.fetch(descriptor).first)
+        row.state = .logged
+        try context.save()
         #expect(try rowCount(ActiveSessionJournal.self, in: container) == 1)
 
-        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [active.id])
+        let pruner = SwiftDataStore(container: container, clock: TestClock())
+        try pruner.applyDigest(lastPerformance: [], ackedSessionIDs: [active.id])
 
-        #expect(try store.session(id: active.id) == nil)
+        #expect(try pruner.session(id: active.id) == nil)
         #expect(try rowCount(ActiveSessionJournal.self, in: container) == 0)
-        #expect(try store.resumableActiveSession() == nil)
+        #expect(try pruner.resumableActiveSession() == nil)
     }
 }

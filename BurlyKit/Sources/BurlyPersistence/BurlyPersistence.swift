@@ -4,10 +4,15 @@
 //
 // ## Layout
 //
-// - `Models/` — the seven `@Model` final classes for §1's entities plus the
-//   §9 catalog seed-version metadata model. All **internal**: `@Model`
-//   classes are not Sendable and must not cross a module or actor boundary.
-//   `BurlyCore`'s `…Data` value types are what callers see.
+// - `Models/` — the seven `@Model` final classes for §1's entities, plus
+//   the §9 catalog seed-version metadata model and the §2 active-session
+//   journal. All **internal**, and not because the compiler makes them so:
+//   the `@Model` macro attaches `Sendable`, so nothing stops a model object
+//   from crossing an actor boundary if a signature lets it (m1-06 review,
+//   finding m3 — see Store/BurlyStore.swift's threading note for the full
+//   contract). Keeping them internal, and out of every `BurlyStore`
+//   signature, is what holds the boundary. `BurlyCore`'s `…Data` value
+//   types are what callers see.
 // - `Schema/` — `BurlySchemaV1` (`VersionedSchema`), `BurlyMigrationPlan`
 //   (`SchemaMigrationPlan`, empty at v1), and `BurlyContainer`, the
 //   module-internal factory every container is built through, so v2 is an

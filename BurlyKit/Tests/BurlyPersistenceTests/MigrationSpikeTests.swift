@@ -22,7 +22,11 @@
 //     from a *production* `SwiftDataStore.logSet` inside
 //     AckSeamIntegrationTests — a test that never touches the spike. That
 //     is the v2 shape (with its extra optional `rpe`) shadowing v1 while an
-//     ordinary store saved a set.
+//     ordinary store saved a set. (`logSet` has since been removed from the
+//     store — m1-06 review round D — so do not go looking for it; the
+//     failing call is now the set-bearing `saveActiveSession`. The shape of
+//     the collision is unchanged: an ordinary production save, poisoned by
+//     the spike's entity definitions living in the same process.)
 //
 // Both directions, both nondeterministic, both consistent with a
 // process-global entity registry keyed by name. Neither is reproducible on
@@ -99,18 +103,22 @@ struct MigrationSpikeTests {
 
             var active = SessionBuilder.session(from: routine, clock: TestClock())
             active.restTimer = RestTimerState(startedAt: Fixture.epoch, duration: 90)
+            // The set is logged into the in-flight value and persisted by
+            // the same `saveActiveSession` that writes the graph and the
+            // journal (m1-06 review round D removed the store's own
+            // `logSet`). The v1 store this produces is unchanged in shape —
+            // one Session, two SessionItems, one SetRecord, one journal —
+            // which is all the migration below cares about.
+            try SessionMutator.logSet(
+                itemID: active.session.items[0].id,
+                weight: Weight(kg: 102.5),
+                reps: 5,
+                in: &active,
+                clock: TestClock()
+            )
             try store.saveActiveSession(active)
             sessionID = active.session.id
 
-            try store.logSet(
-                SetRecordData(
-                    order: 0,
-                    weight: Weight(kg: 102.5),
-                    reps: 5,
-                    completedAt: Fixture.epoch
-                ),
-                toSessionItem: active.session.items[0].id
-            )
             try store.upsertLastPerformance(
                 ExerciseLastPerformanceData(
                     exerciseID: bench.id,

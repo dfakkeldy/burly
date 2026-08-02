@@ -23,16 +23,16 @@ struct StoreAPISurfaceTests {
         let store = try makeStore()
         let bench = Fixture.exercise(name: "Bench Press")
         let routine = Fixture.routine(over: [bench])
-        let session = Fixture.session(from: routine)
-        let itemID = try #require(session.items.first?.id)
+        let empty = Fixture.session(from: routine)
+        let itemID = try #require(empty.items.first?.id)
+        let session = empty.addingSet(
+            SetRecordData(order: 0, weight: Weight(kg: 100), reps: 5, completedAt: Fixture.epoch),
+            toItem: itemID
+        )
 
         try store.createExercise(bench)
         try store.createRoutine(routine)
         try store.createSession(session)
-        try store.logSet(
-            SetRecordData(order: 0, weight: Weight(kg: 100), reps: 5, completedAt: Fixture.epoch),
-            toSessionItem: itemID
-        )
 
         let archivedAt = Fixture.epoch.addingTimeInterval(3600)
         try store.archiveExercise(id: bench.id, at: archivedAt)
@@ -149,6 +149,7 @@ struct StoreAPISurfaceTests {
 
         let session = SessionData(
             startedAt: Fixture.epoch,
+            state: .logged,
             origin: .live,
             items: [SessionItemData(exerciseID: ghostID, order: 0)]
         )
@@ -186,12 +187,6 @@ struct StoreAPISurfaceTests {
         }
         #expect(throws: BurlyStoreError.notFound(ghostID)) {
             try store.deleteSession(id: ghostID)
-        }
-        #expect(throws: BurlyStoreError.notFound(ghostID)) {
-            try store.logSet(
-                SetRecordData(order: 0, weight: .bodyweight, reps: 10, completedAt: Fixture.epoch),
-                toSessionItem: ghostID
-            )
         }
         #expect(try store.exercise(id: ghostID) == nil)
         #expect(try store.routine(id: ghostID) == nil)
@@ -238,13 +233,13 @@ struct StoreAPISurfaceTests {
         try store.createRoutine(routine)
         #expect(try store.routine(id: routine.id)?.items.first?.exerciseID == bench.id)
 
-        let session = Fixture.session(from: routine)
-        let itemID = try #require(session.items.first?.id)
-        try store.createSession(session)
-        try store.logSet(
+        let empty = Fixture.session(from: routine)
+        let itemID = try #require(empty.items.first?.id)
+        let session = empty.addingSet(
             SetRecordData(order: 0, weight: Weight(kg: 60), reps: 10, completedAt: Fixture.epoch),
-            toSessionItem: itemID
+            toItem: itemID
         )
+        try store.createSession(session)
 
         let stored = try #require(try store.session(id: session.id))
         #expect(stored.items[0].exerciseID == bench.id)
@@ -253,32 +248,36 @@ struct StoreAPISurfaceTests {
         #expect(try store.exercises(includingArchived: false).isEmpty)
     }
 
-    @Test("logSet keeps working on a session item whose exercise is archived mid-session")
-    func logSetStillWorksAfterItsExerciseIsArchivedMidSession() throws {
-        let store = try makeStore()
+    @Test("a live session keeps logging sets after its exercise is archived mid-session")
+    func loggingContinuesAfterItsExerciseIsArchivedMidSession() throws {
+        let store = try makeStore(.watch)
+        let clock = TestClock()
         let bench = Fixture.exercise(name: "Bench Press")
         let routine = Fixture.routine(over: [bench])
-        let session = Fixture.session(from: routine)
-        let itemID = try #require(session.items.first?.id)
-
         try store.createExercise(bench)
         try store.createRoutine(routine)
-        try store.createSession(session)
-        try store.logSet(
-            SetRecordData(order: 0, weight: Weight(kg: 60), reps: 10, completedAt: Fixture.epoch),
-            toSessionItem: itemID
+
+        var active = Fixture.activeSession(from: routine)
+        let itemID = try #require(active.items.first?.id)
+        try SessionMutator.logSet(
+            itemID: itemID, weight: Weight(kg: 60), reps: 10, in: &active, clock: clock
         )
+        try store.saveActiveSession(active)
 
         // Archived between the first and second set — e.g. the phone
         // archived the exercise mid-sync while the watch session runs on.
+        // `saveActiveSession` re-resolves every exercise reference on every
+        // call, so this is the call that would break if archival were
+        // treated as "gone" rather than "hidden from pickers".
         try store.archiveExercise(id: bench.id, at: Fixture.epoch.addingTimeInterval(60))
 
-        try store.logSet(
-            SetRecordData(order: 1, weight: Weight(kg: 62.5), reps: 8, completedAt: Fixture.epoch.addingTimeInterval(120)),
-            toSessionItem: itemID
+        clock.advance(by: 120)
+        try SessionMutator.logSet(
+            itemID: itemID, weight: Weight(kg: 62.5), reps: 8, in: &active, clock: clock
         )
+        try store.saveActiveSession(active)
 
-        let stored = try #require(try store.session(id: session.id))
+        let stored = try #require(try store.session(id: active.id))
         #expect(stored.items[0].sets.count == 2)
         #expect(stored.items[0].exerciseID == bench.id)
     }
@@ -301,19 +300,19 @@ struct StoreAPISurfaceTests {
 
         let bench = Fixture.exercise(name: "Bench Press")
         let routine = Fixture.routine(over: [bench])
-        let session = Fixture.session(from: routine)
-        let itemID = try #require(session.items.first?.id)
+        let empty = Fixture.session(from: routine)
+        let itemID = try #require(empty.items.first?.id)
         let setID = UUID()
+        let session = empty.addingSet(
+            SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
+            toItem: itemID
+        )
 
         do {
             let store = try SwiftDataStore(kind: .phone, at: .file(url))
             try store.createExercise(bench)
             try store.createRoutine(routine)
             try store.createSession(session)
-            try store.logSet(
-                SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
-                toSessionItem: itemID
-            )
         }
 
         // Corrupt the stored column directly — negative, so the thrown
@@ -357,18 +356,18 @@ struct StoreAPISurfaceTests {
         let container = try BurlyContainer.phone(at: .inMemory)
         let bench = Fixture.exercise(name: "Bench Press")
         let routine = Fixture.routine(over: [bench])
-        let session = Fixture.session(from: routine)
-        let itemID = try #require(session.items.first?.id)
+        let empty = Fixture.session(from: routine)
+        let itemID = try #require(empty.items.first?.id)
         let setID = UUID()
+        let session = empty.addingSet(
+            SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
+            toItem: itemID
+        )
 
         let store = SwiftDataStore(container: container)
         try store.createExercise(bench)
         try store.createRoutine(routine)
         try store.createSession(session)
-        try store.logSet(
-            SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
-            toSessionItem: itemID
-        )
 
         let context = ModelContext(container)
         context.autosaveEnabled = false
@@ -393,36 +392,47 @@ struct StoreAPISurfaceTests {
         }
     }
 
-    /// A stored `NaN` is the one hostile value that never reaches
-    /// `SetRecord.snapshot()`'s validation at all: SwiftData's SQLite
-    /// backing store cannot represent `NaN` in a `REAL` column, and it
-    /// reads back as `0.0` (bodyweight) on a genuine cold reload — verified
-    /// here rather than assumed, because it changes what "fails closed"
-    /// needs to mean for this specific class. This is not a gap in
-    /// `BurlyStoreError.corruptedWeight`: a value that cannot survive
-    /// storage as `NaN` cannot poison anything downstream as `NaN` either.
-    /// Negative and infinite values *do* survive (see the sweep above) and
-    /// are exactly what the validation exists to catch.
-    @Test("a stored NaN weightKg heals to 0.0 (bodyweight) on a genuine cold reload, rather than surviving as NaN")
+    /// Pins the **accepted limitation** documented on `SetRecord.snapshot()`
+    /// in Store/ModelMapping.swift (m1-06 review round D), not a passing
+    /// property.
+    ///
+    /// A stored `NaN` is the one hostile value that never reaches the
+    /// read-back validation at all: SwiftData's SQLite backing store cannot
+    /// represent `NaN` in a `REAL` column, and it comes back as `0.0` on a
+    /// genuine cold reload — which §1 says is a legitimate bodyweight set.
+    /// So the corruption is *indistinguishable* from real data by the time
+    /// any code could look at it, and no check anywhere can fail closed on
+    /// it after the fact. That is measured here rather than assumed,
+    /// because it is the difference between "we chose not to detect this"
+    /// and "detecting this is impossible" — and it is the second.
+    ///
+    /// It is bounded harm, which is why it is accepted rather than
+    /// engineered around: one set reads light instead of poisoning every
+    /// aggregate it touches, and reaching the state at all needs an
+    /// out-of-band writer, since `Weight` traps or throws before the store
+    /// can produce a `NaN` column. Negative and infinite values *do*
+    /// survive storage (see the sweep above) and are exactly what
+    /// `BurlyStoreError.corruptedWeight` exists to catch.
+    @Test("a stored NaN weightKg heals to 0.0 (bodyweight) on a genuine cold reload — accepted, undetectable, and pinned as such")
     func storedNaNHealsToZeroOnColdReload() throws {
         let url = try makeTemporaryStoreURL()
         defer { removeStoreFiles(at: url) }
 
         let bench = Fixture.exercise(name: "Bench Press")
         let routine = Fixture.routine(over: [bench])
-        let session = Fixture.session(from: routine)
-        let itemID = try #require(session.items.first?.id)
+        let empty = Fixture.session(from: routine)
+        let itemID = try #require(empty.items.first?.id)
         let setID = UUID()
+        let session = empty.addingSet(
+            SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
+            toItem: itemID
+        )
 
         do {
             let store = try SwiftDataStore(kind: .phone, at: .file(url))
             try store.createExercise(bench)
             try store.createRoutine(routine)
             try store.createSession(session)
-            try store.logSet(
-                SetRecordData(id: setID, order: 0, weight: .bodyweight, reps: 5, completedAt: Fixture.epoch),
-                toSessionItem: itemID
-            )
         }
 
         do {
@@ -439,6 +449,10 @@ struct StoreAPISurfaceTests {
         // Cold reload: brand-new container over the same file.
         let reloaded = try SwiftDataStore(kind: .phone, at: .file(url))
         let stored = try #require(try reloaded.session(id: session.id))
+        // Not an assertion that this is *right* — an assertion that this is
+        // what happens, and that the value is now inseparable from a real
+        // bodyweight set (`bodyweightIsZeroKilograms` below reads exactly
+        // the same).
         #expect(stored.items[0].sets[0].weightKg == 0)
     }
 
@@ -447,16 +461,16 @@ struct StoreAPISurfaceTests {
         let store = try makeStore()
         let pullUp = Fixture.exercise(name: "Pull-up", muscleGroups: [.lats])
         let routine = Fixture.routine(over: [pullUp])
-        let session = Fixture.session(from: routine)
-        let itemID = try #require(session.items.first?.id)
+        let empty = Fixture.session(from: routine)
+        let itemID = try #require(empty.items.first?.id)
+        let session = empty.addingSet(
+            SetRecordData(order: 0, weight: .bodyweight, reps: 12, completedAt: Fixture.epoch),
+            toItem: itemID
+        )
 
         try store.createExercise(pullUp)
         try store.createRoutine(routine)
         try store.createSession(session)
-        try store.logSet(
-            SetRecordData(order: 0, weight: .bodyweight, reps: 12, completedAt: Fixture.epoch),
-            toSessionItem: itemID
-        )
 
         let stored = try #require(try store.session(id: session.id))
         #expect(stored.items[0].sets[0].weightKg == 0)

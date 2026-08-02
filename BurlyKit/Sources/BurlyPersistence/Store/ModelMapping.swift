@@ -65,6 +65,29 @@ extension SetRecord {
     /// Throws `BurlyStoreError.corruptedWeight` instead of ever handing a
     /// poisoned `Weight` back into equality, sorting, volume, PR, or chart
     /// math; never traps, since a corrupted row is data, not a caller bug.
+    ///
+    /// ## Accepted limitation: a stored NaN heals to bodyweight
+    ///
+    /// This catches exactly the corruption classes that *survive storage*.
+    /// Negative and infinite values do, and fail closed here. `NaN` does
+    /// not: SwiftData's SQLite `REAL` column cannot represent it, and the
+    /// value reads back as `0.0` — indistinguishable from a legitimately
+    /// logged bodyweight set, which §1 says 0 kg is. By the time this
+    /// function sees the column the evidence is gone, so no check placed
+    /// here (or anywhere downstream) can tell the two apart, and detection
+    /// after the fact is not merely missing but impossible. Measured and
+    /// pinned by `storedNaNHealsToZeroOnColdReload` in
+    /// Tests/BurlyPersistenceTests/StoreAPISurfaceTests.swift (m1-06 review
+    /// round D).
+    ///
+    /// Accepted rather than engineered around. Reaching a stored NaN
+    /// requires an out-of-band writer — the store's own write paths cannot
+    /// produce one, since `Weight` traps or throws first — and the harm it
+    /// does after healing is bounded: one set reads as bodyweight instead
+    /// of its real load, rather than poisoning every aggregate that touches
+    /// it the way a surviving NaN would. Distinguishing the two would mean
+    /// storing a checksum or a redundant encoding of every weight column
+    /// against a threat the API surface already excludes.
     func snapshot() throws -> SetRecordData {
         do {
             return SetRecordData(

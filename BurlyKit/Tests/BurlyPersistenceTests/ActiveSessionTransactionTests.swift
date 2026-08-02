@@ -374,7 +374,7 @@ struct ActiveSessionTransactionTests {
     @Test("applyPhoneEdit on an unknown session throws notFound and writes nothing")
     func phoneEditOnUnknownSessionThrowsNotFound() throws {
         let store = try makeStore()
-        let ghost = SessionData(startedAt: Fixture.epoch, origin: .live)
+        let ghost = SessionData(startedAt: Fixture.epoch, state: .logged, origin: .live)
         #expect(throws: BurlyStoreError.notFound(ghost.id)) {
             try store.applyPhoneEdit(ghost)
         }
@@ -557,6 +557,455 @@ struct ActiveSessionTransactionTests {
         #expect(try rowCount(ActiveSessionJournal.self, in: container) == 0)
         #expect(try store.resumableActiveSession() == nil)
         #expect(try store.activeSession(id: active.id) == nil)
+    }
+
+    // MARK: - saveActiveSession is the only write path (m1-06 review round D)
+    //
+    // Round A closed the split-brain *inside* `saveActiveSession`; the
+    // combined review found the API still offered a way around it. These
+    // tests are about the surface, not the implementation: the states below
+    // are not "hard to reach", they are unreachable, and the ones that are
+    // still reachable out-of-band are proved harmless.
+
+    @Test("the logSet crash window is closed by construction: a set the engine logged but never saved is simply absent after a cold reopen, and Resume comes back well-formed")
+    func unsavedSetLeavesNoSplitBrainAfterColdReopen() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let clock = TestClock()
+        var sessionID = UUID()
+        var itemID = UUID()
+
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: clock)
+            var (active, bench, _) = try startedSession(in: store, clock: clock)
+            sessionID = active.id
+            itemID = try #require(active.items.first { $0.exerciseID == bench.id }?.id)
+
+            // Three sets against the routine's three planned slots, each
+            // one durable.
+            for index in 0..<3 {
+                clock.advance(by: 180)
+                try SessionMutator.logSet(
+                    itemID: itemID, weight: Weight(kg: 80), reps: 8 - index,
+                    in: &active, clock: clock
+                )
+                try store.saveActiveSession(active)
+            }
+
+            // The reviewer's exact sequence, step 2: a fourth set, so the
+            // in-memory plan grows to four (I4). Step 3 used to be
+            // `store.logSet(…)`, which committed the set on its own and
+            // left the journal describing three — and step 5 was a crash
+            // before the next `saveActiveSession`, which made that
+            // disagreement permanent. Step 3 no longer exists: the method
+            // is gone from `BurlyStore`, and this line is the whole of what
+            // a caller can do without going back through the one
+            // transaction.
+            clock.advance(by: 180)
+            try SessionMutator.logSet(
+                itemID: itemID, weight: Weight(kg: 85), reps: 5, in: &active, clock: clock
+            )
+            #expect(active.plan(itemID)?.plannedSetCount == 4)
+            // …and here the process dies.
+        }
+
+        let container = try BurlyContainer.make(.watch, at: .file(url))
+        let reopened = SwiftDataStore(container: container)
+        let resumed = try #require(try reopened.resumableActiveSession())
+
+        #expect(resumed.id == sessionID)
+        // The last *saved* state, whole: three sets and a three-slot plan
+        // that agree with each other. Losing the fourth set is the correct
+        // outcome — it was never committed — where the old path lost the
+        // agreement instead and kept the set.
+        #expect(resumed.item(itemID)?.sets.count == 3)
+        #expect(resumed.plan(itemID)?.plannedSetCount == 3)
+        #expect(resumed.isWellFormed)
+        #expect(try rowCount(SetRecord.self, in: container) == 3)
+    }
+
+    @Test("saveActiveSession forces revision 1 on the creating call, whatever the DTO claims")
+    func creatingSaveIgnoresAHostileDTORevision() throws {
+        let store = try makeStore(.watch)
+        var (active, _, _) = try startedSession(in: store)
+
+        // A hand-built or hostile DTO, before the session exists at all —
+        // the branch that used to copy `revision` verbatim. Under §5's
+        // "incoming revision ≤ stored revision → drop" rule, a watch
+        // session born at 42 would outrank every genuine phone edit until
+        // the phone had made 42 of them.
+        active.session.revision = 42
+        try store.saveActiveSession(active)
+
+        #expect(try store.session(id: active.id)?.revision == 1)
+
+        // And it stays 1 through the mutations that follow, as before.
+        try SessionMutator.addSet(toItem: try #require(active.items.first?.id), in: &active)
+        active.session.revision = 99
+        try store.saveActiveSession(active)
+        #expect(try store.session(id: active.id)?.revision == 1)
+    }
+
+    @Test("createSession refuses an .active session — an in-flight row cannot be born without its journal — and writes nothing")
+    func createSessionRefusesAnActiveSession() throws {
+        let container = try BurlyContainer.make(.watch, at: .inMemory)
+        let store = SwiftDataStore(container: container, clock: TestClock())
+        let bench = Fixture.exercise(name: "Bench Press")
+        let routine = Fixture.routine(over: [bench])
+        try store.createExercise(bench)
+        try store.createRoutine(routine)
+
+        let session = Fixture.session(from: routine, state: .active)
+
+        #expect(
+            throws: BurlyStoreError.activeSessionRequiresSaveActiveSession(sessionID: session.id)
+        ) {
+            try store.createSession(session)
+        }
+
+        #expect(try store.session(id: session.id) == nil)
+        #expect(try rowCount(Session.self, in: container) == 0)
+        #expect(try rowCount(SessionItem.self, in: container) == 0)
+        #expect(try store.resumableActiveSession() == nil)
+        // The rejection left nothing pending for an unrelated save to
+        // commit, same rule as every other create.
+        try store.createExercise(Fixture.exercise(name: "Row", muscleGroups: [.upperBack]))
+        #expect(try rowCount(Session.self, in: container) == 0)
+    }
+
+    @Test("applyPhoneEdit refuses to put a finished session back in flight, and leaves it exactly as it was")
+    func phoneEditRefusesToResurrectASessionIntoFlight() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        let routine = Fixture.routine(over: [bench])
+        try store.createExercise(bench)
+        try store.createRoutine(routine)
+        let logged = Fixture.session(from: routine)
+        try store.createSession(logged)
+
+        var resurrected = try #require(try store.session(id: logged.id))
+        resurrected.state = .active
+
+        #expect(
+            throws: BurlyStoreError.activeSessionRequiresSaveActiveSession(sessionID: logged.id)
+        ) {
+            try store.applyPhoneEdit(resurrected)
+        }
+
+        let survivor = try #require(try store.session(id: logged.id))
+        #expect(survivor.state == .logged)
+        // Refused before the revision moved, like every other rejection.
+        #expect(survivor.revision == 1)
+        #expect(try store.resumableActiveSession() == nil)
+    }
+
+    @Test("applyPhoneEdit that moves a session out of .active retires its journal in the same save; nothing is resumable after a cold reopen")
+    func phoneEditOutOfActiveRetiresTheJournal() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let clock = TestClock()
+        var sessionID = UUID()
+
+        do {
+            let store = try SwiftDataStore(kind: .phone, at: .file(url), clock: clock)
+            var (active, bench, _) = try startedSession(in: store, clock: clock)
+            sessionID = active.id
+            let itemID = try #require(active.items.first { $0.exerciseID == bench.id }?.id)
+            try SessionMutator.logSet(
+                itemID: itemID, weight: Weight(kg: 100), reps: 5, in: &active, clock: clock
+            )
+            try store.saveActiveSession(active)
+            #expect(try store.resumableActiveSession() != nil)
+
+            // The §6 editor closes out a session the watch left running —
+            // the path that used to change `state` and walk away, leaving
+            // the journal behind as a Resume pointer at a finished session.
+            var finished = try #require(try store.session(id: sessionID))
+            finished.state = .logged
+            finished.endedAt = clock.advance(by: 3_600)
+            #expect(try store.applyPhoneEdit(finished) == 2)
+        }
+
+        let container = try BurlyContainer.make(.phone, at: .file(url))
+        let reopened = SwiftDataStore(container: container)
+
+        let stored = try #require(try reopened.session(id: sessionID))
+        #expect(stored.state == .logged)
+        #expect(stored.revision == 2)
+        #expect(stored.items[0].sets.count == 1)
+        #expect(try rowCount(ActiveSessionJournal.self, in: container) == 0)
+        #expect(try reopened.resumableActiveSession() == nil)
+        #expect(try reopened.activeSession(id: sessionID) == nil)
+    }
+
+    @Test("a second session cannot be brought into flight while one is already running; the live session is untouched by the refusal")
+    func saveActiveSessionRefusesASecondSessionInFlight() throws {
+        let container = try BurlyContainer.make(.watch, at: .inMemory)
+        let store = SwiftDataStore(container: container, clock: TestClock())
+        let clock = TestClock()
+        var (first, bench, _) = try startedSession(in: store, clock: clock)
+        try SessionMutator.logSet(
+            itemID: try #require(first.items.first?.id),
+            weight: Weight(kg: 100), reps: 5, in: &first, clock: clock
+        )
+        try store.saveActiveSession(first)
+
+        let secondRoutine = Fixture.routine(name: "Second", over: [bench])
+        let second = Fixture.activeSession(from: secondRoutine)
+
+        #expect(
+            throws: BurlyStoreError.activeSessionAlreadyInFlight(
+                existingID: first.id, incomingID: second.id
+            )
+        ) {
+            try store.saveActiveSession(second)
+        }
+
+        // Refused whole: no second session, no second journal, and the
+        // running workout is exactly where it was — including the set that
+        // would have been the expensive thing to lose.
+        #expect(try store.session(id: second.id) == nil)
+        #expect(try rowCount(ActiveSessionJournal.self, in: container) == 1)
+        let resumed = try #require(try store.resumableActiveSession())
+        #expect(resumed.id == first.id)
+        #expect(resumed.allSets.count == 1)
+
+        // Finishing the first one clears the way, so the rule is a
+        // sequencing constraint rather than a dead end.
+        try SessionMutator.finish(&first, clock: clock)
+        try store.saveActiveSession(first)
+        try store.saveActiveSession(second)
+        #expect(try store.resumableActiveSession()?.id == second.id)
+    }
+
+    @Test("a stale newest journal does not mask an older valid one: Resume still finds the live session after a cold reopen, and the stale row is cleaned up")
+    func staleNewestJournalDoesNotMaskTheLiveSession() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let clock = TestClock()
+        var liveID = UUID()
+        var finishedID = UUID()
+
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: clock)
+            var (live, bench, _) = try startedSession(in: store, clock: clock)
+            liveID = live.id
+            try SessionMutator.logSet(
+                itemID: try #require(live.items.first?.id),
+                weight: Weight(kg: 100), reps: 5, in: &live, clock: clock
+            )
+            try store.saveActiveSession(live)
+
+            // Session B: finished, and — the masking ingredient — carrying
+            // a journal *newer* than the live session's. The store's own
+            // API can no longer produce this (every path out of `.active`
+            // retires the journal, and two in-flight sessions are refused),
+            // so the row is written the only way it can still appear: from
+            // outside, the way a crashed older build or a bad migration
+            // would leave it.
+            let routine = Fixture.routine(name: "Finished", over: [bench])
+            let finished = Fixture.session(
+                from: routine, startedAt: Fixture.epoch.addingTimeInterval(60)
+            )
+            finishedID = finished.id
+            try store.createSession(finished)
+
+            let container = try BurlyContainer.make(.watch, at: .file(url))
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            context.insert(
+                ActiveSessionJournal(
+                    sessionID: finishedID,
+                    payload: try JSONEncoder().encode(ActiveSessionScaffolding(live)),
+                    // Newer than the live session's journal, so the old
+                    // `fetchLimit = 1` read landed on this one, saw
+                    // `.logged`, and reported "nothing to resume" over a
+                    // workout in progress.
+                    updatedAt: clock.now.addingTimeInterval(600)
+                )
+            )
+            try context.save()
+        }
+
+        let container = try BurlyContainer.make(.watch, at: .file(url))
+        let reopened = SwiftDataStore(container: container)
+        #expect(try rowCount(ActiveSessionJournal.self, in: container) == 2)
+
+        let resumed = try #require(try reopened.resumableActiveSession())
+        #expect(resumed.id == liveID)
+        #expect(resumed.allSets.count == 1)
+        #expect(resumed.isWellFormed)
+
+        // …and the row that was doing the masking is gone, so the next
+        // Resume is a single-row read again.
+        #expect(try rowCount(ActiveSessionJournal.self, in: container) == 1)
+        #expect(try reopened.resumableActiveSession()?.id == liveID)
+    }
+
+    @Test("a journal naming a session that no longer exists is skipped and cleaned rather than answered with nil")
+    func orphanedJournalIsSkippedAndCleaned() throws {
+        let container = try BurlyContainer.make(.watch, at: .inMemory)
+        let store = SwiftDataStore(container: container, clock: TestClock())
+        let (live, _, _) = try startedSession(in: store)
+        try store.saveActiveSession(live)
+
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        context.insert(
+            ActiveSessionJournal(
+                sessionID: UUID(),
+                payload: try JSONEncoder().encode(ActiveSessionScaffolding(live)),
+                updatedAt: Fixture.epoch.addingTimeInterval(3_600)
+            )
+        )
+        try context.save()
+
+        let reader = SwiftDataStore(container: container, clock: TestClock())
+        #expect(try reader.resumableActiveSession()?.id == live.id)
+        #expect(try rowCount(ActiveSessionJournal.self, in: container) == 1)
+    }
+
+    // MARK: - Cold-reopen variants of the mid-session mutations
+    //
+    // The swap / split / reorder assertions above run against the same live
+    // `ModelContext` that performed the write, which cannot distinguish a
+    // durable graph from a coincidentally-agreeing in-memory one (the
+    // rationale CascadeTests already uses for its cold-reopen pairs). These
+    // are the same three mutations, read back through a brand-new container
+    // over the same file.
+
+    @Test("a swap in place survives a disk-backed cold reopen: the stored exerciseID really moved, scaffolding included")
+    func swapInPlaceSurvivesColdReopen() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        var sessionID = UUID()
+        var benchItemID = UUID()
+        var curlID = UUID()
+        var rowID = UUID()
+
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: TestClock())
+            var (active, bench, row) = try startedSession(in: store)
+            let curl = Fixture.exercise(name: "Curl", muscleGroups: [.biceps])
+            try store.createExercise(curl)
+            sessionID = active.id
+            curlID = curl.id
+            rowID = row.id
+            try store.saveActiveSession(active)
+
+            benchItemID = try #require(active.items.first { $0.exerciseID == bench.id }?.id)
+            _ = try SessionMutator.swapExercise(
+                itemID: benchItemID, toExerciseID: curl.id, in: &active
+            )
+            try store.saveActiveSession(active)
+        }
+
+        let reopened = try SwiftDataStore(kind: .watch, at: .file(url))
+        let stored = try #require(try reopened.session(id: sessionID))
+        #expect(stored.items.map(\.exerciseID) == [curlID, rowID])
+        #expect(stored.items.map(\.order) == [0, 1])
+
+        let resumed = try #require(try reopened.resumableActiveSession())
+        // Same item id, so the plan that was seeded from the routine came
+        // through with it rather than being re-invented on the swap.
+        #expect(resumed.plan(benchItemID)?.plannedSetCount == 3)
+        #expect(resumed.plan(benchItemID)?.restOverride == 120)
+        #expect(resumed.isWellFormed)
+    }
+
+    @Test("a swap after logging survives a disk-backed cold reopen with both halves of the split intact")
+    func swapAfterLoggingSurvivesColdReopen() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let clock = TestClock()
+        var sessionID = UUID()
+        var benchItemID = UUID()
+        var newItemID = UUID()
+        var expectedExerciseIDs: [UUID?] = []
+
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: clock)
+            var (active, bench, row) = try startedSession(in: store, clock: clock)
+            let machine = Fixture.exercise(name: "Machine Press")
+            try store.createExercise(machine)
+            sessionID = active.id
+            try store.saveActiveSession(active)
+
+            benchItemID = try #require(active.items.first { $0.exerciseID == bench.id }?.id)
+            try SessionMutator.logSet(
+                itemID: benchItemID, weight: Weight(kg: 80), reps: 5, in: &active, clock: clock
+            )
+            clock.advance(by: 120)
+            newItemID = try SessionMutator.swapExercise(
+                itemID: benchItemID, toExerciseID: machine.id, in: &active
+            )
+            try store.saveActiveSession(active)
+            expectedExerciseIDs = [bench.id, machine.id, row.id]
+        }
+
+        let reopened = try SwiftDataStore(kind: .watch, at: .file(url))
+        let stored = try #require(try reopened.session(id: sessionID))
+        #expect(stored.items.map(\.exerciseID) == expectedExerciseIDs)
+        #expect(stored.items.map(\.order) == [0, 1, 2])
+        // The performed half kept its set on disk; the replacement is empty
+        // on disk. Set attribution is what the split exists to protect.
+        #expect(stored.items[0].sets.map(\.weightKg) == [80])
+        #expect(stored.items[1].sets.isEmpty)
+
+        let resumed = try #require(try reopened.resumableActiveSession())
+        #expect(resumed.plan(benchItemID)?.plannedSetCount == 1)
+        #expect(resumed.plan(newItemID)?.plannedSetCount == 2)
+        #expect(resumed.plan(newItemID)?.restOverride == 120)
+        #expect(resumed.isWellFormed)
+    }
+
+    @Test("add, skip, and reorder survive a disk-backed cold reopen together")
+    func addSkipAndReorderSurviveColdReopen() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        var sessionID = UUID()
+        var curlItemID = UUID()
+        var rowItemID = UUID()
+        var expectedExerciseIDs: [UUID?] = []
+        var unskippedExerciseIDs: [UUID?] = []
+
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: TestClock())
+            var (active, bench, row) = try startedSession(in: store)
+            let curl = Fixture.exercise(name: "Curl", muscleGroups: [.biceps])
+            try store.createExercise(curl)
+            sessionID = active.id
+            try store.saveActiveSession(active)
+
+            curlItemID = try SessionMutator.addExercise(
+                exerciseID: curl.id, plannedSetCount: 4, in: &active
+            )
+            rowItemID = try #require(active.items.first { $0.exerciseID == row.id }?.id)
+            try SessionMutator.skipExercise(itemID: rowItemID, in: &active)
+            try SessionMutator.moveItemUp(itemID: curlItemID, in: &active)
+            try store.saveActiveSession(active)
+            expectedExerciseIDs = [bench.id, curl.id, row.id]
+            unskippedExerciseIDs = [bench.id, curl.id]
+        }
+
+        let reopened = try SwiftDataStore(kind: .watch, at: .file(url))
+        let stored = try #require(try reopened.session(id: sessionID))
+        #expect(stored.items.map(\.exerciseID) == expectedExerciseIDs)
+        #expect(stored.items.map(\.order) == [0, 1, 2])
+
+        let resumed = try #require(try reopened.resumableActiveSession())
+        #expect(resumed.plan(curlItemID)?.plannedSetCount == 4)
+        #expect(resumed.plan(rowItemID)?.isSkipped == true)
+        // Skip is a routing decision, and the routing survives the reopen —
+        // not just the flag.
+        #expect(resumed.unskippedItems.map(\.exerciseID) == unskippedExerciseIDs)
+        #expect(resumed.isWellFormed)
     }
 
     /// Pins a measured SwiftData limitation, not a Burly design choice.

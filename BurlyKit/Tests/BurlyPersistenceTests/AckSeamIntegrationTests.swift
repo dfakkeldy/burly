@@ -5,12 +5,17 @@
 //  container (BurlySync + BurlyPersistence integration test)."
 //
 // This is the one test in the task that has to cross both modules: it
-// drives the ack through BurlySync's `SessionAckReceipt` /
-// `SessionAckApplying` seam, not through `pruneDeliveredSessions` directly
-// (that's WatchWorkingSetTests' job), and it does so disk-backed with a
-// cold reopen — the same rationale CascadeTests uses: a prune that merely
-// orphaned rows in the live context could still look clean without a
+// drives the ack through BurlySync's `SessionDigestReceipt` /
+// `SessionDigestApplying` seam, not through `pruneDeliveredSessions`
+// directly (that's WatchWorkingSetTests' job), and it does so disk-backed
+// with a cold reopen — the same rationale CascadeTests uses: a prune that
+// merely orphaned rows in the live context could still look clean without a
 // fresh container over the same file.
+//
+// The seam carries the whole §5 `digest` now, not just the ids (m1-06
+// review round D), so these tests hand it both halves — that is the shape
+// M4's courier will produce, and the shape that cannot commit a prune
+// without the entries it arrived with.
 
 import Foundation
 import SwiftData
@@ -35,23 +40,37 @@ struct AckSeamIntegrationTests {
         let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
         let routine = Fixture.routine(over: [bench, row])
 
-        var loggedOne = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        loggedOne.state = .logged
-        var loggedTwo = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(3_600))
-        loggedTwo.state = .logged
-        let active = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(7_200))
-        // defaults to .active
+        let emptyLoggedOne = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        let loggedOneSet = SetRecordData(
+            order: 0, weight: Weight(kg: 80), reps: 5, completedAt: Fixture.epoch
+        )
+        let loggedOneSetID = loggedOneSet.id
+        let loggedOne = emptyLoggedOne.addingSet(
+            loggedOneSet, toItem: try #require(emptyLoggedOne.items.first?.id)
+        )
+        let loggedTwo = Fixture.session(
+            from: routine, startedAt: Fixture.epoch.addingTimeInterval(3_600)
+        )
+        var active = Fixture.activeSession(
+            from: routine, startedAt: Fixture.epoch.addingTimeInterval(7_200)
+        )
+        let activeItemID = try #require(active.items.first?.id)
 
-        let digest = ExerciseLastPerformanceData(
+        // The digest half of the payload the seam now carries: an entry the
+        // prune must leave alone, and a *second* entry the same apply is
+        // responsible for landing.
+        let seededDigest = ExerciseLastPerformanceData(
             exerciseID: bench.id,
             performedAt: Fixture.epoch,
             sets: [SetSnapshot(weight: Weight(kg: 80), reps: 5)]
         )
+        let arrivingDigest = ExerciseLastPerformanceData(
+            exerciseID: row.id,
+            performedAt: Fixture.epoch.addingTimeInterval(3_600),
+            sets: [SetSnapshot(weight: Weight(kg: 70), reps: 10)]
+        )
 
-        var loggedOneSetID: UUID = UUID()
-        var activeItemID: UUID = UUID()
-
-        // ---- write the working set, apply the ack, let the writer go out of scope ----
+        // ---- write the working set, apply the digest, let the writer go out of scope ----
         do {
             // Fixed store clock so the "routines are untouched by the
             // prune" assertion below can compare whole `RoutineData`
@@ -63,31 +82,31 @@ struct AckSeamIntegrationTests {
             try store.createRoutine(routine)
             try store.createSession(loggedOne)
             try store.createSession(loggedTwo)
-            try store.createSession(active)
-            try store.upsertLastPerformance(digest)
+            try store.upsertLastPerformance(seededDigest)
 
-            let firstItemID = try #require(loggedOne.items.first?.id)
-            let loggedOneSet = SetRecordData(
-                order: 0, weight: Weight(kg: 80), reps: 5, completedAt: Fixture.epoch
+            try SessionMutator.logSet(
+                itemID: activeItemID,
+                weight: Weight(kg: 60),
+                reps: 8,
+                in: &active,
+                clock: TestClock(Fixture.epoch)
             )
-            loggedOneSetID = loggedOneSet.id
-            try store.logSet(loggedOneSet, toSessionItem: firstItemID)
-
-            activeItemID = try #require(active.items.first?.id)
-            try store.logSet(
-                SetRecordData(order: 0, weight: Weight(kg: 60), reps: 8, completedAt: Fixture.epoch),
-                toSessionItem: activeItemID
-            )
+            try store.saveActiveSession(active)
 
             #expect(try store.loggedSessionsAwaitingAck().count == 2)
 
-            // Drive the prune through the BurlySync seam, not the store API
-            // directly — this is the integration point the gate names.
-            // `active.id` rides along in the receipt too, proving the
-            // .active refusal holds even when a transport (incorrectly)
-            // includes it.
-            let sync: SessionAckApplying = store
-            try sync.apply(SessionAckReceipt(sessionIDs: [loggedOne.id, loggedTwo.id, active.id]))
+            // Drive the whole digest through the BurlySync seam, not the
+            // store API directly — this is the integration point the gate
+            // names. `active.id` rides along in the receipt too, proving
+            // the .active refusal holds even when a transport
+            // (incorrectly) includes it.
+            let sync: SessionDigestApplying = store
+            try sync.apply(
+                SessionDigestReceipt(
+                    lastPerformance: [arrivingDigest],
+                    ackedSessionIDs: [loggedOne.id, loggedTwo.id, active.id]
+                )
+            )
         }
 
         // ---- cold open: a brand-new container over the same file ----
@@ -126,7 +145,14 @@ struct AckSeamIntegrationTests {
         #expect(try rowCount(Routine.self, in: container) == 1)
         #expect(try reopened.routine(id: routine.id) == routine)
         let survivingDigest = try #require(try reopened.lastPerformance(exerciseID: bench.id))
-        #expect(survivingDigest == digest)
+        #expect(survivingDigest == seededDigest)
+
+        // Both halves of the receipt landed in the same transaction: the
+        // entry that arrived with the ack is durable across the cold reopen
+        // alongside the prune it travelled with. A seam that could only
+        // carry ids would have committed the prune with nothing here.
+        #expect(try reopened.lastPerformance(exerciseID: row.id) == arrivingDigest)
+        #expect(try rowCount(ExerciseLastPerformance.self, in: container) == 2)
     }
 
     // MARK: - Replay, duplicate, and ordering idempotency (m1-03 review)
@@ -139,7 +165,7 @@ struct AckSeamIntegrationTests {
     // retries, coalesces, or reorders an ack must not be able to regress
     // this without a red test.
 
-    @Test("applying the exact same SessionAckReceipt twice is a no-op the second time: no throw, no additional deletions, store state identical")
+    @Test("applying the exact same SessionDigestReceipt twice is a no-op the second time: no throw, no additional deletions, store state identical")
     func replayingTheSameReceiptIsANoOp() throws {
         let store = try makeStore(.watch)
         let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
@@ -147,16 +173,17 @@ struct AckSeamIntegrationTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        var logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        logged.state = .logged
-        let survivor = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
-        // `survivor` stays `.active` — a control that would catch a replay
+        let logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        // `survivor` is `.active` — a control that would catch a replay
         // that (incorrectly) re-walks and disturbs unrelated rows.
+        let survivor = Fixture.activeSession(
+            from: routine, startedAt: Fixture.epoch.addingTimeInterval(60)
+        )
         try store.createSession(logged)
-        try store.createSession(survivor)
+        try store.saveActiveSession(survivor)
 
-        let sync: SessionAckApplying = store
-        let receipt = SessionAckReceipt(sessionIDs: [logged.id])
+        let sync: SessionDigestApplying = store
+        let receipt = SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [logged.id])
 
         try sync.apply(receipt)
         #expect(try store.session(id: logged.id) == nil)
@@ -181,19 +208,22 @@ struct AckSeamIntegrationTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        var target = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        target.state = .logged
-        var other = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
-        other.state = .logged
+        let target = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        let other = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
         try store.createSession(target)
         try store.createSession(other)
 
-        let sync: SessionAckApplying = store
+        let sync: SessionDigestApplying = store
         // The duplicate entries name a session that, after the first
         // deletion, no longer exists — the second and third occurrences
         // must fall through the same "unknown id" `continue` as a genuine
         // miss, not throw or double-delete.
-        try sync.apply(SessionAckReceipt(sessionIDs: [target.id, target.id, target.id]))
+        try sync.apply(
+            SessionDigestReceipt(
+                lastPerformance: [],
+                ackedSessionIDs: [target.id, target.id, target.id]
+            )
+        )
 
         #expect(try store.session(id: target.id) == nil)
         #expect(try store.session(id: other.id) != nil)
@@ -208,15 +238,18 @@ struct AckSeamIntegrationTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        var first = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        first.state = .logged
-        var second = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
-        second.state = .logged
+        let first = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        let second = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
         try store.createSession(first)
         try store.createSession(second)
 
-        let sync: SessionAckApplying = store
-        try sync.apply(SessionAckReceipt(sessionIDs: [UUID(), first.id, second.id]))
+        let sync: SessionDigestApplying = store
+        try sync.apply(
+            SessionDigestReceipt(
+                lastPerformance: [],
+                ackedSessionIDs: [UUID(), first.id, second.id]
+            )
+        )
 
         #expect(try store.session(id: first.id) == nil)
         #expect(try store.session(id: second.id) == nil)
@@ -238,27 +271,27 @@ struct AckSeamIntegrationTests {
             let store = try makeStore(.watch)
             try store.createExercise(squat)
             try store.createRoutine(routine)
-            var a = Fixture.session(id: idA, from: routine, startedAt: Fixture.epoch)
-            a.state = .logged
-            var b = Fixture.session(id: idB, from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
-            b.state = .logged
-            let survivor = Fixture.session(
-                id: survivorID, from: routine, startedAt: Fixture.epoch.addingTimeInterval(120)
-            )
-            // `survivor` stays `.active`.
+            let a = Fixture.session(id: idA, from: routine, startedAt: Fixture.epoch)
+            let b = Fixture.session(id: idB, from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
             try store.createSession(a)
             try store.createSession(b)
-            try store.createSession(survivor)
+            // `survivor` is `.active`, so it goes in through the one path
+            // that can create one. Its id is fixed; its item ids are not
+            // (see the comment on the comparison below).
+            let survivor = Fixture.activeSession(
+                id: survivorID, from: routine, startedAt: Fixture.epoch.addingTimeInterval(120)
+            )
+            try store.saveActiveSession(survivor)
             return store
         }
 
         let storeOne = try seededStore()
         let storeTwo = try seededStore()
-        let syncOne: SessionAckApplying = storeOne
-        let syncTwo: SessionAckApplying = storeTwo
+        let syncOne: SessionDigestApplying = storeOne
+        let syncTwo: SessionDigestApplying = storeTwo
 
-        try syncOne.apply(SessionAckReceipt(sessionIDs: [idA, idB]))
-        try syncTwo.apply(SessionAckReceipt(sessionIDs: [idB, idA]))
+        try syncOne.apply(SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [idA, idB]))
+        try syncTwo.apply(SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [idB, idA]))
 
         #expect(try storeOne.session(id: idA) == nil)
         #expect(try storeOne.session(id: idB) == nil)
