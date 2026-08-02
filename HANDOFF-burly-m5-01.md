@@ -303,3 +303,30 @@ The canonical checkout (`~/Developer/burly`) was untouched. Other agents'
 worktrees were not disturbed. Not pushed — the dispatcher runs the
 simulator acceptance.
 
+## 2026-08-02 — Fix round 3: reassigned residual-fix pass, 4 remaining findings
+
+Done: closed the 4 items left open after round 2's "6 of 8" (bounded
+queries: `hasRoutines()`/`loggedSessionCount()` now use a real
+`fetchLimit = 1` predicate and two `fetchCount`s instead of round 2's
+fetch-everything-then-filter, which round 2's own comment mislabeled
+"predicate-free on purpose"; `PhoneDemoSeed.requestedStore()` fails closed
+on an unrecognized scenario value, not only a recognized-but-broken one;
+fixed the doubled-backslash interpolation bug in `StatsTabView`'s count
+row and in 3 UI-test diagnostic messages). Added a few-hundred-row scale
+test to `ShellQueryTests`, `testUnrecognizedScenarioFailsClosedToStorageError`,
+and strengthened `testPopulatedScenarioRendersRealRows` to assert the
+rendered count text. `BurlyKit swift test` (435 tests),
+`BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests`, and
+`xcodebuild build-for-testing -scheme BurlyPhone` all green. Commit
+637ad86, not pushed.
+
+Next: dispatcher runs simulator acceptance on `task/burly-m5-01` @ 637ad86.
+
+Resume:
+```
+Worktree ~/Developer/worktrees/burly-m5-01, branch task/burly-m5-01 @ 637ad86
+(not pushed). If sim acceptance fails, check
+testUnrecognizedScenarioFailsClosedToStorageError and
+testPopulatedScenarioRendersRealRows first — both are new this round.
+```
+
