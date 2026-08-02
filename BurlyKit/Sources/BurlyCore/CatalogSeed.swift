@@ -17,6 +17,20 @@
 // a new seedVersion (additive rows only; never mutate a shipped id's name or
 // muscleGroups in place). Existing UUIDs must never be changed or reused
 // regardless of which side of this line a change falls on.
+//
+// KNOWN ALIAS TO RE-VERIFY (task m7-03): "Pullover (Cable)" maps to
+// Straight-Arm Pulldown below. That pairing was a judgment call made
+// without a real Hevy export in hand (m7-01, 2026-08-01) - Hevy may export
+// cable pullovers as a distinct movement. Left as-is pending m7-03's
+// comparison against Dan's actual export; correcting it later is a
+// seedVersion bump (additive-only rule above), not an in-place edit.
+//
+// CASE SENSITIVITY (spec section 8): exerciseID(forHevyAlias:) and
+// exercise(forHevyAlias:) match case-insensitively - a Hevy export's exact
+// capitalization of an exercise title is not something Burly controls or
+// can rely on. `normalizedHevyAliases` below is a lowercased mirror of
+// `hevyAliases`, built once at construction, so every lookup normalizes
+// both sides without re-lowercasing the whole table per call.
 
 import Foundation
 
@@ -45,6 +59,15 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
     /// UUIDs. It versions in the same payload as the exercise catalog.
     public let hevyAliases: [String: UUID]
 
+    /// Lowercased mirror of `hevyAliases`, computed once here rather than
+    /// per lookup (see file doc, "CASE SENSITIVITY"). If two authored
+    /// aliases ever collided case-insensitively, the first one encountered
+    /// wins rather than crashing — `hevyAliases` itself has no such
+    /// collision today (enforced only informally; there is 103-for-103
+    /// alias/exercise parity as of seedVersion 1), but a lookup table must
+    /// never trap on data that `validate()` doesn't itself reject.
+    private let normalizedHevyAliases: [String: UUID]
+
     public init(
         seedVersion: Int,
         exercises: [CatalogExercise],
@@ -53,6 +76,10 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
         self.seedVersion = seedVersion
         self.exercises = exercises
         self.hevyAliases = hevyAliases
+        self.normalizedHevyAliases = Dictionary(
+            hevyAliases.map { (key, value) in (key.lowercased(), value) },
+            uniquingKeysWith: { first, _ in first }
+        )
         try validate()
     }
 
@@ -80,8 +107,11 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
         return try Self(jsonData: Data(contentsOf: url))
     }
 
+    /// Case-insensitive lookup (spec §8): normalizes `alias` the same way
+    /// `normalizedHevyAliases` was built, so callers never need to worry
+    /// about matching a Hevy export's exact capitalization.
     public func exerciseID(forHevyAlias alias: String) -> UUID? {
-        hevyAliases[alias]
+        normalizedHevyAliases[alias.lowercased()]
     }
 
     public func exercise(forHevyAlias alias: String) -> CatalogExercise? {

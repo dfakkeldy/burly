@@ -101,4 +101,15 @@ struct CatalogSeedTests {
         #expect(seed.exercise(forHevyAlias: "Squat (Barbell)")?.name == "Back Squat")
         #expect(seed.exercise(forHevyAlias: "Deadlift (Barbell)")?.name == "Conventional Deadlift")
     }
+
+    @Test("Hevy alias lookup is case-insensitive on both sides (spec §8)")
+    func hevyAliasLookupIsCaseInsensitive() throws {
+        let seed = try CatalogSeed.loadBundled()
+        let exactID = try #require(seed.exerciseID(forHevyAlias: "Bench Press (Barbell)"))
+
+        #expect(seed.exerciseID(forHevyAlias: "BENCH PRESS (BARBELL)") == exactID)
+        #expect(seed.exerciseID(forHevyAlias: "bench press (barbell)") == exactID)
+        #expect(seed.exerciseID(forHevyAlias: "Bench PRESS (barbell)") == exactID)
+        #expect(seed.exercise(forHevyAlias: "bench press (barbell)")?.name == "Barbell Bench Press")
+    }
 }
