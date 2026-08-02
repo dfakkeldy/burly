@@ -8,19 +8,32 @@ import SwiftUI
 
 struct WaitingForPhoneView: View {
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.system(size: 30))
-                .foregroundStyle(.secondary)
-            Text("Waiting for iPhone")
-                .font(.headline)
-                .multilineTextAlignment(.center)
-            Text("Open Burly on your iPhone to sync your routines.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        // Scroll-capable so large Dynamic Type can't clip the instructions
+        // unreachably (m2-01 review finding 6.1).
+        ScrollView {
+            VStack(spacing: 12) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.secondary)
+                    // Decorative -- the headline right below it already says
+                    // the same thing in words (m2-01 review finding 6.3).
+                    .accessibilityHidden(true)
+                Text("Waiting for iPhone")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    // Stable identifier for UI tests, alongside the literal
+                    // copy assertion -- the wording itself is the §5
+                    // contract here, so BurlyWatchUITests keeps both
+                    // (m2-01 review finding 6.2).
+                    .accessibilityIdentifier("waitingForPhoneView.headline")
+                Text("Open Burly on your iPhone to sync your routines.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
         }
-        .padding()
         .navigationTitle("Burly")
     }
 }

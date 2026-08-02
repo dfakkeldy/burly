@@ -15,17 +15,35 @@ struct RoutineListView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(row.name)
                             .font(.headline)
+                            // A `staticTexts` query is the proven-reliable
+                            // way to hit this row from BurlyWatchUITests
+                            // (tapping it selects the whole NavigationLink);
+                            // the identifier just decouples that selection
+                            // from the row's exact rendered text (m2-01
+                            // review finding 6.2).
+                            .accessibilityIdentifier("routineRow.\(row.name).name")
                         Text(row.lastDoneText)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            // Scoped by the routine's own name rather than
+                            // its rendered wording (m2-01 review finding
+                            // 6.2): relative-date phrasing like "3 days
+                            // ago" isn't the contract, so tests select this
+                            // row's last-done text without matching it.
+                            .accessibilityIdentifier("routineRow.\(row.name).lastDone")
                     }
                     .padding(.vertical, 4)
                 }
+                // Stable per-row identifier (m2-01 review finding 6.2):
+                // decouples row selection from the row's visible text, so a
+                // copy/localization change can't break navigation tests.
+                .accessibilityIdentifier("routineRow.\(row.name)")
             }
 
             NavigationLink(value: HomeRoute.emptySession) {
                 Label("Empty session", systemImage: "plus.circle")
             }
+            .accessibilityIdentifier("emptySessionRow")
         }
         .navigationTitle("Burly")
     }

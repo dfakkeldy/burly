@@ -29,21 +29,55 @@ enum WatchDemoSeed {
         /// A guaranteed-empty, isolated store -- the §5 fresh-install case,
         /// independent of whatever the on-device default store holds.
         case empty
+        /// Deliberately fails during construction (m2-01 review finding
+        /// 2.1). Exists so BurlyWatchUITests can drive the fail-closed path
+        /// end to end: a recognized scenario whose seed cannot be built
+        /// must surface as an error state, not fall through to the
+        /// on-device store and not render a silently empty/sparse fixture.
+        case brokenSeed
+    }
+
+    /// Thrown by a recognized scenario's seed construction. Never converted
+    /// to `nil` by `requestedStore()` -- see its doc.
+    enum SeedError: Error, Equatable {
+        /// `.brokenSeed` was requested; this scenario exists only to be
+        /// unbuildable.
+        case intentionallyBroken
+        /// The bundled catalog no longer contains an exercise the
+        /// `.routines` fixture requires by name (m2-01 review finding 2.2).
+        /// A renamed or removed catalog exercise is a fixture/catalog
+        /// contract violation, not "no routines yet" -- it must not render
+        /// as the ordinary empty-store waiting state.
+        case catalogMissingExercise(name: String)
     }
 
     /// `nil` for any launch that isn't one of these scenarios, so the
     /// caller falls through to the real on-device store.
-    static func requestedStore() -> BurlyStore? {
+    ///
+    /// Once a scenario IS recognized, this fails **closed**: seed
+    /// construction or seeding errors come back as `.failure`, never as
+    /// `nil` (m2-01 review finding 2.1). The old `try?` here turned a
+    /// broken fixture into "no scenario requested," which the caller then
+    /// silently resolved against the real on-device store -- exactly the
+    /// leak this type exists to prevent.
+    static func requestedStore() -> Result<BurlyStore, Error>? {
         guard
             let raw = ProcessInfo.processInfo.environment[environmentKey],
             let scenario = Scenario(rawValue: raw)
         else {
             return nil
         }
-        return try? makeStore(for: scenario)
+        do {
+            return .success(try makeStore(for: scenario))
+        } catch {
+            return .failure(error)
+        }
     }
 
     private static func makeStore(for scenario: Scenario) throws -> SwiftDataStore {
+        guard scenario != .brokenSeed else {
+            throw SeedError.intentionallyBroken
+        }
         let store = try SwiftDataStore(kind: .watch, at: .inMemory)
         if scenario == .routines {
             try seedRoutines(into: store)
@@ -53,17 +87,20 @@ enum WatchDemoSeed {
 
     private static func seedRoutines(into store: SwiftDataStore) throws {
         let seed = try SeedLoader.applyBundled(to: store)
-        func exerciseID(named name: String) -> UUID? {
-            seed.exercises.first { $0.name == name }?.id
+        func exerciseID(named name: String) throws -> UUID {
+            guard let id = seed.exercises.first(where: { $0.name == name })?.id else {
+                // Catalog content changed: report it rather than leaving the
+                // demo sparse (m2-01 review finding 2.2) -- a silently
+                // routine-less store here renders as "Waiting for iPhone,"
+                // indistinguishable from a real fresh install.
+                throw SeedError.catalogMissingExercise(name: name)
+            }
+            return id
         }
 
-        guard
-            let squatID = exerciseID(named: "Back Squat"),
-            let benchID = exerciseID(named: "Barbell Bench Press"),
-            let pullUpID = exerciseID(named: "Pull-Up")
-        else {
-            return // Catalog content changed; leave the demo sparse rather than crash.
-        }
+        let squatID = try exerciseID(named: "Back Squat")
+        let benchID = try exerciseID(named: "Barbell Bench Press")
+        let pullUpID = try exerciseID(named: "Pull-Up")
 
         let legDay = RoutineData(
             name: "Leg Day",

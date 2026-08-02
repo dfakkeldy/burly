@@ -10,6 +10,12 @@ import BurlyCore
 import BurlyPersistence
 import Observation
 
+/// Confines the store read and the observed `state` to the main actor
+/// (m2-01 review finding 3.2) -- today's only caller is SwiftUI-bound
+/// anyway, but encoding that as a compiler-checked fact means a later
+/// sync/background callback (M4's transport) cannot call `load()` from
+/// off-main without an explicit, visible hop.
+@MainActor
 @Observable
 final class WatchHomeViewModel {
     enum LoadState: Equatable {

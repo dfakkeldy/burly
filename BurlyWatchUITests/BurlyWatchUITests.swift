@@ -5,9 +5,14 @@ import XCTest
 /// via `launchEnvironment` scenarios that BurlyWatch's WatchDemoSeed (a
 /// DEBUG-only seam, since BurlySync's snapshot/digest transport does not
 /// exist yet) turns into a deterministic in-memory store. The environment
-/// key and its two values are matched literally against
+/// key and its three values are matched literally against
 /// BurlyWatch/WatchDemoSeed.swift -- this target runs out-of-process and
 /// has no other way to reach into the app under test.
+///
+/// Selection goes through the stable `accessibilityIdentifier`s BurlyWatch's
+/// views expose, not through visible copy (m2-01 review finding 6.2) --
+/// except "Waiting for iPhone," where the wording itself is the §5 contract,
+/// so it is asserted both ways.
 final class BurlyWatchUITests: XCTestCase {
 
     private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
@@ -22,11 +27,14 @@ final class BurlyWatchUITests: XCTestCase {
         app.launchEnvironment[Self.scenarioKey] = "empty"
         app.launch()
 
-        let title = app.staticTexts["Waiting for iPhone"]
+        let title = app.staticTexts["waitingForPhoneView.headline"]
         XCTAssertTrue(
             title.waitForExistence(timeout: 15),
             "Expected the waiting-for-iPhone state on an empty watch store"
         )
+        // The wording itself is the §5 contract here, so it stays asserted
+        // alongside the identifier (m2-01 review finding 6.2).
+        XCTAssertEqual(title.label, "Waiting for iPhone")
 
         attachScreenshot(from: app, name: "BurlyWatch-waitingForPhone")
     }
@@ -39,29 +47,75 @@ final class BurlyWatchUITests: XCTestCase {
         app.launchEnvironment[Self.scenarioKey] = "routines"
         app.launch()
 
-        let legDay = app.staticTexts["Leg Day"]
+        let legDay = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDay.waitForExistence(timeout: 15), "Expected seeded routine 'Leg Day' in the list")
-        XCTAssertTrue(app.staticTexts["Push/Pull"].exists, "Expected seeded routine 'Push/Pull' in the list")
         XCTAssertTrue(
-            app.staticTexts["Last done 3 days ago"].exists,
-            "Expected the seeded logged session's last-done text"
+            app.staticTexts["routineRow.Push/Pull.name"].exists,
+            "Expected seeded routine 'Push/Pull' in the list"
+        )
+        // Existence only: relative-date phrasing ("Last done N days ago")
+        // is not the contract, so this doesn't couple to its exact wording
+        // (m2-01 review finding 6.2).
+        XCTAssertTrue(
+            app.staticTexts["routineRow.Leg Day.lastDone"].exists,
+            "Expected the seeded logged session's last-done row"
         )
         XCTAssertTrue(
-            app.staticTexts["Never done"].exists,
-            "Expected the never-logged routine's fallback last-done text"
+            app.staticTexts["routineRow.Push/Pull.lastDone"].exists,
+            "Expected the never-logged routine's last-done row"
         )
         XCTAssertTrue(
-            app.staticTexts["Empty session"].exists,
+            anyElement(app, identifier: "emptySessionRow").exists,
             "Expected the §2 list-end 'Empty session' secondary action"
         )
 
         attachScreenshot(from: app, name: "BurlyWatch-routineList")
 
         legDay.tap()
-        let stubHeading = app.staticTexts["Starting Leg Day"]
+        let stubHeading = app.staticTexts["sessionStartStubView.heading"]
         XCTAssertTrue(stubHeading.waitForExistence(timeout: 5), "Expected Start to navigate to the session stub")
+        // Not asserting the full composed sentence ("Starting Leg Day"): the
+        // wording isn't the contract (m2-01 review finding 6.2), but the
+        // correct routine reaching the stub is, so it's checked by
+        // containment instead of an exact match.
+        XCTAssertTrue(
+            stubHeading.label.contains("Leg Day"),
+            "Expected the session stub to name the routine that was started"
+        )
 
         attachScreenshot(from: app, name: "BurlyWatch-startStub")
+    }
+
+    /// m2-01 review findings 2.1/2.2: once a recognized scenario is
+    /// requested, a seed that fails to build must fail *closed* -- surfaced
+    /// as an error state, never silently falling through to the real
+    /// on-device store and never rendering as an ordinary empty/waiting
+    /// state. `WatchDemoSeed.Scenario.brokenSeed` exists solely to exercise
+    /// this path deterministically.
+    func testBrokenSeedScenarioFailsClosedToErrorState() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "brokenSeed"
+        app.launch()
+
+        let heading = app.staticTexts["storeUnavailableView.heading"]
+        XCTAssertTrue(
+            heading.waitForExistence(timeout: 15),
+            "Expected a store-unavailable error state when the requested seed scenario fails to build"
+        )
+        XCTAssertFalse(
+            app.staticTexts["waitingForPhoneView.headline"].exists,
+            "A failed seed must not be indistinguishable from an empty store's waiting-for-iPhone state"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-brokenSeed")
+    }
+
+    /// Looks a stable identifier up regardless of the accessibility element
+    /// type SwiftUI/watchOS happens to expose it as (`.cell`, `.button`,
+    /// `.other`, ...) -- used for containers like the "Empty session" row,
+    /// where that type isn't part of the contract either.
+    private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     private func attachScreenshot(from app: XCUIApplication, name: String) {
