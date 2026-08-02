@@ -282,6 +282,11 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
 /// Recording from inside the stage is what distinguishes "the ladder ran"
 /// from "SwiftData coped".
 struct SpikeMigrationTrace: Sendable, Equatable {
+    /// How many times the v1 → v2 stage has been entered. A migrated store
+    /// must record its new version, so opening it again runs no stage; if
+    /// this ever exceeds 1 the store is being re-migrated on every open,
+    /// and anything written *after* the first migration is at risk.
+    var stageRuns = 0
     /// Set by `willMigrate`, which by SwiftData's contract can see only the
     /// *old* shape — so a non-nil value here is proof v1 is still a
     /// nameable, fetchable schema at migration time.
@@ -313,7 +318,10 @@ enum MigrationSpikePlan: SchemaMigrationPlan {
         toVersion: MigrationSpikeSchemaV2.self,
         willMigrate: { context in
             let count = try context.fetchCount(FetchDescriptor<BurlySchemaV1.SetRecord>())
-            spikeMigrationTrace.withLock { $0.setRecordsSeenAsV1 = count }
+            spikeMigrationTrace.withLock {
+                $0.stageRuns += 1
+                $0.setRecordsSeenAsV1 = count
+            }
         },
         didMigrate: { context in
             let count = try context.fetchCount(

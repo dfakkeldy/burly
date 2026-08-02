@@ -206,69 +206,104 @@ struct MigrationPlanTests {
         // 2. Open that same file through a ladder that *does* have a
         //    v1 → v2 stage. If v1 were not a frozen, nameable snapshot this
         //    is the step that could not be written at all.
+        //
+        //    Everything that container vends — the container itself, its
+        //    contexts, and every model object fetched from them — is
+        //    confined to the scope below and gone by the end of it. Step 4
+        //    has to be a *cold* open to mean anything, and a live writer
+        //    still owning the file turns "does a new container see the
+        //    write?" into a question about two concurrent connections
+        //    rather than about what is on disk. `autoreleasepool` is what
+        //    makes that teardown deterministic rather than a matter of when
+        //    the enclosing pool happens to drain: the objects underneath
+        //    SwiftData are Objective-C.
         spikeMigrationTrace.withLock { $0 = SpikeMigrationTrace() }
-        let migrated = try openThroughSpikeLadder(.watch, at: url)
-        let context = ModelContext(migrated)
+        try autoreleasepool {
+            let migrated = try openThroughSpikeLadder(.watch, at: url)
+            let context = ModelContext(migrated)
 
-        // The stage really ran, and each half saw the shape SwiftData
-        // promises it: v1 named from `willMigrate`, v2 from `didMigrate`.
-        // Both are only writable because each version owns its model types.
-        #expect(spikeMigrationTrace.withLock(\.setRecordsSeenAsV1) == 1)
-        #expect(spikeMigrationTrace.withLock(\.setRecordsSeenAsV2) == 1)
+            // The stage really ran, exactly once, and each half saw the
+            // shape SwiftData promises it: v1 named from `willMigrate`, v2
+            // from `didMigrate`. Both are only writable because each
+            // version owns its model types.
+            #expect(spikeMigrationTrace.withLock(\.stageRuns) == 1)
+            #expect(spikeMigrationTrace.withLock(\.setRecordsSeenAsV1) == 1)
+            #expect(spikeMigrationTrace.withLock(\.setRecordsSeenAsV2) == 1)
 
-        // Row counts: nothing dropped, nothing duplicated.
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Exercise>()) == 2)
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Routine>()) == 1)
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.RoutineItem>()) == 2)
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Session>()) == 1)
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.SessionItem>()) == 2)
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()) == 1)
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ActiveSessionJournal>()) == 1)
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ExerciseLastPerformance>()) == 1)
-        // Never seeded in this test — the entity migrates even so.
-        #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.CatalogSeedState>()) == 0)
+            // Row counts: nothing dropped, nothing duplicated.
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Exercise>()) == 2)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Routine>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.RoutineItem>()) == 2)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Session>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.SessionItem>()) == 2)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ActiveSessionJournal>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ExerciseLastPerformance>()) == 1)
+            // Never seeded in this test — the entity migrates even so.
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.CatalogSeedState>()) == 0)
 
-        // Spot values: the set row came through byte-for-byte, including
-        // the kg canonicalisation (§1 acceptance #4)…
-        let set = try #require(
-            try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()).first
-        )
-        #expect(set.weightKg == 102.5)
-        #expect(set.reps == 5)
-        #expect(set.completedAt == Fixture.epoch)
-        #expect(set.isWarmup == false)
-        // …the new v2 column is present and empty on migrated rows…
-        #expect(set.rpe == nil)
-        // …and the relationships still resolve across the migration.
-        #expect(set.sessionItem?.session?.id == sessionID)
-        #expect(set.sessionItem?.exercise?.name == "Bench Press")
+            // Spot values: the set row came through byte-for-byte, including
+            // the kg canonicalisation (§1 acceptance #4)…
+            let set = try #require(
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()).first
+            )
+            #expect(set.weightKg == 102.5)
+            #expect(set.reps == 5)
+            #expect(set.completedAt == Fixture.epoch)
+            #expect(set.isWarmup == false)
+            // …the new v2 column is present and empty on migrated rows…
+            #expect(set.rpe == nil)
+            // …and the relationships still resolve across the migration.
+            #expect(set.sessionItem?.session?.id == sessionID)
+            #expect(set.sessionItem?.exercise?.name == "Bench Press")
 
-        let digest = try #require(
-            try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.ExerciseLastPerformance>()).first
-        )
-        #expect(digest.exerciseID == bench.id)
-        #expect(digest.sets.map(\.weightKg) == [100])
+            let digest = try #require(
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.ExerciseLastPerformance>()).first
+            )
+            #expect(digest.exerciseID == bench.id)
+            #expect(digest.sets.map(\.weightKg) == [100])
 
-        let journal = try #require(
-            try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.ActiveSessionJournal>()).first
-        )
-        #expect(journal.sessionID == sessionID)
-        let scaffolding = try JSONDecoder().decode(
-            ActiveSessionScaffolding.self,
-            from: journal.payload
-        )
-        #expect(scaffolding.restTimer?.duration == 90)
+            let journal = try #require(
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.ActiveSessionJournal>()).first
+            )
+            #expect(journal.sessionID == sessionID)
+            let scaffolding = try JSONDecoder().decode(
+                ActiveSessionScaffolding.self,
+                from: journal.payload
+            )
+            #expect(scaffolding.restTimer?.duration == 90)
 
-        // 3. The migrated store is a working v2 store, not just a readable
-        //    one: write the new column and prove it survives a reopen.
-        set.rpe = 8.5
-        try context.save()
+            // 3. The migrated store is a working v2 store, not just a
+            //    readable one: write the new column, commit it, and prove
+            //    the commit left the context — a second context on the same
+            //    container has to see it, or the value is still only
+            //    pending changes in `context`.
+            set.rpe = 8.5
+            try context.save()
 
-        let reopened = ModelContext(try openThroughSpikeLadder(.watch, at: url))
-        let reread = try #require(
-            try reopened.fetch(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()).first
-        )
-        #expect(reread.rpe == 8.5)
-        #expect(reread.weightKg == 102.5)
+            let sameContainer = ModelContext(migrated)
+            #expect(
+                try sameContainer.fetch(
+                    FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()
+                ).first?.rpe == 8.5
+            )
+        }
+
+        // 4. Cold open: new container, new coordinator, same file, nothing
+        //    left alive from step 3. This is the durability claim.
+        try autoreleasepool {
+            let reopened = ModelContext(try openThroughSpikeLadder(.watch, at: url))
+            let reread = try #require(
+                try reopened.fetch(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()).first
+            )
+            #expect(reread.rpe == 8.5)
+            #expect(reread.weightKg == 102.5)
+        }
+
+        // Reopening a store that is already at v2 runs no stage — the
+        // migration happened once, not once per open. If this ever reads 2,
+        // the store is not recording its version and a *re-run* migration,
+        // not the save, is what discarded the post-migration write.
+        #expect(spikeMigrationTrace.withLock(\.stageRuns) == 1)
     }
 }
