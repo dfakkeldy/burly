@@ -307,11 +307,13 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Biceps · Forearms"].exists)
 
-        // The toolbar's Done button is unreachable while the search field
-        // still has keyboard focus (SwiftUI hides the regular toolbar
-        // during active search editing). Submit/dismiss via the keyboard's
-        // own "search" return key before tapping Done.
-        app.keyboards.buttons["search"].tap()
+        // The toolbar's Done button is unreachable while search is active:
+        // SwiftUI replaces the whole toolbar (Done + Custom exercise) with
+        // the search field's own controls for as long as search stays
+        // presented -- dismissing the keyboard alone isn't enough. Cancel
+        // search via its own control (accessibility label "close", per the
+        // live accessibility tree) to restore the normal toolbar first.
+        app.buttons["close"].tap()
         XCTAssertTrue(app.buttons["catalog.doneButton"].waitForExistence(timeout: 5))
         app.buttons["catalog.doneButton"].tap()
 
