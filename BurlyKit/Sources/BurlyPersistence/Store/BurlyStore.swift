@@ -268,6 +268,23 @@ public protocol BurlyStore: AnyObject {
     /// Watch activity has no way to move the number. See
     /// `applyPhoneEdit(_:)`.
     ///
+    /// That makes the rule **transitive**, not merely local (m1-06 review
+    /// round E). `createSession` refuses `.active`, and this method refuses
+    /// an existing row that is not already `.active`, so the only way a row
+    /// can be `.active` at all is to have come through the create branch
+    /// below — at revision 1. No `.active` session in the store can hold
+    /// any other revision, whatever a DTO claims and however many times it
+    /// is re-saved. A replicated session's own revision, preserved by
+    /// `createSession`, cannot be borrowed by flipping it back into flight.
+    ///
+    /// **Finish is one-way.** Throws `.sessionNoLongerInFlight` when the
+    /// stored session is not `.active` — §4's recovery is finish-or-discard,
+    /// never un-finish, so no watch flow writes to a session after it
+    /// leaves flight. This also refuses a *second* Finish of the same
+    /// session (the first already retired the journal, so nothing
+    /// legitimate holds an `ActiveSession` for it); correcting a finished
+    /// session is `applyPhoneEdit`, which bumps `revision` as §5 requires.
+    ///
     /// **One at a time.** Throws `.activeSessionAlreadyInFlight` if a
     /// *different* session is already `.active`. §2 performs one workout,
     /// and `resumableActiveSession()` promises the session to offer rather
@@ -276,12 +293,13 @@ public protocol BurlyStore: AnyObject {
     /// or discard the session in flight first. (Saving the *same* session
     /// again is the normal mutation path and is not affected.)
     ///
-    /// Nothing is written until every exercise reference resolves, every
-    /// item and set id is either already this session's or unowned, no
-    /// other session is in flight, and `active.invariantViolations()` is
-    /// empty. Throws `.missingExercise`, `.duplicateID`,
-    /// `.activeSessionAlreadyInFlight`, or `.invalidActiveSession`
-    /// respectively, before touching a row.
+    /// Nothing is written until `active.invariantViolations()` is empty,
+    /// the stored session (if any) is still in flight, every exercise
+    /// reference resolves, every item and set id is either already this
+    /// session's or unowned, and no other session is in flight. Throws
+    /// `.invalidActiveSession`, `.sessionNoLongerInFlight`,
+    /// `.missingExercise`, `.duplicateID`, or
+    /// `.activeSessionAlreadyInFlight` respectively, before touching a row.
     func saveActiveSession(_ active: ActiveSession) throws
 
     /// The in-flight session named by `id`, graph plus journaled
@@ -387,9 +405,24 @@ public protocol BurlyStore: AnyObject {
     /// The transport-facing shape is BurlySync's `SessionDigestReceipt`,
     /// which cannot be constructed with only one half.
     ///
-    /// Pruning tolerates what a real transport produces: an id naming an
-    /// `.active` session, or no session at all, is skipped rather than
-    /// treated as an error, so replaying a digest converges. An acked
+    /// **The prune is also validated against what it destroys** (m1-06
+    /// review round E), because the payload's shape cannot be. An empty
+    /// `lastPerformance` is a legal digest — a push whose only news is an
+    /// ack — so `applyDigest(lastPerformance: [], ackedSessionIDs: [s])`
+    /// type-checks and validates even when `s` is full of sets, and the
+    /// prune then deletes the watch's last knowledge of those exercises and
+    /// puts nothing in its place. The store can tell the two apart where
+    /// the transport cannot: it holds the graph it is about to delete. So
+    /// for every acked session actually present and eligible for pruning,
+    /// each exercise with sets in it must appear somewhere in
+    /// `lastPerformance` — from a newer session is fine (latest-wins);
+    /// absent is not. Otherwise `.partialDigest`, before anything is
+    /// written.
+    ///
+    /// Pruning otherwise tolerates what a real transport produces: an id
+    /// naming an `.active` session, or no session at all, is skipped rather
+    /// than treated as an error, so replaying a digest converges — and
+    /// since those prune nothing, they demand no entries either. An acked
     /// session that somehow still carries a journal takes it along.
     /// Watch-only; throws `.operationRequiresWatchStore` on a phone-kind
     /// store before touching anything.

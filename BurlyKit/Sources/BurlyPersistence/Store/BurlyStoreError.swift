@@ -42,6 +42,48 @@ public enum BurlyStoreError: Error, Equatable {
     /// a winner: finish or discard the session already in flight first. See
     /// `BurlyStore.saveActiveSession(_:)`.
     case activeSessionAlreadyInFlight(existingID: UUID, incomingID: UUID)
+    /// `saveActiveSession` named a session that is stored but is **not**
+    /// `.active` — it is `storedState` (m1-06 review round E).
+    ///
+    /// Finish is one-way. §4's recovery story is finish-or-discard, never
+    /// un-finish, so there is no watch flow that writes to a session after
+    /// it has left flight. Two things go wrong if this path is open:
+    ///
+    /// - **Resurrection.** A replicated `.logged` session created through
+    ///   `createSession` at revision 42 could be flipped back to `.active`,
+    ///   journalled, and resumed — carrying that borrowed revision, which
+    ///   §5 then reads as "the phone edited this 41 times."
+    /// - **Silent history edits.** Even without changing `state`, this path
+    ///   reconciles the whole graph without incrementing `revision`. On a
+    ///   finished session that is a set-level edit sync can never see. §6
+    ///   edits are `applyPhoneEdit`, which does bump.
+    ///
+    /// Refusing on the *stored* state closes both, and makes the revision
+    /// rule transitive: every `.active` row was born in this method's create
+    /// branch at revision 1, so no `.active` row can hold any other value.
+    case sessionNoLongerInFlight(sessionID: UUID, storedState: SessionState)
+    /// `applyDigest` was handed a payload that acks a session whose sets
+    /// reference exercises the digest carries no entry for (m1-06 review
+    /// round E).
+    ///
+    /// §5's digest is latest-per-exercise across the phone's *full*
+    /// history, and pruning is what makes the ack safe: the watch may drop
+    /// the session because the phone has it. But the watch's ghost rows are
+    /// the only trace of that history it keeps, so acking a session that
+    /// lifted exercise X while carrying no entry for X deletes the last
+    /// thing on the device that knew about X and replaces it with nothing.
+    ///
+    /// An empty `lastPerformance` is perfectly legal on its own — a digest
+    /// whose only news is an ack — and the transport-side
+    /// `SessionDigestReceipt` cannot tell the difference. The *store* can:
+    /// it holds the session graph it is about to delete. So the check lives
+    /// here, and it is about what the prune destroys, not about the shape of
+    /// the payload. Entries may come from a newer session than the one being
+    /// acked (latest-wins); they may not be absent.
+    ///
+    /// `missingExerciseIDs` is sorted for a stable comparison. Ids naming no
+    /// session, or an `.active` one, prune nothing and so demand nothing.
+    case partialDigest(sessionID: UUID, missingExerciseIDs: [UUID])
     /// `saveActiveSession` was handed a malformed `ActiveSession`. The
     /// strings are `ActiveSession.invariantViolations()` verbatim (dense
     /// item/set order, plan bijection, plan floor); the store refuses the

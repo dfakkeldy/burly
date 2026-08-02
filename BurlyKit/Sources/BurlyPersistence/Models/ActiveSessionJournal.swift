@@ -17,8 +17,27 @@
 // disagree across a crash, which is exactly the split-brain the m1-06
 // review named as the M1 blocker.
 //
-// One row per in-flight session, written and retired only by
-// `SwiftDataStore.saveActiveSession(_:)`.
+// One row per in-flight session, and — since the m1-06 round-D work — at
+// most one row in the store at a time (`saveActiveSession` refuses a second
+// session in flight).
+//
+// **Written** only by `SwiftDataStore.saveActiveSession(_:)`: that is the
+// single transaction which puts a session into `.active` and journals its
+// scaffolding together. **Retired** by whichever path takes the session out
+// of `.active` or out of the store, each in the same save as the change
+// that caused it (m1-06 review round E — this comment used to claim
+// `saveActiveSession` did both):
+//
+// - `saveActiveSession` on Finish — the `.logged`/`endedAt` write;
+// - `applyPhoneEdit` when a §6 edit moves the session out of `.active`;
+// - `deleteSession` — Discard, which has no session left to point at;
+// - `applyDigest`'s prune, defensively, for an acked session that somehow
+//   still carries one;
+// - `resumableActiveSession`, which deletes rows naming a finished or
+//   absent session as it scans past them.
+//
+// The invariant all five maintain is the one Resume depends on: a journal
+// row exists if and only if its session is `.active`.
 //
 // ## Why it is also the Resume index
 //

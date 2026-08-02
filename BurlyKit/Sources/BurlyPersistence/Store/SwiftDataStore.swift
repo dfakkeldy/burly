@@ -2,10 +2,13 @@
 // SwiftDataStore — the SwiftData implementation of `BurlyStore`
 // (architecture doc option A, Dan's pick 2026-07-31).
 //
-// Autosave is off and every mutating method saves before returning. The
-// data is tiny (§ architecture: ~40–50k rows for a decade of lifting) and
-// §2 requires a logged set to be durable at tap time; predictable saves are
-// worth more here than batching.
+// Autosave is off and every mutating method saves before returning, through
+// the one `commit()` helper at the bottom of the file — which rolls the
+// context back if the save fails, so a failed call leaves nothing staged for
+// a later unrelated save to commit (m1-06 review round E). The data is tiny
+// (§ architecture: ~40–50k rows for a decade of lifting) and §2 requires a
+// logged set to be durable at tap time; predictable saves are worth more
+// here than batching.
 
 import Foundation
 import SwiftData
@@ -95,7 +98,7 @@ public final class SwiftDataStore: BurlyStore {
                 archivedAt: exercise.archivedAt
             )
         )
-        try context.save()
+        try commit()
     }
 
     public func exercise(id: UUID) throws -> ExerciseData? {
@@ -120,7 +123,7 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.notFound(id)
         }
         exercise.archivedAt = date
-        try context.save()
+        try commit()
     }
 
     // MARK: - Routines
@@ -153,7 +156,7 @@ public final class SwiftDataStore: BurlyStore {
         context.insert(stored)
         insertRoutineItems(routine.items, resolved: resolved, into: stored)
 
-        try context.save()
+        try commit()
     }
 
     public func routine(id: UUID) throws -> RoutineData? {
@@ -190,7 +193,7 @@ public final class SwiftDataStore: BurlyStore {
         // same `date` already given for `archivedAt`, not a second,
         // independently-sourced clock reading for the same event.
         routine.updatedAt = date
-        try context.save()
+        try commit()
     }
 
     public func deleteRoutine(id: UUID) throws {
@@ -198,7 +201,7 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.notFound(id)
         }
         context.delete(routine)
-        try context.save()
+        try commit()
     }
 
     public func updateRoutine(_ routine: RoutineData) throws {
@@ -225,7 +228,7 @@ public final class SwiftDataStore: BurlyStore {
 
         replaceRoutineItems(of: stored, with: routine.items, resolved: resolved)
 
-        try context.save()
+        try commit()
     }
 
     public func applyRoutineSnapshot(_ routine: RoutineData) throws {
@@ -260,7 +263,7 @@ public final class SwiftDataStore: BurlyStore {
 
         replaceRoutineItems(of: target, with: routine.items, resolved: resolved)
 
-        try context.save()
+        try commit()
     }
 
     // MARK: - Sessions
@@ -300,7 +303,7 @@ public final class SwiftDataStore: BurlyStore {
         context.insert(stored)
         reconcileSessionGraph(stored, to: session, resolved: resolved)
 
-        try context.save()
+        try commit()
     }
 
     public func session(id: UUID) throws -> SessionData? {
@@ -345,7 +348,7 @@ public final class SwiftDataStore: BurlyStore {
             context.delete(journal)
         }
         context.delete(session)
-        try context.save()
+        try commit()
         return workoutID
     }
 
@@ -354,9 +357,10 @@ public final class SwiftDataStore: BurlyStore {
     // See the protocol doc for the contract. The implementation note that
     // matters here: every method in this section computes everything that
     // could throw *first*, mutates only after that, and saves exactly once.
-    // "One transaction" is not a comment — it is the single `context.save()`
-    // at the bottom of `saveActiveSession`, with nothing above it that can
-    // fail partway.
+    // "One transaction" is not a comment — it is the single `commit()` at
+    // the bottom of `saveActiveSession`, with nothing above it that can fail
+    // partway, and nothing left staged if the save itself fails (see
+    // `commit()`).
 
     public func saveActiveSession(_ active: ActiveSession) throws {
         let violations = active.invariantViolations()
@@ -368,6 +372,18 @@ public final class SwiftDataStore: BurlyStore {
         }
 
         let stored = try model(Session.self, id: active.session.id)
+        // Finish is one-way (m1-06 review round E). Reaching an existing row
+        // through this method is only legitimate while that row is still in
+        // flight: writing to a `.logged` one would either resurrect it — the
+        // `createSession`-at-revision-42 → flip-to-`.active` sequence — or
+        // rewrite finished history without the `revision` bump §5 needs to
+        // see an edit. Both are `applyPhoneEdit`'s job or nobody's.
+        if let stored, stored.state != .active {
+            throw BurlyStoreError.sessionNoLongerInFlight(
+                sessionID: stored.id,
+                storedState: stored.state
+            )
+        }
         let resolved = try preflightSessionGraph(active.session, ownedBy: stored)
         if active.session.state == .active {
             try preflightSingleInFlight(incoming: active.id)
@@ -429,7 +445,7 @@ public final class SwiftDataStore: BurlyStore {
             context.delete(journal)
         }
 
-        try context.save()
+        try commit()
     }
 
     public func activeSession(id: UUID) throws -> ActiveSession? {
@@ -490,7 +506,7 @@ public final class SwiftDataStore: BurlyStore {
             for journal in stale {
                 context.delete(journal)
             }
-            try context.save()
+            try commit()
         }
 
         guard let resumable else { return nil }
@@ -531,7 +547,7 @@ public final class SwiftDataStore: BurlyStore {
             context.delete(journal)
         }
 
-        try context.save()
+        try commit()
         return stored.revision
     }
 
@@ -556,7 +572,7 @@ public final class SwiftDataStore: BurlyStore {
         }
         try validateLastPerformance([performance])
         try upsert(performance)
-        try context.save()
+        try commit()
     }
 
     public func applyDigest(
@@ -570,6 +586,14 @@ public final class SwiftDataStore: BurlyStore {
         // latest-wins fact, so a bad entry rejects the entries *and* the
         // prune (m1-06 review, M2).
         try validateLastPerformance(lastPerformance)
+        // …and validate it against what the prune is about to destroy
+        // (m1-06 review round E). The shape of the payload cannot tell a
+        // legitimately empty digest from one missing its entries; the
+        // stored graph can.
+        try preflightDigestCoversAckedHistory(
+            lastPerformance: lastPerformance,
+            ackedSessionIDs: ackedSessionIDs
+        )
 
         for entry in lastPerformance {
             try upsert(entry)
@@ -579,7 +603,7 @@ public final class SwiftDataStore: BurlyStore {
         // The one save. Before this line the process can die at any point
         // and the watch keeps exactly the state the previous digest left;
         // after it, both halves are durable together.
-        try context.save()
+        try commit()
     }
 
     // MARK: - Watch working set
@@ -610,7 +634,7 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.operationRequiresWatchStore
         }
         try prune(ackedIDs: ackedIDs)
-        try context.save()
+        try commit()
     }
 
     // MARK: - Catalog seed
@@ -655,11 +679,39 @@ public final class SwiftDataStore: BurlyStore {
         } else {
             context.insert(CatalogSeedState(version: seed.seedVersion))
         }
-        try context.save()
+        try commit()
         return insertedCount
     }
 
     // MARK: - Internals
+
+    /// **The only `save()` in this file.** Every mutating method ends here,
+    /// and a failed save discards its own pending changes before the error
+    /// leaves the store (m1-06 review round E).
+    ///
+    /// Preflight is what makes a *rejected* call leave nothing behind — it
+    /// throws before the first insert. But a save can also fail after the
+    /// mutations are staged: the store is full, the file is unwritable, a
+    /// SwiftData validation trips. Autosave is off and the `ModelContext`
+    /// outlives the call, so without this the staged rows would still be
+    /// pending afterwards, and the next successful `save()` — from some
+    /// unrelated method minutes later — would commit them. That is the same
+    /// class of bug as the create-residue finding (M1), reached through a
+    /// failing save instead of a thrown precondition, and it is worse: the
+    /// caller has already been told the operation failed.
+    ///
+    /// `rollback()` returns the context to its last-saved state, so a
+    /// failure is a genuine no-op rather than a deferred surprise. The error
+    /// is rethrown unchanged — this recovers the context, it does not
+    /// swallow anything or retry.
+    private func commit() throws {
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
 
     /// Single fetch-by-id helper. `id` is unique on every model, so
     /// `fetchLimit = 1` is exact, not a guess.
@@ -814,6 +866,64 @@ public final class SwiftDataStore: BurlyStore {
                 existingID: other.id,
                 incomingID: id
             )
+        }
+    }
+
+    /// Proves the digest carries a last-performance entry for every
+    /// exercise whose only remaining record is about to be pruned (m1-06
+    /// review round E).
+    ///
+    /// The gap this closes: `applyDigest(lastPerformance: [],
+    /// ackedSessionIDs: [aSessionFullOfSets])` passed every check — an
+    /// empty entry list is a *valid* digest — and deleted the sets that
+    /// were the watch's last knowledge of those exercises, leaving the
+    /// ghost rows §2 prefills from stale or absent. Application context is
+    /// latest-wins, so nothing redelivers to repair it.
+    ///
+    /// The rule comes straight from §5: the digest is latest-per-exercise
+    /// across the phone's *full* history, and the phone only acks a session
+    /// it has durably received. So if the phone is acking a session that
+    /// lifted exercise X, its history contains X, and its digest therefore
+    /// carries *an* entry for X — possibly derived from a newer session
+    /// than the one being acked, which is fine and is why this checks
+    /// presence rather than provenance. Absence is the contradiction: a
+    /// payload claiming both "I have this history" and "I know nothing
+    /// about these exercises."
+    ///
+    /// Scoped to what the prune actually destroys. An id naming no session,
+    /// or an `.active` one, is skipped by `prune(ackedIDs:)` and so demands
+    /// no entry — the existing tolerances are unchanged. Items carrying
+    /// sets but no exercise reference are skipped too: a digest is keyed by
+    /// exercise and has no way to describe them.
+    private func preflightDigestCoversAckedHistory(
+        lastPerformance: [ExerciseLastPerformanceData],
+        ackedSessionIDs: [UUID]
+    ) throws {
+        let carried = Set(lastPerformance.map(\.exerciseID))
+        var checked = Set<UUID>()
+        for id in ackedSessionIDs {
+            guard checked.insert(id).inserted else { continue }
+            guard
+                let session = try model(Session.self, id: id),
+                session.state == .logged
+            else { continue }
+
+            var missing = Set<UUID>()
+            for item in session.items where item.sets.isEmpty == false {
+                guard let exerciseID = item.exercise?.id else { continue }
+                if carried.contains(exerciseID) == false {
+                    missing.insert(exerciseID)
+                }
+            }
+            guard missing.isEmpty else {
+                throw BurlyStoreError.partialDigest(
+                    sessionID: id,
+                    // Sorted so the error is a stable value: `Set` iteration
+                    // order is not, and this payload is compared in tests
+                    // and may well be logged.
+                    missingExerciseIDs: missing.sorted { $0.uuidString < $1.uuidString }
+                )
+            }
         }
     }
 
