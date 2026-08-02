@@ -246,15 +246,68 @@ Done:
 - `Scripts/acceptance-sim.sh` run launched in the background (log:
   `scratchpad/acceptance-run-3.log`) -- result pending as of this entry.
 
-Next: read the run 3 result. If green, report done with an accurate
-closure claim this time (all findings addressed + sim evidence, not
-"fully closed" as an implementer assertion). If it fails, this round's
-budget allows exactly one more attempt after triage; if that also fails,
-stop and report per the dispatcher's guardrail.
+Run 3 result: **FAIL** (`runs/20260802T125421Z`, exit 65). 3 failures, all
+in tests using the NEW `Thread.callStackSymbols.contains("SessionEntryView")`
+gate (`injectActiveSessionOnLateResumableCheck`,
+`injectUnreadableActiveSessionOnDefensivePreflight`): the routine list
+never rendered at all in `testUnreadableJournalAtDefensivePreflightOffersDiscardAndAppIsUsableAfterward`
+(15s timeout on `routineRow.Leg Day.name`), meaning the fault fired on
+`WatchHomeViewModel.load()`'s own first call, not `SessionEntryView`'s --
+deterministically, not a rare race. Diagnosis: `dladdr`-based call-stack
+symbolication in an unoptimized Swift build is nearest-symbol best-effort
+matching, not an exact call graph, and evidently misattributed a
+shell-side frame. Abandoned outright.
+
+Fix (commit `e49dccb`): replaced the caller-identification gate with a
+**quiet-period gate** -- `FaultInjectingStore` tracks
+`lastResumableActiveSessionCallAt` and fires only once ≥1.5s have passed
+since the *previous* call to that exact method (not since construction,
+not identifying the caller). Every real shell-triggered call happens
+within a fraction of a second of the one before it (synchronous SwiftUI
+lifecycle events clustered at launch); only a call arising well after
+that cluster settles -- an XCUITest's deliberately-delayed tap -- clears
+the gate. The three affected tests now sleep 4s before tapping. Re-ran
+`swift test` (736, green) + migration spike (green) + both
+`xcodebuild build`/`build-for-testing` (green) before spending the second
+and final acceptance-sim.sh attempt for this round.
+
+Next: read run 4's result (this round's 2nd and final sim attempt per the
+2-run budget). If green, report done. If it fails too, stop and report
+per the dispatcher's guardrail -- no further attempts without dispatcher
+triage.
 
 Resume:
 ```
 Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-06
-Branch: task/burly-m2-06 (HEAD 63ead7f)
-Check the sim run: cat /private/tmp/claude-501/-Users-dfakkeldy-Developer-health-apps/6797db06-aea3-4cdc-acde-97a45503f65e/scratchpad/acceptance-run-3.log | tail -60
+Branch: task/burly-m2-06 (HEAD e49dccb)
+Check the sim run: cat /private/tmp/claude-501/-Users-dfakkeldy-Developer-health-apps/6797db06-aea3-4cdc-acde-97a45503f65e/scratchpad/acceptance-run-4.log | tail -60
+This was the 2nd (final) acceptance-sim.sh attempt for review round 2 --
+if it also failed, do not run a 3rd without dispatcher input.
+```
+
+## 2026-08-02 — dispatcher: run 4 VOIDED (infra), attempt budget restored
+
+Done:
+- Run 4 (`20260802T131928Z`) is **not a verdict** and does not count
+  against the 2-run budget. It hung ~59 min and took
+  `** BUILD INTERRUPTED ** / Terminated: 15` during the *watch* build,
+  after the phone tests. Phone xcresult is corrupt; no watch xcresult.
+  Cause was host RAM thrash (swap 19.7 GB used / 797 MB free on a 16 GB
+  box, load 95-480), not `e49dccb`. Box has since been restarted.
+- Re-ran the SPM half engine-blind on the healthy box at `e49dccb`:
+  `swift test` = **736 tests / 77 suites passed in 7.155 s**;
+  migration spike = **2/1 passed**. Confirms the pre-sim claim.
+- Sim half is the only gate left. It is queued behind an unrelated Echo
+  test loop; a watcher fires it once the host is quiet (solo-sim rule).
+
+Next: read the solo sim result. Green -> Codex re-check of the §1
+residual (unreadable-journal recovery), then merge (unblocks m2-04).
+Red -> triage before spending another attempt.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-06
+Branch: task/burly-m2-06 (HEAD e49dccb)
+Sim log: scratchpad/m2-06-sim.log   Watcher: scratchpad/echo-watch.log
+Run the solo acceptance-sim only when no other xcodebuild is live.
 ```
