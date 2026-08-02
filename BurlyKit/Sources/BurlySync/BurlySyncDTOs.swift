@@ -120,7 +120,11 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
         case snapshotVersion, lastPerformance, ackedSessionIDs
     }
 
-    /// Fails closed for a negative snapshot version received over the wire.
+    /// Fails closed for a negative snapshot version received over the
+    /// wire, and — like the other two payloads — requires the fields the
+    /// domain decoders default (m4-01 review 2 closed the gap here: the
+    /// digest was the one payload without a strict pass, so a truncated
+    /// `SetSnapshot` could silently decode as a work set).
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let snapshotVersion = try container.decode(Int.self, forKey: .snapshotVersion)
@@ -131,6 +135,13 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
                 debugDescription: "Snapshot version must be non-negative."
             )
         }
+
+        try validateElements(
+            in: container,
+            forKey: .lastPerformance,
+            as: StrictExerciseLastPerformanceData.self
+        )
+
         self.snapshotVersion = snapshotVersion
         lastPerformance = try container.decode([ExerciseLastPerformanceData].self, forKey: .lastPerformance)
         ackedSessionIDs = try container.decode([UUID].self, forKey: .ackedSessionIDs)
@@ -224,6 +235,32 @@ private struct StrictSessionItemData: Decodable {
 }
 
 private struct StrictSetRecordData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case isWarmup
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try container.require(.isWarmup)
+    }
+}
+
+/// Validates the digest payload's one defaulted nested field:
+/// `ExerciseLastPerformanceData` itself decodes synthesized (every field
+/// required), but its embedded `SetSnapshot`s default `isWarmup` — a
+/// domain-side convenience the wire must not inherit (m4-01 review 2).
+private struct StrictExerciseLastPerformanceData: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case sets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try validateElements(in: container, forKey: .sets, as: StrictSetSnapshot.self)
+    }
+}
+
+private struct StrictSetSnapshot: Decodable {
     private enum CodingKeys: String, CodingKey {
         case isWarmup
     }
