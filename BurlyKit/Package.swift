@@ -20,6 +20,7 @@ let package = Package(
         .library(name: "BurlyPersistence", targets: ["BurlyPersistence"]),
         .library(name: "BurlySync", targets: ["BurlySync"]),
         .library(name: "BurlySyncMachine", targets: ["BurlySyncMachine"]),
+        .library(name: "BurlySyncAdapters", targets: ["BurlySyncAdapters"]),
         .library(name: "BurlyHealth", targets: ["BurlyHealth"]),
         .library(name: "BurlyFixtures", targets: ["BurlyFixtures"]),
         .library(name: "BurlyImport", targets: ["BurlyImport"])
@@ -54,6 +55,14 @@ let package = Package(
         // reverse.
         .target(
             name: "BurlySyncMachine"
+        ),
+        // WCSession-facing transport mechanics and the watch background-task
+        // completion invariant. Deliberately dependency-free: envelopes are
+        // opaque Data and payload-kind inspection is injected, so this target
+        // has no Burly domain or protocol-machine knowledge and can be lifted
+        // into Free Lunch unchanged.
+        .target(
+            name: "BurlySyncAdapters"
         ),
         .target(
             name: "BurlyHealth",
@@ -107,6 +116,10 @@ let package = Package(
         .testTarget(
             name: "BurlySyncMachineTests",
             dependencies: ["BurlySyncMachine"]
+        ),
+        .testTarget(
+            name: "BurlySyncAdaptersTests",
+            dependencies: ["BurlySyncAdapters"]
         ),
         .testTarget(
             name: "BurlyHealthTests",
