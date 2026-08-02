@@ -133,6 +133,47 @@ struct StatsQueryTests {
         #expect(benchOnly.allSatisfy { $0.exerciseID == bench.id })
     }
 
+    /// Pins the runner-predicate fix (m6-01 fix — see
+    /// `setRecordFilterPredicate`'s doc): a `SessionItem` with no exercise
+    /// reference at all is a legitimate §1 state (spec allows
+    /// `exercise: Exercise?`; see `StoreAPISurfaceTests`' "a nil exercise
+    /// reference is allowed"), and an exercise-bound query has to exclude
+    /// its sets without crashing. The predicate now force-unwraps
+    /// `sessionItem!.exercise!.id` instead of optional-chaining through
+    /// both hops — this is the case that would trap if CoreData evaluated
+    /// that force-unwrap the way a plain Swift closure over faulted objects
+    /// would. It does not: SwiftData compiles the two-hop force-unwrap to a
+    /// SQL join, and a nil link just has no join partner, so the row is
+    /// excluded like any other non-match.
+    @Test("exerciseID scoping excludes a set whose session item has no exercise — nil relationship, not a crash")
+    func exerciseIDScopingExcludesNilExerciseSessionItems() throws {
+        let store = try makeStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        try store.createExercise(bench)
+
+        let session = SessionData(
+            startedAt: Fixture.epoch,
+            state: .logged,
+            origin: .live,
+            items: [
+                SessionItemData(
+                    exerciseID: bench.id,
+                    order: 0,
+                    sets: [SetRecordData(order: 0, weight: Weight(kg: 100), reps: 5, completedAt: Fixture.epoch)]
+                ),
+                SessionItemData(
+                    exerciseID: nil,
+                    order: 1,
+                    sets: [SetRecordData(order: 0, weight: Weight(kg: 999), reps: 1, completedAt: Fixture.epoch)]
+                ),
+            ]
+        )
+        try store.createSession(session)
+
+        let slices = try store.loggedSetSlices(exerciseID: bench.id, since: nil, through: nil)
+        #expect(slices.map(\.set.weight.kg) == [100])
+    }
+
     // MARK: - The all-exercises, TrailingWindow-bounded form (m6-01 fix round 2, review item 7)
 
     @Test("loggedSetSlices(window:through:calendar:) returns every exercise's sets within the trailing window")

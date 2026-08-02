@@ -86,15 +86,24 @@ struct StatsQueryBenchmarkTests {
         // `since: nil` — the PR chart's "all" range (the exercise-bounded
         // overload's only all-time form; there is no all-exercises form
         // that takes an arbitrary `since` at all — see (a) above and
-        // `BurlyStore`'s stats-queries doc). `setRecordFilterPredicate`
-        // pushes `exerciseID` into the SwiftData fetch predicate itself
-        // (`sessionItem?.exercise?.id == exerciseID`), so this is bounded
-        // by *that exercise's* row count, not the store's total size —
-        // there is no Swift-side filter step left doing the narrowing.
+        // `BurlyStore`'s stats-queries doc).
+        //
+        // This is NOT predicate-pushed-down as of the runner-predicate fix
+        // (see `SwiftDataStore.setRecordFilterPredicate`'s doc): both
+        // relationship-predicate shapes tried for `sessionItem.exercise.id
+        // == exerciseID` were rejected by SwiftData/CoreData (optional
+        // chaining → TERNARY, rejected only on the macos-26 CI runner;
+        // force-unwrap → rejected locally, on every runner, by SwiftData
+        // itself). `exerciseID` is now filtered in Swift after a
+        // date-unbounded fetch, so this case is bounded by the *store's
+        // total* SetRecord count, not that exercise's row count — this is
+        // the query the fix's brief said to watch for a material
+        // regression on, and it is one: compare this number against the
+        // git history of this comment for the pre-fix figure.
         let (allTimeSlices, allTimeQueryTime, allTimePeak) = try measure {
             try store.loggedSetSlices(exerciseID: seed.benchExerciseID, since: nil, through: nil)
         }
-        print("[m6-01 stats benchmark] loggedSetSlices(one exercise, all-time, predicate-pushed-down): \(allTimeSlices.count) slices in \(String(format: "%.4f", allTimeQueryTime))s, process high-water RSS \(formatBytes(allTimePeak))")
+        print("[m6-01 stats benchmark] loggedSetSlices(one exercise, all-time, full-history fetch + Swift-side filter): \(allTimeSlices.count) slices in \(String(format: "%.4f", allTimeQueryTime))s, process high-water RSS \(formatBytes(allTimePeak))")
         #expect(allTimeSlices.isEmpty == false)
         #expect(allTimeSlices.allSatisfy { $0.exerciseID == seed.benchExerciseID })
 
