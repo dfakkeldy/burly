@@ -459,4 +459,51 @@ public protocol BurlyStore: AnyObject {
     /// on a phone-kind store: full history makes "awaiting ack" meaningless
     /// there. `.count` on the result is the test-visible working-set size.
     func loggedSessionsAwaitingAck() throws -> [SessionData]
+
+    // MARK: - Stats queries (§7; bounded, no full-history graph — m6-01)
+    //
+    // `sessions()` / `sessions(state:)` return the whole Session →
+    // SessionItem → SetRecord graph, unbounded by date — the right shape
+    // for "the history screen", wrong for a chart that only ever wants a
+    // trailing window (§7: 3 m/6 m/1 y/all, 8/26/52 weeks, a 4-week
+    // default). Building §7's stats on either would hydrate and fault the
+    // *entire* stored history on every chart render, once per relationship
+    // hop, however narrow the requested window actually is — the m1-06
+    // adversarial review flagged exactly this session→items→sets
+    // amplification and carried the fix into this task's brief.
+    //
+    // These two queries exist instead: bounded by a `Date` predicate (safe
+    // to filter at the SwiftData layer, unlike `SessionState` — see
+    // `ActiveSessionJournal.swift`'s pinned finding and
+    // `swiftDataCannotPredicateOnSessionState`), and shaped flat —
+    // `SetRecordSlice`, or a bare `[Date]` — rather than as the nested
+    // domain graph, so a chart's data flows through exactly the fields it
+    // needs and nothing shaped like a lazy relationship escapes the store.
+    // Both restrict to `.logged` sessions: an `.active` workout is not
+    // history yet.
+
+    /// Flat set-level projections for §7's PR, volume, and muscle-split
+    /// charts — never the full session graph.
+    ///
+    /// - Parameters:
+    ///   - exerciseID: scopes to one exercise's sets (the PR chart's
+    ///     shape); `nil` returns every exercise's (volume and
+    ///     muscle-split's shape).
+    ///   - since: lower bound on the set's `completedAt`, inclusive; `nil`
+    ///     is unbounded below — the PR chart's "all" range is the only §7
+    ///     range that ever passes this, since every other range names a
+    ///     trailing window.
+    ///   - through: upper bound, inclusive; `nil` is unbounded above — the
+    ///     common case, since every §7 range reads "since X, through now"
+    ///     and callers do not have to compute "now" just to bound it.
+    ///
+    /// No ordering is promised; every current caller sorts what it gets
+    /// back (see `ExerciseProgressionStats.sessionPoints`).
+    func loggedSetSlices(exerciseID: UUID?, since: Date?, through: Date?) throws -> [SetRecordSlice]
+
+    /// `startedAt` for every `.logged` session in the window — no item or
+    /// set graph — for §7's consistency chart (sessions/week, calendar
+    /// dots), which never looks inside a session. Bounded the same way as
+    /// `loggedSetSlices`; no ordering promised.
+    func loggedSessionDates(since: Date?, through: Date?) throws -> [Date]
 }

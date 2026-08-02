@@ -62,8 +62,12 @@ let package = Package(
             name: "BurlyPersistenceTests",
             // BurlySync so the digest-seam integration test can construct a
             // SessionDigestReceipt and drive it through
-            // SessionDigestApplying.
-            dependencies: ["BurlyPersistence", "BurlySync"]
+            // SessionDigestApplying. BurlyFixtures — one of the "later test
+            // targets" its own doc comment anticipates — so the m6-01 §7
+            // stats-query benchmark can seed 50k SetRecords from
+            // `WorkoutHistoryGenerator` instead of hand-rolling a second
+            // synthetic-history generator.
+            dependencies: ["BurlyPersistence", "BurlySync", "BurlyFixtures"]
         ),
         .testTarget(
             name: "BurlySyncTests",
