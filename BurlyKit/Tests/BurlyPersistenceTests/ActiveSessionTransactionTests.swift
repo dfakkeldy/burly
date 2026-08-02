@@ -647,6 +647,158 @@ struct ActiveSessionTransactionTests {
         #expect(try store.session(id: active.id)?.revision == 1)
     }
 
+    // MARK: - Finish is one-way (m1-06 review round E)
+    //
+    // The revision rule above is only sound if the create branch is the
+    // *only* way a row becomes `.active`. `createSession` refuses `.active`,
+    // which closes one door; the other was `saveActiveSession`'s own
+    // existing-row branch, which happily reconciled a stored `.logged` row
+    // back into flight and let it keep whatever revision it was created
+    // with. §4's recovery story is finish-or-discard — never un-finish — so
+    // the fix is to require the stored row to be in flight already.
+
+    @Test("a replicated .logged session cannot be resurrected into flight through saveActiveSession, and its revision is not borrowed — proved across a cold reopen")
+    func aFinishedSessionCannotBeResurrectedIntoFlight() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let clock = TestClock()
+        var sessionID = UUID()
+
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: clock)
+            let bench = Fixture.exercise(name: "Bench Press")
+            let routine = Fixture.routine(over: [bench])
+            try store.createExercise(bench)
+            try store.createRoutine(routine)
+
+            // A §5 `session` payload landing at the revision its author
+            // gave it: 42 phone edits deep. `createSession` preserves that,
+            // correctly — a replicated session's revision is the author's.
+            var replicated = Fixture.session(from: routine, startedAt: Fixture.epoch)
+            replicated.revision = 42
+            replicated.endedAt = Fixture.epoch.addingTimeInterval(3_600)
+            sessionID = replicated.id
+            try store.createSession(replicated)
+            #expect(try store.session(id: sessionID)?.revision == 42)
+
+            // The attack: flip the DTO back to `.active`, clear `endedAt`,
+            // wrap it in a well-formed `ActiveSession`, and save. Before
+            // round E this reconciled the stored row to `.active`,
+            // journalled it, and left revision at 42 — a resumable watch
+            // session outranking every real phone edit under §5's
+            // "incoming revision ≤ stored revision → drop" rule.
+            var resurrected = replicated
+            resurrected.state = .active
+            resurrected.endedAt = nil
+            let attack = ActiveSession(
+                session: resurrected,
+                plans: Dictionary(
+                    uniqueKeysWithValues: resurrected.items.map {
+                        ($0.id, ItemPlan(plannedSetCount: 3))
+                    }
+                )
+            )
+            #expect(attack.isWellFormed)
+
+            #expect(
+                throws: BurlyStoreError.sessionNoLongerInFlight(
+                    sessionID: sessionID, storedState: .logged
+                )
+            ) {
+                try store.saveActiveSession(attack)
+            }
+
+            // Rejected before any mutation: an unrelated successful save
+            // cannot commit a half-applied resurrection.
+            try store.createExercise(Fixture.exercise(name: "Row", muscleGroups: [.upperBack]))
+        }
+
+        let container = try BurlyContainer.make(.watch, at: .file(url))
+        let reopened = SwiftDataStore(container: container)
+
+        let stored = try #require(try reopened.session(id: sessionID))
+        #expect(stored.state == .logged)
+        #expect(stored.revision == 42)
+        #expect(stored.endedAt == Fixture.epoch.addingTimeInterval(3_600))
+        // No journal was minted, so nothing offers it to Resume.
+        #expect(try rowCount(ActiveSessionJournal.self, in: container) == 0)
+        #expect(try reopened.resumableActiveSession() == nil)
+        #expect(try reopened.activeSession(id: sessionID) == nil)
+    }
+
+    @Test("every stored .active session holds revision 1 — the create branch is the only way in, so the rule is transitive")
+    func everyInFlightSessionHoldsRevisionOne() throws {
+        let store = try makeStore(.watch)
+        let bench = Fixture.exercise(name: "Bench Press")
+        let routine = Fixture.routine(over: [bench])
+        try store.createExercise(bench)
+        try store.createRoutine(routine)
+
+        // Route 1 — `createSession` with a high revision: refused if
+        // `.active`, and what it does create is not `.active`.
+        var replicated = Fixture.session(from: routine)
+        replicated.revision = 42
+        try store.createSession(replicated)
+
+        // Route 2 — `saveActiveSession` on that row: refused.
+        // Route 3 — `applyPhoneEdit` into `.active`: refused (round D).
+        var edited = try #require(try store.session(id: replicated.id))
+        edited.state = .active
+        #expect(throws: BurlyStoreError.self) {
+            try store.applyPhoneEdit(edited)
+        }
+
+        // Route 4 — the create branch, the only one left, which writes 1.
+        var born = Fixture.activeSession(from: routine)
+        born.session.revision = 999
+        try store.saveActiveSession(born)
+
+        // The invariant, stated as a query over the whole store rather than
+        // over the one session this test happened to make.
+        let inFlight = try store.sessions(state: .active)
+        #expect(inFlight.count == 1)
+        #expect(inFlight.allSatisfy { $0.revision == 1 })
+    }
+
+    @Test("saveActiveSession cannot rewrite a finished session's sets behind applyPhoneEdit's back")
+    func saveActiveSessionCannotEditFinishedHistory() throws {
+        let store = try makeStore(.watch)
+        let clock = TestClock()
+        var (active, bench, _) = try startedSession(in: store, clock: clock)
+        let itemID = try #require(active.items.first { $0.exerciseID == bench.id }?.id)
+        try SessionMutator.logSet(
+            itemID: itemID, weight: Weight(kg: 100), reps: 5, in: &active, clock: clock
+        )
+        try SessionMutator.finish(&active, clock: clock)
+        try store.saveActiveSession(active)
+        #expect(try store.session(id: active.id)?.state == .logged)
+
+        // Same session, one more set, saved again through the watch path.
+        // Even though the DTO stays `.logged` — no resurrection — this
+        // would be a set-level edit of history with no `revision` bump,
+        // which §5 would never see as an edit. §6 corrections go through
+        // `applyPhoneEdit`.
+        var afterTheFact = active
+        afterTheFact.session.state = .active
+        try SessionMutator.logSet(
+            itemID: itemID, weight: Weight(kg: 105), reps: 3, in: &afterTheFact, clock: clock
+        )
+        afterTheFact.session.state = .logged
+
+        #expect(
+            throws: BurlyStoreError.sessionNoLongerInFlight(
+                sessionID: active.id, storedState: .logged
+            )
+        ) {
+            try store.saveActiveSession(afterTheFact)
+        }
+
+        let stored = try #require(try store.session(id: active.id))
+        #expect(stored.items.flatMap(\.sets).map(\.weightKg) == [100])
+        #expect(stored.revision == 1)
+    }
+
     @Test("createSession refuses an .active session — an in-flight row cannot be born without its journal — and writes nothing")
     func createSessionRefusesAnActiveSession() throws {
         let container = try BurlyContainer.make(.watch, at: .inMemory)

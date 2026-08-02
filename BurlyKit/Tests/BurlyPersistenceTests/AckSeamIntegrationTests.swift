@@ -56,15 +56,25 @@ struct AckSeamIntegrationTests {
         )
         let activeItemID = try #require(active.items.first?.id)
 
-        // The digest half of the payload the seam now carries: an entry the
-        // prune must leave alone, and a *second* entry the same apply is
-        // responsible for landing.
-        let seededDigest = ExerciseLastPerformanceData(
+        // The digest half of the payload the seam carries. `loggedOne` lifted
+        // bench, so a digest acking it *must* carry a bench entry (m1-06
+        // review round E) — the phone derives latest-per-exercise from full
+        // history, so a payload that admits to having this session and
+        // claims to know nothing about its exercises is a contradiction the
+        // store refuses. The stale bench entry seeded below is what the
+        // arriving one overwrites, latest-wins, in the same save as the
+        // prune.
+        let staleBenchDigest = ExerciseLastPerformanceData(
             exerciseID: bench.id,
             performedAt: Fixture.epoch,
             sets: [SetSnapshot(weight: Weight(kg: 80), reps: 5)]
         )
-        let arrivingDigest = ExerciseLastPerformanceData(
+        let arrivingBenchDigest = ExerciseLastPerformanceData(
+            exerciseID: bench.id,
+            performedAt: Fixture.epoch.addingTimeInterval(7_200),
+            sets: [SetSnapshot(weight: Weight(kg: 85), reps: 3)]
+        )
+        let arrivingRowDigest = ExerciseLastPerformanceData(
             exerciseID: row.id,
             performedAt: Fixture.epoch.addingTimeInterval(3_600),
             sets: [SetSnapshot(weight: Weight(kg: 70), reps: 10)]
@@ -82,7 +92,7 @@ struct AckSeamIntegrationTests {
             try store.createRoutine(routine)
             try store.createSession(loggedOne)
             try store.createSession(loggedTwo)
-            try store.upsertLastPerformance(seededDigest)
+            try store.upsertLastPerformance(staleBenchDigest)
 
             try SessionMutator.logSet(
                 itemID: activeItemID,
@@ -103,7 +113,7 @@ struct AckSeamIntegrationTests {
             let sync: SessionDigestApplying = store
             try sync.apply(
                 SessionDigestReceipt(
-                    lastPerformance: [arrivingDigest],
+                    lastPerformance: [arrivingBenchDigest, arrivingRowDigest],
                     ackedSessionIDs: [loggedOne.id, loggedTwo.id, active.id]
                 )
             )
@@ -137,21 +147,25 @@ struct AckSeamIntegrationTests {
         #expect(loggedItem.sets.count == 1)
         #expect(loggedItem.sets.first?.weightKg == 60)
 
-        // Exercises, routines, and the last-performance digest are
-        // untouched by the prune.
+        // Exercises and routines are untouched by the prune.
         #expect(try rowCount(Exercise.self, in: container) == 2)
         #expect(try reopened.exercise(id: bench.id) == bench)
         #expect(try reopened.exercise(id: row.id) == row)
         #expect(try rowCount(Routine.self, in: container) == 1)
         #expect(try reopened.routine(id: routine.id) == routine)
-        let survivingDigest = try #require(try reopened.lastPerformance(exerciseID: bench.id))
-        #expect(survivingDigest == seededDigest)
+
+        // The bench ghost row is the replacement for the history this ack
+        // just deleted, and it is the *arriving* value, not the stale one it
+        // overwrote — the point of applying both halves in one save.
+        let benchDigest = try #require(try reopened.lastPerformance(exerciseID: bench.id))
+        #expect(benchDigest == arrivingBenchDigest)
+        #expect(benchDigest != staleBenchDigest)
 
         // Both halves of the receipt landed in the same transaction: the
         // entry that arrived with the ack is durable across the cold reopen
         // alongside the prune it travelled with. A seam that could only
         // carry ids would have committed the prune with nothing here.
-        #expect(try reopened.lastPerformance(exerciseID: row.id) == arrivingDigest)
+        #expect(try reopened.lastPerformance(exerciseID: row.id) == arrivingRowDigest)
         #expect(try rowCount(ExerciseLastPerformance.self, in: container) == 2)
     }
 
@@ -173,7 +187,17 @@ struct AckSeamIntegrationTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        let logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        // A session with a set in it, and a receipt carrying the matching
+        // entry — the shape a real §5 push has (m1-06 review round E). The
+        // earlier version of this test acked a set-less session with an
+        // empty entry list, which passes but quietly documents the wrong
+        // default; replay semantics are worth pinning against a payload a
+        // courier would actually send.
+        let emptyLogged = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        let logged = emptyLogged.addingSet(
+            SetRecordData(order: 0, weight: Weight(kg: 140), reps: 3, completedAt: Fixture.epoch),
+            toItem: try #require(emptyLogged.items.first?.id)
+        )
         // `survivor` is `.active` — a control that would catch a replay
         // that (incorrectly) re-walks and disturbs unrelated rows.
         let survivor = Fixture.activeSession(
@@ -183,20 +207,34 @@ struct AckSeamIntegrationTests {
         try store.saveActiveSession(survivor)
 
         let sync: SessionDigestApplying = store
-        let receipt = SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [logged.id])
+        let receipt = SessionDigestReceipt(
+            lastPerformance: [
+                ExerciseLastPerformanceData(
+                    exerciseID: squat.id,
+                    performedAt: Fixture.epoch,
+                    sets: [SetSnapshot(weight: Weight(kg: 140), reps: 3)]
+                )
+            ],
+            ackedSessionIDs: [logged.id]
+        )
 
         try sync.apply(receipt)
         #expect(try store.session(id: logged.id) == nil)
         let survivorAfterFirstApply = try #require(try store.session(id: survivor.id))
+        let digestAfterFirstApply = try #require(try store.lastPerformance(exerciseID: squat.id))
         #expect(try store.loggedSessionsAwaitingAck().isEmpty)
 
         // Replay the identical receipt value. Must not throw — a session
         // already pruned reads as an "unknown id" to the second pass, and
-        // that is the documented non-error case, not a failure.
+        // that is the documented non-error case, not a failure. Note the
+        // second pass now demands nothing of the entries either: the
+        // coverage check is scoped to what the prune destroys, and this
+        // time it destroys nothing.
         try sync.apply(receipt)
         #expect(try store.session(id: logged.id) == nil)
         let survivorAfterSecondApply = try #require(try store.session(id: survivor.id))
         #expect(survivorAfterSecondApply == survivorAfterFirstApply)
+        #expect(try store.lastPerformance(exerciseID: squat.id) == digestAfterFirstApply)
         #expect(try store.loggedSessionsAwaitingAck().isEmpty)
     }
 
@@ -267,12 +305,30 @@ struct AckSeamIntegrationTests {
         let idB = UUID()
         let survivorID = UUID()
 
+        // Both acked sessions carry sets, so the receipt below has to carry
+        // the squat entry (m1-06 review round E) — same reasoning as the
+        // replay test: order-independence is worth pinning against the
+        // payload shape a courier actually sends, not against an empty one.
+        let squatDigest = ExerciseLastPerformanceData(
+            exerciseID: squat.id,
+            performedAt: Fixture.epoch.addingTimeInterval(60),
+            sets: [SetSnapshot(weight: Weight(kg: 145), reps: 3)]
+        )
+
         func seededStore() throws -> SwiftDataStore {
             let store = try makeStore(.watch)
             try store.createExercise(squat)
             try store.createRoutine(routine)
-            let a = Fixture.session(id: idA, from: routine, startedAt: Fixture.epoch)
-            let b = Fixture.session(id: idB, from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
+            let emptyA = Fixture.session(id: idA, from: routine, startedAt: Fixture.epoch)
+            let a = emptyA.addingSet(
+                SetRecordData(order: 0, weight: Weight(kg: 140), reps: 3, completedAt: Fixture.epoch),
+                toItem: try #require(emptyA.items.first?.id)
+            )
+            let emptyB = Fixture.session(id: idB, from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
+            let b = emptyB.addingSet(
+                SetRecordData(order: 0, weight: Weight(kg: 145), reps: 3, completedAt: Fixture.epoch),
+                toItem: try #require(emptyB.items.first?.id)
+            )
             try store.createSession(a)
             try store.createSession(b)
             // `survivor` is `.active`, so it goes in through the one path
@@ -290,8 +346,12 @@ struct AckSeamIntegrationTests {
         let syncOne: SessionDigestApplying = storeOne
         let syncTwo: SessionDigestApplying = storeTwo
 
-        try syncOne.apply(SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [idA, idB]))
-        try syncTwo.apply(SessionDigestReceipt(lastPerformance: [], ackedSessionIDs: [idB, idA]))
+        try syncOne.apply(
+            SessionDigestReceipt(lastPerformance: [squatDigest], ackedSessionIDs: [idA, idB])
+        )
+        try syncTwo.apply(
+            SessionDigestReceipt(lastPerformance: [squatDigest], ackedSessionIDs: [idB, idA])
+        )
 
         #expect(try storeOne.session(id: idA) == nil)
         #expect(try storeOne.session(id: idB) == nil)
@@ -299,6 +359,9 @@ struct AckSeamIntegrationTests {
         #expect(try storeTwo.session(id: idB) == nil)
         #expect(try storeOne.loggedSessionsAwaitingAck().isEmpty)
         #expect(try storeTwo.loggedSessionsAwaitingAck().isEmpty)
+        // The replacement ghost row converged too, not just the prune.
+        #expect(try storeOne.lastPerformance(exerciseID: squat.id) == squatDigest)
+        #expect(try storeTwo.lastPerformance(exerciseID: squat.id) == squatDigest)
 
         // Compare the fields the ack seam can actually influence, not
         // `SessionItemData.id` — `Fixture.session` mints a fresh random id
