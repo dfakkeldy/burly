@@ -46,7 +46,8 @@ enum BurlySchemaV1: VersionedSchema {
             ActiveSessionJournal.self,
             SessionItem.self,
             SetRecord.self,
-            ExerciseLastPerformance.self
+            ExerciseLastPerformance.self,
+            WatchSyncJournal.self
         ]
     }
 }

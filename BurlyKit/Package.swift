@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "BurlySync", targets: ["BurlySync"]),
         .library(name: "BurlySyncMachine", targets: ["BurlySyncMachine"]),
         .library(name: "BurlySyncAdapters", targets: ["BurlySyncAdapters"]),
+        .library(name: "BurlyWatchSyncRuntime", targets: ["BurlyWatchSyncRuntime"]),
         .library(name: "BurlyHealth", targets: ["BurlyHealth"]),
         .library(name: "BurlyFixtures", targets: ["BurlyFixtures"]),
         .library(name: "BurlyImport", targets: ["BurlyImport"])
@@ -63,6 +64,10 @@ let package = Package(
         // into Free Lunch unchanged.
         .target(
             name: "BurlySyncAdapters"
+        ),
+        .target(
+            name: "BurlyWatchSyncRuntime",
+            dependencies: ["BurlySync", "BurlyPersistence"]
         ),
         .target(
             name: "BurlyHealth",
@@ -120,6 +125,10 @@ let package = Package(
         .testTarget(
             name: "BurlySyncAdaptersTests",
             dependencies: ["BurlySyncAdapters"]
+        ),
+        .testTarget(
+            name: "BurlyWatchSyncRuntimeTests",
+            dependencies: ["BurlyWatchSyncRuntime", "BurlyPersistence", "BurlyCore"]
         ),
         .testTarget(
             name: "BurlyHealthTests",

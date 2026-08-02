@@ -40,9 +40,10 @@ struct MigrationPlanTests {
             "ExerciseLastPerformance",
             "Routine",
             "RoutineItem",
-            "SessionItem",
             "Session",
-            "SetRecord"
+            "SessionItem",
+            "SetRecord",
+            "WatchSyncJournal"
         ].sorted())
         #expect(Set(names).count == names.count)
     }

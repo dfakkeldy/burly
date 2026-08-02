@@ -13,12 +13,13 @@
 import Foundation
 import SwiftData
 import BurlyCore
+import BurlySync
 
 public final class SwiftDataStore: BurlyStore {
 
     /// Not Sendable, and neither is this class — see BurlyStore's threading
     /// note. One store, one isolation domain.
-    private let context: ModelContext
+    let context: ModelContext
 
     /// Which device this store belongs to (§1 store shape: phone vs. watch
     /// content differ). Inferred from the container's configuration name
@@ -30,7 +31,7 @@ public final class SwiftDataStore: BurlyStore {
     /// configuration name doesn't match a known `BurlyStoreKind` (e.g. a
     /// container assembled by hand, bypassing `BurlyContainer`); treated as
     /// "not watch" by kind-gated operations.
-    private let kind: BurlyStoreKind?
+    let kind: BurlyStoreKind?
 
     /// The store's own time source, for the metadata the store owns rather
     /// than the caller: `Routine.updatedAt` on the local-authoring paths
@@ -856,7 +857,7 @@ public final class SwiftDataStore: BurlyStore {
     /// failure is a genuine no-op rather than a deferred surprise. The error
     /// is rethrown unchanged — this recovers the context, it does not
     /// swallow anything or retry.
-    private func commit() throws {
+    func commit() throws {
         do {
             try context.save()
         } catch {
@@ -969,7 +970,7 @@ public final class SwiftDataStore: BurlyStore {
 
     /// Single fetch-by-id helper. `id` is unique on every model, so
     /// `fetchLimit = 1` is exact, not a guess.
-    private func model<T: PersistentModel & IdentifiedByUUID>(
+    func model<T: PersistentModel & IdentifiedByUUID>(
         _ type: T.Type,
         id: UUID
     ) throws -> T? {
@@ -1036,7 +1037,7 @@ public final class SwiftDataStore: BurlyStore {
 
     /// Resolves every routine item's exercise reference, in item order, and
     /// proves no item id belongs to a routine other than `owner`.
-    private func preflightRoutineItems(
+    func preflightRoutineItems(
         _ routine: RoutineData,
         ownedBy owner: Routine?
     ) throws -> [Exercise?] {
@@ -1140,7 +1141,7 @@ public final class SwiftDataStore: BurlyStore {
     /// .invalidLastPerformance`. Duplicate-`exerciseID` detection is a
     /// different story — nothing about `Weight` prevents two entries from
     /// naming the same exercise — so that check stays.
-    private func validateLastPerformance(
+    func validateLastPerformance(
         _ entries: [ExerciseLastPerformanceData]
     ) throws {
         var seen = Set<UUID>()
@@ -1176,7 +1177,7 @@ public final class SwiftDataStore: BurlyStore {
 
     /// Wholesale item replacement — the protocol doc on `updateRoutine`
     /// explains why routines diff by replacement rather than by id.
-    private func replaceRoutineItems(
+    func replaceRoutineItems(
         of routine: Routine,
         with items: [RoutineItemData],
         resolved: [Exercise?]
@@ -1278,7 +1279,7 @@ public final class SwiftDataStore: BurlyStore {
         }
     }
 
-    private func upsert(_ performance: ExerciseLastPerformanceData) throws {
+    func upsert(_ performance: ExerciseLastPerformanceData) throws {
         if let existing = try lastPerformanceModel(exerciseID: performance.exerciseID) {
             existing.performedAt = performance.performedAt
             existing.sets = performance.sets
@@ -1296,7 +1297,7 @@ public final class SwiftDataStore: BurlyStore {
     /// The §1 pruning rule, without the save — so `pruneDeliveredSessions`
     /// and `applyDigest` share one definition of "delivered" and the latter
     /// can fold it into a larger transaction.
-    private func prune(ackedIDs: [UUID]) throws {
+    func prune(ackedIDs: [UUID]) throws {
         for id in ackedIDs {
             guard
                 let session = try model(Session.self, id: id),
