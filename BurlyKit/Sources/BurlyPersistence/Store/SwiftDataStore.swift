@@ -627,7 +627,7 @@ public final class SwiftDataStore: BurlyStore {
         through: Date?
     ) throws -> [SetRecordSlice] {
         try fetchSetSlices(
-            predicate: Self.setRecordFilterPredicate(exerciseID: exerciseID, since: since, through: through),
+            predicate: Self.setRecordFilterPredicate(since: since, through: through),
             exerciseID: exerciseID
         )
     }
@@ -639,14 +639,17 @@ public final class SwiftDataStore: BurlyStore {
     ) throws -> [SetRecordSlice] {
         let (since, through) = window.dateRange(asOf: asOf, calendar: calendar)
         return try fetchSetSlices(
-            predicate: Self.setRecordFilterPredicate(exerciseID: nil, since: since, through: through),
+            predicate: Self.setRecordFilterPredicate(since: since, through: through),
             exerciseID: nil
         )
     }
 
     /// Shared fetch/map body for both `loggedSetSlices` overloads above —
-    /// they differ only in how the predicate and `exerciseID` (for the
-    /// belt-and-suspenders Swift-side check) are produced.
+    /// they differ only in how the (date-only) predicate and `exerciseID`
+    /// are produced. `exerciseID`, when given, is applied entirely below in
+    /// Swift, not in `predicate` — see `setRecordFilterPredicate`'s doc for
+    /// why relationship traversal was pulled out of the `#Predicate`
+    /// entirely (the runner-predicate fix).
     private func fetchSetSlices(
         predicate: Predicate<SetRecord>?,
         exerciseID: UUID?
@@ -669,16 +672,19 @@ public final class SwiftDataStore: BurlyStore {
                 let session = item.session,
                 // Swift-side, not in the predicate: `SessionState` cannot be
                 // captured in a `#Predicate` (see the protocol doc). The
-                // date bound (and, when given, the exercise bound — both
-                // already applied above) are what keep this from
-                // degenerating into a full-history scan even though the
-                // state check happens after the fetch.
+                // date bound already applied above is what keeps this from
+                // degenerating into a full-history scan for every
+                // date-bounded range — the one range that cannot bound
+                // itself by date (all-time, one exercise) pays for that
+                // with a full fetch; see `setRecordFilterPredicate`'s doc.
                 session.state == .logged,
-                // Redundant with the predicate above when `exerciseID` is
-                // non-nil (belt-and-suspenders against a predicate that
-                // silently no-ops — the same posture `resumableActiveSession`
-                // takes toward a table it does not fully trust); free when
-                // `exerciseID` is nil.
+                // The only exercise filter — not a backup for a predicate
+                // check, since the predicate no longer touches the
+                // relationship at all (the runner-predicate fix). A
+                // `sessionItem` or `exercise` link that is nil cannot equal
+                // a non-nil `exerciseID`, so it is excluded here exactly as
+                // it would have been by either predicate shape that was
+                // tried and rejected.
                 exerciseID == nil || item.exercise?.id == exerciseID
             else { continue }
             slices.append(
@@ -805,66 +811,96 @@ public final class SwiftDataStore: BurlyStore {
         }
     }
 
-    /// One `Predicate<SetRecord>` per presence combination of `exerciseID`/
-    /// `since`/`through` (eight, all spelled out), rather than one clever
-    /// expression that tries to cover all of them (m6-01): `#Predicate`'s
-    /// macro needs a literal comparison against a non-optional bound at
-    /// each call site, and force-unwrapping an optional inside the macro
-    /// body is exactly the kind of "compiles, fails at runtime" trap
-    /// `ActiveSessionJournal.swift` already documents one instance of.
-    /// Eight small, obviously-correct predicates cost nothing a ninth,
-    /// cleverer one would have saved.
+    /// One `Predicate<SetRecord>` per presence combination of `since`/
+    /// `through` (four, all spelled out), rather than one clever expression
+    /// that tries to cover both — same rationale as `sessionDatePredicate`
+    /// below: `#Predicate`'s macro needs a literal comparison against a
+    /// non-optional bound at each call site.
     ///
-    /// `sessionItem?.exercise?.id == exerciseID` — a two-hop relationship
-    /// traversal — is exercised at 50k rows by
-    /// `StatsQueryBenchmarkTests`/`StatsQueryTests`' exercise-scoping test;
-    /// it is comparing a `UUID`, not capturing a `SessionState`, so it does
-    /// not hit the enum-predicate failure mode. Pushing it into the
-    /// predicate (rather than fetching every row and filtering in Swift)
-    /// is what turns the PR chart's "all-time, one exercise" query — the
-    /// one range that cannot bound itself by date — from an O(total
-    /// history) fetch into an O(that exercise's history) one: measured on
-    /// `StatsQueryBenchmarkTests`' 50k-row store, this took the query from
-    /// 4.04 s / 172 MB peak RSS (fetch everything, filter in Swift) to
-    /// 0.51 s / 40 MB (filter in the predicate) for the same 4,306-row
-    /// result — see the benchmark's own comments and this task's handoff
-    /// for the exact numbers and how to reproduce them.
+    /// This predicate is date-only, deliberately: it never touches
+    /// `sessionItem` or `exercise`, only `completedAt`. Exercise scoping
+    /// happens in Swift, in `fetchSetSlices`' post-fetch filter
+    /// (`exerciseID == nil || item.exercise?.id == exerciseID`) — the third
+    /// pinned runner/Darwin-27 divergence in this codebase (see
+    /// `ActiveSessionJournal.swift` for the enum-in-predicate one and
+    /// `MigrationSpikeTests.swift`/`MigrationSpikeSchemaV2.swift` for the
+    /// schema-cache one) forced this predicate out of the relationship
+    /// business entirely. Two shapes were tried and both failed, for two
+    /// different reasons:
+    ///
+    /// 1. **Optional chaining** — `$0.sessionItem?.exercise?.id ==
+    ///    exerciseID` — is what m6-01 originally shipped, and Darwin 27
+    ///    runs it without complaint. But `#Predicate`'s macro expands `?.`
+    ///    into a conditional (`PredicateExpressions.flatMap`) node, and
+    ///    CoreData's macos-26 SQL translator turns that into `TERNARY
+    ///    (sessionItem != nil, sessionItem.exercise, nil).id`, which it then
+    ///    refuses to execute: "Unsupported function expression TERNARY(…)",
+    ///    crashing package-tests with signal 6 at every one of this
+    ///    predicate's four exercise-bound call sites. Nothing about the
+    ///    query changed between the two OS builds — only which
+    ///    conditional-expression shapes their CoreData SQL layers support,
+    ///    same as the enum and schema-cache divergences before it.
+    /// 2. **Force-unwrap** — `$0.sessionItem!.exercise!.id == exerciseID` —
+    ///    was tried next, on the theory that `!` compiles to a plain
+    ///    key-path/SQL-join node with no conditional branch to reject. It
+    ///    does not get that far: SwiftData refuses it *locally, on Darwin
+    ///    27*, before any CoreData SQL translation happens —
+    ///    `SwiftDataError.unsupportedPredicate("The
+    ///    'Foundation.PredicateExpressions.ForcedUnwrap' operator is not
+    ///    supported")`, thrown by every test that reached this predicate
+    ///    (measured; see this task's handoff). So the "force-unwrap avoids
+    ///    TERNARY" theory is wrong, not merely unverifiable — `!` inside
+    ///    `#Predicate` is unsupported outright, independent of which
+    ///    runner's CoreData is on the other end.
+    ///
+    /// The fix is the two-step fetch the runner hotfix's brief called for
+    /// as the fallback: this predicate stays relationship-free (both OS
+    /// builds compile plain `Date` comparisons identically — no divergence
+    /// possible), and `fetchSetSlices` filters `exerciseID` afterward, in
+    /// Swift, over the fetched `SessionItem`/`Exercise` objects it already
+    /// prefetches. That filter already existed as a "belt-and-suspenders"
+    /// check behind the (now-removed) predicate pushdown; it is now the
+    /// only exercise filter, not a backup one.
+    ///
+    /// **This has a real, measured performance cost**, not a hidden one:
+    /// the PR chart's "all-time, one exercise" query — the one range that
+    /// cannot bound itself by date — regresses from the exercise-pushed-down
+    /// shape's 0.51 s / 40 MB back to a full-history fetch. Re-measured on
+    /// `StatsQueryBenchmarkTests`' 50k-row store (50,351 SetRecords, 3,600
+    /// sessions) after this fix: **2.41 s, process high-water RSS 187.1 MB**
+    /// for the same 4,306-row result (up from 29.5 MB after the preceding
+    /// trailing-window query in the same run — see that file's `measure`
+    /// doc for why "process high-water," not "this call's own peak," is the
+    /// honest framing). This regresses materially past the fix brief's ~1 s
+    /// concern threshold, and is reported here loudly rather than hidden:
+    /// the two-step fetch is the only predicate shape SwiftData/CoreData
+    /// accepts on both the runner and Darwin 27, so restoring the
+    /// pushed-down performance means either a different query shape (e.g. a
+    /// denormalized `exerciseID` column directly on `SetRecord`, avoiding
+    /// the relationship traversal a `#Predicate` entirely) or waiting on a
+    /// CoreData/SwiftData fix — both out of scope for this hotfix. Every
+    /// date-bounded query (which is every other §7 range) is unaffected,
+    /// because dates were never the problem: in the same benchmark run, the
+    /// trailing-90-day query across all exercises ran in 0.11 s.
     private static func setRecordFilterPredicate(
-        exerciseID: UUID?,
         since: Date?,
         through: Date?
     ) -> Predicate<SetRecord>? {
-        switch (exerciseID, since, through) {
-        case (nil, nil, nil):
+        switch (since, through) {
+        case (nil, nil):
             return nil
-        case let (nil, since?, nil):
+        case let (since?, nil):
             return #Predicate<SetRecord> { $0.completedAt >= since }
-        case let (nil, nil, through?):
+        case let (nil, through?):
             return #Predicate<SetRecord> { $0.completedAt <= through }
-        case let (nil, since?, through?):
+        case let (since?, through?):
             return #Predicate<SetRecord> { $0.completedAt >= since && $0.completedAt <= through }
-        case let (exerciseID?, nil, nil):
-            return #Predicate<SetRecord> { $0.sessionItem?.exercise?.id == exerciseID }
-        case let (exerciseID?, since?, nil):
-            return #Predicate<SetRecord> {
-                $0.sessionItem?.exercise?.id == exerciseID && $0.completedAt >= since
-            }
-        case let (exerciseID?, nil, through?):
-            return #Predicate<SetRecord> {
-                $0.sessionItem?.exercise?.id == exerciseID && $0.completedAt <= through
-            }
-        case let (exerciseID?, since?, through?):
-            return #Predicate<SetRecord> {
-                $0.sessionItem?.exercise?.id == exerciseID
-                    && $0.completedAt >= since
-                    && $0.completedAt <= through
-            }
         }
     }
 
-    /// `Session`'s counterpart to `setRecordFilterPredicate(exerciseID:
-    /// since:through:)`, bounding `startedAt` instead of `completedAt` (and
-    /// with no exercise dimension — `loggedSessionDates` never has one).
+    /// `Session`'s counterpart to `setRecordFilterPredicate(since:through:)`,
+    /// bounding `startedAt` instead of `completedAt` (and with no exercise
+    /// dimension — `loggedSessionDates` never has one).
     /// `since` is non-optional (m6-01 fix round 2, review item 7:
     /// `loggedSessionDates(since:through:)`'s `since` parameter is now a
     /// plain `Date`, so there is no `nil` case left to switch on here —

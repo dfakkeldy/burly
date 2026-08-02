@@ -521,13 +521,20 @@ public protocol BurlyStore: AnyObject {
     ///     every exercise's sets without going through `loggedSetSlices
     ///     (window:through:calendar:)` instead.
     ///   - since: lower bound on the set's `completedAt`, inclusive; `nil`
-    ///     is unbounded below — legal here specifically because
-    ///     `exerciseID` still bounds the fetch the other way (the PR
-    ///     chart's "all" range, spec §7 #1). `setRecordFilterPredicate`
-    ///     pushes `exerciseID` into the SQL predicate, so this stays
-    ///     bounded by *that exercise's* row count, not the store's total
-    ///     size (~0.5 s at 50k SetRecords for one exercise's full history,
-    ///     measured by `StatsQueryBenchmarkTests`).
+    ///     is unbounded below — legal here specifically because `exerciseID`
+    ///     is mandatory, so the caller has still named a specific slice of
+    ///     the domain even when this call's own bound is wide open (the PR
+    ///     chart's "all" range, spec §7 #1). **This is the one shape that is
+    ///     not SQL-pushed-down**: the runner-predicate fix (see
+    ///     `SwiftDataStore.setRecordFilterPredicate`'s doc for the full
+    ///     mechanism — two relationship-predicate shapes were tried and
+    ///     both rejected by SwiftData/CoreData) moved exercise scoping into
+    ///     a Swift-side filter, so `since: nil` fetches every `SetRecord` in
+    ///     the store and filters after, bounded by the store's total size,
+    ///     not that exercise's row count (2.41 s, 187.1 MB process
+    ///     high-water RSS at 50,351 SetRecords for one exercise's 4,306-row
+    ///     full history, measured by `StatsQueryBenchmarkTests` — see that
+    ///     file for how to reproduce and current numbers).
     ///   - through: upper bound, inclusive; `nil` is unbounded above — the
     ///     common case, since every §7 range reads "since X, through now"
     ///     and callers do not have to compute "now" just to bound it.
