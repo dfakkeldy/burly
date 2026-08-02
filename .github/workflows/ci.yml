@@ -33,9 +33,46 @@ jobs:
           sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
-      - name: Run Swift package tests
+      # The package suite runs as TWO processes, deliberately.
+      #
+      # The migration spike (BurlyKit/Tests/BurlyPersistenceTests/
+      # MigrationSpikeTests.swift) declares a second SwiftData schema whose
+      # entities carry the SAME NAMES as the production ones. That is how
+      # SwiftData matches one schema version to the next, so the spike
+      # cannot avoid it — and it is also why both shapes must never be
+      # realised in one process. This runner's SwiftData build does not
+      # tolerate the collision, and the damage lands on *unrelated* tests,
+      # nondeterministically: run 30724246601 lost a value in the spike
+      # itself, run 30724883683 died on an uncaught NSException inside
+      # AckSeamIntegrationTests. Neither reproduces on macOS 27.
+      #
+      # So: production-shape tests first with the spike gated off, then the
+      # spike alone in a fresh process. Both must pass.
+      - name: Run Swift package tests (production schema; spike gated off)
         working-directory: BurlyKit
         run: swift test
+
+      - name: Run migration spike (own process; its v2 reuses v1 entity names)
+        working-directory: BurlyKit
+        env:
+          BURLY_RUN_MIGRATION_SPIKE: "1"
+        run: |
+          set -o pipefail
+          swift test --filter MigrationSpikeTests 2>&1 \
+            | tee "$RUNNER_TEMP/migration-spike.log"
+
+          # A closed gate, a renamed suite, or a typo in --filter all exit 0
+          # having run nothing at all, so prove the spike actually executed
+          # rather than trusting the exit status.
+          if grep -q 'skipped' "$RUNNER_TEMP/migration-spike.log"; then
+            echo "::error::migration spike was skipped — BURLY_RUN_MIGRATION_SPIKE never reached the suite"
+            exit 1
+          fi
+          if ! grep -qE 'Test run with [1-9][0-9]* test(s)? in 1 suite passed' \
+                 "$RUNNER_TEMP/migration-spike.log"; then
+            echo "::error::migration spike matched no tests — check --filter against the MigrationSpikeTests suite"
+            exit 1
+          fi
 
   sim-acceptance:
     name: Simulator acceptance

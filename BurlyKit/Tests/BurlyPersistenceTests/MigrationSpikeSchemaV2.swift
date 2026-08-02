@@ -11,7 +11,7 @@
 // the proof that the resulting ladder actually carries data: it performs
 // the real v2 procedure end to end against a store file on disk.
 //
-// ## Why it lives in the test target
+// ## Why it lives in the test target — and in its own process
 //
 // The shipping `BurlyMigrationPlan` must keep declaring exactly
 // `[BurlySchemaV1]` with no stages — a real v2 in Sources/ would change
@@ -19,8 +19,15 @@
 // declaring a `VersionedSchema` and a `SchemaMigrationPlan` outside the
 // module that owns v1: schemas are matched by *entity* name and shape, not
 // by Swift type identity or module, so a plan assembled here migrates a
-// store that BurlyPersistence wrote. `MigrationPlanTests` asserts the
-// shipping plan is untouched by any of this.
+// store that BurlyPersistence wrote. `MigrationPlanTests.planIsEmptyAtV1`
+// asserts the shipping plan is untouched by any of this, and runs in the
+// ungated pass.
+//
+// That same name-based matching is why nothing here may be realised in a
+// process that also runs the production-shape tests: two live definitions
+// of "SetRecord" collide, and on the macos-26 CI build the collision
+// corrupts *unrelated* tests. MigrationSpikeTests.swift has the full
+// account and the environment gate; read it before touching this file.
 //
 // ## What v2 changes
 //
@@ -40,6 +47,13 @@ import Synchronization
 import SwiftData
 import BurlyCore
 @testable import BurlyPersistence
+
+/// The gate on `MigrationSpikeTests`. Off by default, so an ordinary
+/// `swift test` never realises the v2 schema; the CI job and anyone running
+/// the spike by hand set `BURLY_RUN_MIGRATION_SPIKE=1` for a second,
+/// separate `swift test --filter MigrationSpikeTests` process.
+let migrationSpikeIsEnabled =
+    ProcessInfo.processInfo.environment["BURLY_RUN_MIGRATION_SPIKE"] == "1"
 
 enum MigrationSpikeSchemaV2: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
