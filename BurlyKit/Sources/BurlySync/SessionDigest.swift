@@ -60,9 +60,42 @@ import BurlyCore
 /// Both halves are stored properties and the initializer requires both,
 /// because applying one without the other is the exact failure this type
 /// exists to prevent — see the file doc.
+///
+/// ## Generator contract — this is a trust boundary
+///
+/// `lastPerformance` **must be the complete latest-per-exercise derivation
+/// over the phone's full history at the moment the digest is generated**
+/// (spec §5: the `digest` payload carries "per-exercise last-performance
+/// entries" alongside `ackedSessionIDs`, latest-wins). Not a delta, not the
+/// entries touched by the sessions being acked, not "what changed since
+/// last time" — the whole derivation.
+///
+/// The consequence that makes this load-bearing: **the absence of an entry
+/// is itself an assertion.** It says the phone's history holds nothing for
+/// that exercise, and the watch acts on it — pruning an acked session while
+/// keeping whatever ghost rows the payload describes. A generator that
+/// omits an exercise it does in fact have history for silently destroys the
+/// watch's last record of it, and §5's application context is latest-wins,
+/// so nothing redelivers to repair it.
+///
+/// The watch **cannot** verify this, and deliberately does not try (m1-06
+/// review rounds E→F). It looks checkable — the store holds the sessions it
+/// is about to prune, so it could demand an entry for every exercise with
+/// sets in them — but that check has false positives it cannot distinguish
+/// from real ones: the phone may legitimately have deleted that history
+/// (§1 `deleteSession`) or edited its last sets away, while still acking
+/// the session, because acked ids are retained ~30 days (§5). Refusing
+/// those payloads strands the session on the watch permanently once the
+/// ack ages out. So the watch trusts, and **the generator owes a property
+/// test**: for any history and any ack set, the emitted `lastPerformance`
+/// covers every exercise the phone has any sets for. That test belongs to
+/// M4, with the generator.
 public struct SessionDigestReceipt: Sendable, Equatable {
-    /// Latest-wins per-exercise entries (§5). Empty is a legitimate digest
-    /// — a push whose only news is an ack — but it has to be written out.
+    /// The complete latest-per-exercise derivation over full phone history
+    /// (§5) — see the generator contract above; an omission is an assertion
+    /// the watch acts on, not a no-op. Empty is legitimate and means "the
+    /// phone has no history for any exercise", which for a fresh or fully
+    /// cleared phone is simply true.
     public let lastPerformance: [ExerciseLastPerformanceData]
 
     /// IDs of sessions the phone has durably received. Carries no ordering
@@ -86,6 +119,14 @@ public protocol SessionDigestApplying: AnyObject {
     /// Applies `receipt` as one transaction: every entry upserts and every
     /// eligible acked session is pruned in the same save, or nothing
     /// happens at all.
+    ///
+    /// **Applies, does not audit.** The conformer takes `lastPerformance`
+    /// as the complete truth about the phone's history — including what it
+    /// leaves out — and prunes on that basis. Satisfying
+    /// `SessionDigestReceipt`'s generator contract is the caller's
+    /// obligation; there is no validation here that will catch a violation,
+    /// by design, because the receiving device has no way to tell a
+    /// generator bug from history the phone legitimately deleted.
     ///
     /// Not every named ID is guaranteed to disappear afterward — an ID
     /// naming an `.active` session, or no session at all, is left untouched

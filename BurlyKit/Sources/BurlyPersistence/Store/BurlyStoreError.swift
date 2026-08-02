@@ -62,28 +62,28 @@ public enum BurlyStoreError: Error, Equatable {
     /// rule transitive: every `.active` row was born in this method's create
     /// branch at revision 1, so no `.active` row can hold any other value.
     case sessionNoLongerInFlight(sessionID: UUID, storedState: SessionState)
-    /// `applyDigest` was handed a payload that acks a session whose sets
-    /// reference exercises the digest carries no entry for (m1-06 review
-    /// round E).
-    ///
-    /// §5's digest is latest-per-exercise across the phone's *full*
-    /// history, and pruning is what makes the ack safe: the watch may drop
-    /// the session because the phone has it. But the watch's ghost rows are
-    /// the only trace of that history it keeps, so acking a session that
-    /// lifted exercise X while carrying no entry for X deletes the last
-    /// thing on the device that knew about X and replaces it with nothing.
-    ///
-    /// An empty `lastPerformance` is perfectly legal on its own — a digest
-    /// whose only news is an ack — and the transport-side
-    /// `SessionDigestReceipt` cannot tell the difference. The *store* can:
-    /// it holds the session graph it is about to delete. So the check lives
-    /// here, and it is about what the prune destroys, not about the shape of
-    /// the payload. Entries may come from a newer session than the one being
-    /// acked (latest-wins); they may not be absent.
-    ///
-    /// `missingExerciseIDs` is sorted for a stable comparison. Ids naming no
-    /// session, or an `.active` one, prune nothing and so demand nothing.
-    case partialDigest(sessionID: UUID, missingExerciseIDs: [UUID])
+    // There is deliberately no `partialDigest` case (m1-06 review round F,
+    // reverting round E). Round E made `applyDigest` refuse a payload that
+    // acked a session whose sets named exercises the digest carried no
+    // entry for. It looked like a §5 contradiction; it is a legitimate
+    // payload. The phone may delete a session (§1 `deleteSession` is
+    // public), and it keeps acked ids for ~30 days afterwards (§5), so the
+    // sequence "watch finishes the only bench session → phone acks it →
+    // user deletes it on the phone → the phone's next full-history digest
+    // honestly carries no bench entry, and still acks" produces exactly
+    // that shape. Round E threw on it, every time, until the ack aged out
+    // of the 30-day window — after which no digest named the session at
+    // all and it could never be pruned, violating §5's "zero delivered-and-
+    // acked sessions remain on the watch" and leaving it to be
+    // ghost-redelivered. A phone edit that removes a session's last sets
+    // strands it the same way.
+    //
+    // The watch cannot distinguish "the phone deleted that history" from
+    // "the payload is missing entries" — the evidence for the difference
+    // only exists on the phone. So the anti-partial-digest invariant is the
+    // digest *generator's* (M4, phone-side), stated as a contract on
+    // `SessionDigestReceipt` and property-tested there. See
+    // `BurlyStore.applyDigest`.
     /// `saveActiveSession` was handed a malformed `ActiveSession`. The
     /// strings are `ActiveSession.invariantViolations()` verbatim (dense
     /// item/set order, plan bijection, plan floor); the store refuses the

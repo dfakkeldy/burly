@@ -586,14 +586,11 @@ public final class SwiftDataStore: BurlyStore {
         // latest-wins fact, so a bad entry rejects the entries *and* the
         // prune (m1-06 review, M2).
         try validateLastPerformance(lastPerformance)
-        // …and validate it against what the prune is about to destroy
-        // (m1-06 review round E). The shape of the payload cannot tell a
-        // legitimately empty digest from one missing its entries; the
-        // stored graph can.
-        try preflightDigestCoversAckedHistory(
-            lastPerformance: lastPerformance,
-            ackedSessionIDs: ackedSessionIDs
-        )
+        // Deliberately *not* validated against the sets in the sessions
+        // this is about to prune (m1-06 review round F reverting round E) —
+        // see `BurlyStore.applyDigest`'s doc. The watch cannot tell "the
+        // phone deleted that history" from "the payload is missing
+        // entries", and guessing wrong strands the session forever.
 
         for entry in lastPerformance {
             try upsert(entry)
@@ -866,64 +863,6 @@ public final class SwiftDataStore: BurlyStore {
                 existingID: other.id,
                 incomingID: id
             )
-        }
-    }
-
-    /// Proves the digest carries a last-performance entry for every
-    /// exercise whose only remaining record is about to be pruned (m1-06
-    /// review round E).
-    ///
-    /// The gap this closes: `applyDigest(lastPerformance: [],
-    /// ackedSessionIDs: [aSessionFullOfSets])` passed every check — an
-    /// empty entry list is a *valid* digest — and deleted the sets that
-    /// were the watch's last knowledge of those exercises, leaving the
-    /// ghost rows §2 prefills from stale or absent. Application context is
-    /// latest-wins, so nothing redelivers to repair it.
-    ///
-    /// The rule comes straight from §5: the digest is latest-per-exercise
-    /// across the phone's *full* history, and the phone only acks a session
-    /// it has durably received. So if the phone is acking a session that
-    /// lifted exercise X, its history contains X, and its digest therefore
-    /// carries *an* entry for X — possibly derived from a newer session
-    /// than the one being acked, which is fine and is why this checks
-    /// presence rather than provenance. Absence is the contradiction: a
-    /// payload claiming both "I have this history" and "I know nothing
-    /// about these exercises."
-    ///
-    /// Scoped to what the prune actually destroys. An id naming no session,
-    /// or an `.active` one, is skipped by `prune(ackedIDs:)` and so demands
-    /// no entry — the existing tolerances are unchanged. Items carrying
-    /// sets but no exercise reference are skipped too: a digest is keyed by
-    /// exercise and has no way to describe them.
-    private func preflightDigestCoversAckedHistory(
-        lastPerformance: [ExerciseLastPerformanceData],
-        ackedSessionIDs: [UUID]
-    ) throws {
-        let carried = Set(lastPerformance.map(\.exerciseID))
-        var checked = Set<UUID>()
-        for id in ackedSessionIDs {
-            guard checked.insert(id).inserted else { continue }
-            guard
-                let session = try model(Session.self, id: id),
-                session.state == .logged
-            else { continue }
-
-            var missing = Set<UUID>()
-            for item in session.items where item.sets.isEmpty == false {
-                guard let exerciseID = item.exercise?.id else { continue }
-                if carried.contains(exerciseID) == false {
-                    missing.insert(exerciseID)
-                }
-            }
-            guard missing.isEmpty else {
-                throw BurlyStoreError.partialDigest(
-                    sessionID: id,
-                    // Sorted so the error is a stable value: `Set` iteration
-                    // order is not, and this payload is compared in tests
-                    // and may well be logged.
-                    missingExerciseIDs: missing.sorted { $0.uuidString < $1.uuidString }
-                )
-            }
         }
     }
 
