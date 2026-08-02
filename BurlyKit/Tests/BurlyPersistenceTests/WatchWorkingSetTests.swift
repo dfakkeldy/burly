@@ -13,13 +13,85 @@
 // AckSeamIntegrationTests.swift.
 
 import Foundation
+import SwiftData
 import Testing
 import BurlyCore
+import BurlySync
 @testable import BurlyPersistence
 
 @MainActor
 @Suite("§1 — watch working-set pruning API")
 struct WatchWorkingSetTests {
+
+    @Test("a corrupt watch journal recovers as rebuildable metadata and a valid digest still commits atomically")
+    func corruptJournalRecoversWithoutStrandingOrDeletingAnOutboxSession() throws {
+        let container = try BurlyContainer.make(.watch, at: .inMemory)
+        let seedContext = ModelContext(container)
+        seedContext.insert(WatchSyncJournal(payload: Data("not json".utf8)))
+        try seedContext.save()
+
+        let store = SwiftDataStore(container: container)
+        let exercise = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let routine = Fixture.routine(over: [exercise])
+        let session = Fixture.session(from: routine)
+        try store.createExercise(exercise)
+        try store.createRoutine(routine)
+        try store.createSession(session)
+
+        // Recovery makes the malformed blob an empty cache, not a thrown
+        // rejection after the prune has already been staged.
+        #expect(try store.watchSyncState() == WatchSyncStateData())
+        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [session.id])
+        #expect(try store.session(id: session.id) == nil)
+        #expect(try store.watchSyncState().lastAckedSessionIDs == [session.id])
+        #expect(try store.watchSyncState().schemaVersion == 1)
+    }
+
+    @Test("a rejected working-set replacement cannot leave an omitted routine staged for a later save")
+    func rejectedReplacementLeavesNoStagedRoutineDelete() throws {
+        let store = try makeStore(.watch)
+        let exercise = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        try store.createExercise(exercise)
+        let removed = Fixture.routine(
+            name: "A",
+            over: [exercise]
+        )
+        let retained = Fixture.routine(
+            name: "B",
+            over: [exercise]
+        )
+        try store.createRoutine(removed)
+        try store.createRoutine(retained)
+        let reusedItemID = try #require(removed.items.first?.id)
+        let invalidRetained = RoutineData(
+            id: retained.id,
+            name: retained.name,
+            orderIndex: retained.orderIndex,
+            items: [RoutineItemData(
+                id: reusedItemID,
+                exerciseID: exercise.id,
+                order: 0,
+                defaultSetCount: 3
+            )],
+            updatedAt: retained.updatedAt,
+            archivedAt: retained.archivedAt
+        )
+        let snapshot = BurlySnapshotPayloadDTO(
+            version: 1,
+            exercises: [exercise],
+            routines: [invalidRetained]
+        )
+
+        #expect(throws: BurlyStoreError.duplicateID(reusedItemID)) {
+            try store.replaceWatchWorkingSet(snapshot)
+        }
+        // A later successful save is the precise regression trigger: it
+        // must not commit the delete of A that a mutate-before-preflight
+        // implementation would have staged.
+        try store.createExercise(Fixture.exercise(name: "Curl", muscleGroups: [.biceps]))
+        #expect(try store.routine(id: removed.id) != nil)
+        #expect(try store.routine(id: retained.id) != nil)
+    }
 
     @Test("loggedSessionsAwaitingAck throws operationRequiresWatchStore on a phone-kind store")
     func awaitingAckIsWatchOnlyOnRead() throws {

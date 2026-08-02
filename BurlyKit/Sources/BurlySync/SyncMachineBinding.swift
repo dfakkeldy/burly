@@ -22,7 +22,8 @@
 //                               per routine, timestamps preserved verbatim.
 // - `.applyDigest`            → `SessionDigestReceipt(applying:)` below,
 //                               through `SessionDigestApplying` — one
-//                               transaction, both halves.
+//                               transaction: entries, pruning, and the
+//                               watch's durable ack replay guard.
 // - `.reportStaleSessionCompletion`
 //                             → diagnostics only (log/surface): a
 //                               completion replayed for an already-acked
