@@ -278,6 +278,131 @@ struct PhoneSyncStatePersistingTests {
         #expect(reloaded.runtimeState.machineState.lastTransferGeneration == 2)
     }
 
+    // MARK: - Round 3, §2: the ceiling binds on the WRITE path, not only on read
+
+    @Test("round 3, §2 — save() refuses a snapshot version past the ceiling before writing ANY byte: primary and high-water log both stay at the last valid state")
+    func saveRefusesOutOfRangeSnapshotVersion() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let hwURL = highWaterURL(for: url)
+
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL)
+        try persisting.save(PhoneSyncRuntimeState(
+            machineState: .init(latestSnapshotVersion: 3, lastTransferGeneration: 2)
+        ))
+        let highWaterBytesBefore = try Data(contentsOf: hwURL)
+        let primaryBytesBefore = try Data(contentsOf: url)
+
+        // Pre-fix, this wrote and would later be transmitted; only the NEXT
+        // relaunch rejected it — restoring 3/2 and setting up the ceiling+1
+        // value for reuse. Post-fix it is refused here, before any write.
+        #expect(throws: PhoneSyncIdentityOverflowError.snapshotVersionOutOfRange(maximumPhoneSyncIdentity + 1)) {
+            try persisting.save(PhoneSyncRuntimeState(
+                machineState: .init(latestSnapshotVersion: maximumPhoneSyncIdentity + 1, lastTransferGeneration: 2)
+            ))
+        }
+
+        #expect(try Data(contentsOf: hwURL) == highWaterBytesBefore, "the out-of-range identity must not reach even the high-water log")
+        #expect(try Data(contentsOf: url) == primaryBytesBefore, "nor the primary file")
+        #expect(try persisting.load()?.runtimeState.machineState.latestSnapshotVersion == 3)
+    }
+
+    @Test("round 3, §2 — save() refuses a transfer generation past the ceiling, in BOTH conformers (file-backed and in-memory)")
+    func saveRefusesOutOfRangeTransferGenerationInBothConformers() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let outOfRange = PhoneSyncRuntimeState(
+            machineState: .init(latestSnapshotVersion: 1, lastTransferGeneration: maximumPhoneSyncIdentity + 1)
+        )
+
+        let fileBacked = FileBackedPhoneSyncStatePersisting(url: url)
+        #expect(throws: PhoneSyncIdentityOverflowError.transferGenerationOutOfRange(maximumPhoneSyncIdentity + 1)) {
+            try fileBacked.save(outOfRange)
+        }
+
+        let inMemory = InMemoryPhoneSyncStatePersisting()
+        #expect(throws: PhoneSyncIdentityOverflowError.transferGenerationOutOfRange(maximumPhoneSyncIdentity + 1)) {
+            try inMemory.save(outOfRange)
+        }
+        #expect(try inMemory.load() == nil, "the refused state must not have been stored")
+    }
+
+    @Test("round 3, §2 — the bound is inclusive and consistent across save and load: a state exactly AT the ceiling round-trips")
+    func stateExactlyAtTheCeilingRoundTrips() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        try persisting.save(PhoneSyncRuntimeState(
+            machineState: .init(
+                latestSnapshotVersion: maximumPhoneSyncIdentity,
+                lastTransferGeneration: maximumPhoneSyncIdentity
+            )
+        ))
+
+        let reloaded = try #require(try persisting.load())
+        #expect(reloaded.recoveredFromCorruption == false, "at-the-ceiling is valid on read too — the same inclusive bound everywhere")
+        #expect(reloaded.runtimeState.machineState.latestSnapshotVersion == maximumPhoneSyncIdentity)
+        #expect(reloaded.runtimeState.machineState.lastTransferGeneration == maximumPhoneSyncIdentity)
+    }
+
+    @Test("round 3, §2 — a machine increment past the ceiling is refused at persist time: the out-of-range identity is neither transmitted nor persisted")
+    func incrementPastCeilingNeverReachesTransportOrDisk() async throws {
+        // A legitimately persisted state whose generation sits exactly at
+        // the ceiling — the next push increments past it.
+        let persisting = InMemoryPhoneSyncStatePersisting(PhoneSyncRuntimeState(
+            machineState: .init(latestSnapshotVersion: 1, lastTransferGeneration: maximumPhoneSyncIdentity)
+        ))
+        let transport = FakeTransport()
+        let coordinator = PhoneSyncCoordinator(
+            store: try makePhoneStore(), transport: transport, digestPublisher: FakeDigestPublisher(),
+            statePersisting: persisting, clock: TestClock(), scheduler: ManualTriggerScheduler()
+        )
+
+        // `.snapshotPushTriggered` bumps the generation to ceiling+1; the
+        // save inside `deliver(_:)` must throw BEFORE any command executes
+        // (persist-before-execute), so nothing reaches the transport.
+        await #expect(throws: PhoneSyncIdentityOverflowError.transferGenerationOutOfRange(maximumPhoneSyncIdentity + 1)) {
+            try await coordinator.applicationDidLaunch()
+        }
+
+        #expect(await transport.transmissions.isEmpty, "the out-of-range identity must never be handed to the transport")
+        #expect(await transport.cancellations.isEmpty)
+        #expect(
+            try persisting.load()?.runtimeState.machineState.lastTransferGeneration == maximumPhoneSyncIdentity,
+            "the persisted state still holds the pre-increment value — nothing out-of-range on disk to be 'restored around' later"
+        )
+    }
+
+    @Test("round 3, §2 — a catalog edit at the version ceiling surfaces the overflow on lastCatalogPushFailure and transmits nothing")
+    func catalogEditAtVersionCeilingSurfacesOverflowWithoutTransmitting() async throws {
+        let persisting = InMemoryPhoneSyncStatePersisting(PhoneSyncRuntimeState(
+            machineState: .init(latestSnapshotVersion: maximumPhoneSyncIdentity, lastTransferGeneration: 1)
+        ))
+        let transport = FakeTransport()
+        let scheduler = ManualTriggerScheduler()
+        let coordinator = PhoneSyncCoordinator(
+            store: try makePhoneStore(), transport: transport, digestPublisher: FakeDigestPublisher(),
+            statePersisting: persisting, clock: TestClock(), scheduler: scheduler,
+            // No retries: an overflow is deterministic — retrying it cannot
+            // succeed, and zero retries keeps this pin free of untracked
+            // retry tasks.
+            configuration: .init(catalogEditDebounce: .seconds(1), digestPublishDebounce: .seconds(1), catalogPushRetryCount: 0)
+        )
+
+        await coordinator.catalogDidChange()
+        _ = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(1))
+        await coordinator.drainPendingDebounces()
+
+        #expect(await transport.transmissions.isEmpty, "the overflowed version must never be transmitted")
+        #expect(coordinator.lastCatalogPushFailure as? PhoneSyncIdentityOverflowError != nil, "the overflow is surfaced like every other catalog-push failure")
+        #expect(
+            try persisting.load()?.runtimeState.machineState.latestSnapshotVersion == maximumPhoneSyncIdentity,
+            "the persisted state still holds the at-ceiling value"
+        )
+    }
+
     // MARK: - Round 2, finding 1: "both unreadable" must not degrade to zero
 
     @Test("round 2, finding 1 — both files genuinely absent is a clean first launch, not a recovery")

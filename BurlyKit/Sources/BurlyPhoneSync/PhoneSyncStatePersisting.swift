@@ -122,13 +122,30 @@ import Foundation
 import BurlySync
 import BurlySyncMachine
 
-/// m4-04 review round 2, finding 2 — see this file's header. Shared by both
-/// `Snapshot.makeRuntimeState()` (the primary state's fields) and
-/// `HighWaterMarkLog`'s per-line validation (the append-only log's
-/// records): the one upper bound that keeps `PhoneSyncMachine`'s `+= 1`
-/// increments forever below the value that would overflow, however many
-/// more edits or pushes a phone racks up over its lifetime.
-let maximumPhoneSyncIdentity = 1_000_000_000
+/// m4-04 review round 2, finding 2 + round 3, §2 — see this file's header.
+/// The single **inclusive** ceiling on `latestSnapshotVersion` and
+/// `lastTransferGeneration`, enforced identically at every boundary this
+/// file owns:
+///
+/// - **Read**: `Snapshot.makeRuntimeState()` (the primary state's fields)
+///   and `HighWaterMarkLog.read()`'s per-line validation both reject a
+///   value above it (round 2, finding 2).
+/// - **Write** (round 3, §2): `save(_:)` — in every conformer — throws
+///   `PhoneSyncIdentityOverflowError` *before* writing anything (including
+///   the high-water append) when the state to persist carries a value
+///   above it. Read-side-only enforcement left a one-relaunch window: a
+///   state at exactly the ceiling incremented to ceiling+1, was persisted
+///   AND transmitted, and only the *next* relaunch rejected it — restoring
+///   the prior value and re-using ceiling+1 on the following push.
+///   Refusing at save time means an out-of-range identity can neither
+///   reach disk nor (because `PhoneSyncCoordinator` always persists before
+///   executing an event's commands) ever reach the transport.
+///
+/// The valid range everywhere is `0...maximumPhoneSyncIdentity`, inclusive:
+/// a persisted value exactly at the ceiling loads cleanly; the *increment
+/// past* it is what fails, as a thrown domain error — the same shape as
+/// `SwiftDataStore.applyPhoneEdit`'s revision-overflow guard.
+public let maximumPhoneSyncIdentity = 1_000_000_000
 
 /// Everything `PhoneSyncCoordinator` needs to survive a relaunch: the
 /// protocol machine's own state, plus the coordinator's daily-push
@@ -176,6 +193,33 @@ public enum PhoneSyncStateCorruptionError: Error, Equatable {
     case negativePendingAge(sessionID: UUID, age: TimeInterval)
 }
 
+/// Thrown by `save(_:)` (m4-04 review round 3, §2 — see
+/// `maximumPhoneSyncIdentity`'s doc): the state to persist carries a
+/// monotonic identity outside `0...maximumPhoneSyncIdentity`. A domain
+/// error, not a trap, and thrown *before* any byte is written — neither
+/// the primary file nor the high-water log ever holds an out-of-range
+/// value, and `PhoneSyncCoordinator`'s persist-before-execute ordering
+/// means the transport never sees one either.
+public enum PhoneSyncIdentityOverflowError: Error, Equatable {
+    case snapshotVersionOutOfRange(Int)
+    case transferGenerationOutOfRange(Int)
+}
+
+/// Round 3, §2 — the shared write-path bound check every
+/// `PhoneSyncStatePersisting` conformer's `save(_:)` must apply (see that
+/// requirement's doc). Free function so in-package conformers cannot drift
+/// from each other on the bound or its inclusivity.
+public func validatePhoneSyncIdentityBounds(_ state: PhoneSyncRuntimeState) throws {
+    let version = state.machineState.latestSnapshotVersion
+    guard version >= 0, version <= maximumPhoneSyncIdentity else {
+        throw PhoneSyncIdentityOverflowError.snapshotVersionOutOfRange(version)
+    }
+    let generation = state.machineState.lastTransferGeneration
+    guard generation >= 0, generation <= maximumPhoneSyncIdentity else {
+        throw PhoneSyncIdentityOverflowError.transferGenerationOutOfRange(generation)
+    }
+}
+
 /// Thrown by `load()` (m4-04 review round 2, finding 1 — see this file's
 /// header): neither the primary state file nor the high-water-mark log
 /// could produce a trustworthy identity. Deliberately distinct from
@@ -206,6 +250,14 @@ public protocol PhoneSyncStatePersisting: Sendable {
     /// / `lastTransferGeneration`) in a form that survives the primary
     /// state becoming unreadable later (blocker 1) — see
     /// `FileBackedPhoneSyncStatePersisting`'s high-water log.
+    ///
+    /// Round 3, §2: conformances must **refuse** (throw
+    /// `PhoneSyncIdentityOverflowError`, via
+    /// `validatePhoneSyncIdentityBounds(_:)`) a state whose
+    /// `latestSnapshotVersion` or `lastTransferGeneration` falls outside
+    /// `0...maximumPhoneSyncIdentity`, before writing anything — the write
+    /// path is where the ceiling actually binds, since the coordinator
+    /// persists before it transmits.
     func save(_ state: PhoneSyncRuntimeState) throws
 }
 
@@ -310,6 +362,12 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
     }
 
     public func save(_ state: PhoneSyncRuntimeState) throws {
+        // Round 3, §2: the write-path ceiling, checked before ANY byte is
+        // written — an out-of-range identity must not reach even the
+        // high-water log (where `read()` would skip it, but a value that
+        // should never exist should also never be written).
+        try validatePhoneSyncIdentityBounds(state)
+
         // Blocker 1: written before the primary save, and — because
         // `PhoneSyncCoordinator.deliver(_:)` always persists before
         // executing the commands an event produced — before any transmit
@@ -611,6 +669,10 @@ public final class InMemoryPhoneSyncStatePersisting: PhoneSyncStatePersisting, @
     }
 
     public func save(_ state: PhoneSyncRuntimeState) throws {
+        // Round 3, §2: same write-path ceiling as the file-backed
+        // conformer — tests driving a coordinator through this in-memory
+        // double must exercise the same refusal production would.
+        try validatePhoneSyncIdentityBounds(state)
         stored = state
     }
 }

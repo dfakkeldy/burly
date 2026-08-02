@@ -150,6 +150,11 @@ struct QuietPeriodCoalescerTests {
         await coalescer.setAfterWakeTestHookForTesting { await gate.waitForRelease() }
 
         await coalescer.coalesce(1) { payload in await recorder.record(payload) }
+        // Round 3, §6: capture countdown A's Task handle now, while it is
+        // still the current one — B's coalesce() below replaces
+        // `currentTask` with its own, and A's handle is the only
+        // deterministic way to know A's fire attempt has fully finished.
+        let aTask = try #require(await coalescer.currentTaskForTesting)
         let aWaiterID = await scheduler.waitForFreshWaiter(excluding: [])
         scheduler.advance(by: .seconds(5)) // A's sleep resolves; A is now parked inside the hook
 
@@ -175,7 +180,13 @@ struct QuietPeriodCoalescerTests {
         // Post-fix: `fire(token:)` re-checks freshness and backs off with
         // NO side effects at all.
         await gate.release()
-        await settleRealWork()
+        // Round 3, §6: await A's own Task — when this resumes, A's fire
+        // attempt has DEFINITELY completed: it reached the token check and
+        // either backed off (post-fix) or consumed B's payload (pre-fix).
+        // The old 50 ms settle could return before the executor ever
+        // scheduled A's queued `fire`, letting the pre-fix regression slip
+        // past the assertions below by timing luck.
+        await aTask.value
 
         #expect(await recorder.values.isEmpty, "A's stale fire must not have consumed B's payload at A's old deadline")
         #expect(scheduler.pendingCount == 1, "B's own countdown must still be the one live pending waiter — not dropped, not double-counted")

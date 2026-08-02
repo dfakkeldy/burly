@@ -466,3 +466,84 @@ Status: all 18 cumulative review findings (12 round 1 + 6 round 2) fixed
 + pinned, 693 tests green, release build clean. Committed (not pushed).
 Next action: hand off for dispatcher re-review; no local work pending.
 ```
+
+## 2026-08-02 — review round 3 fix pass (the blocker's PREVENTION + 2), closing round
+
+Round 3 (`.scratch/m4-04-review-3.md`) on `387549b`: NOT-SAFE. §1 the
+recurring blocker — the unrecoverable state was detected (flag) but the
+coordinator still OPERATED from a zeroed state, so a corrupted phone could
+retransmit reused `(version, generation)` identities. Plus a §1 write-path
+ceiling gap and §6's wall-clock race pins. Exactly 3 fixes, on top of
+`387549b`:
+
+- **§1 BLOCKER — detect AND prevent.** `PhoneSyncCoordinator`: while
+  `syncStateUnrecoverable`, EVERY public entry point is a silent no-op —
+  gates on `sessionReceived`, `applicationDidLaunch`,
+  `watchAppInstalledDidChange`, `dailyPushIfDue`, `catalogDidChange`,
+  `historyDidChange`, `snapshotTransferFinished` (that one also prevents
+  `deliver` laundering the zero state into a clean save) — plus
+  defense-in-depth gates on the two transmission funnels (`execute`,
+  `publishDigestNow`) and `deliverCatalogChanged`. New explicit exit:
+  `resetSyncStateForRePair()` — no-op unless unrecoverable; persists a
+  fresh zero domain FIRST, only then lifts the gates (failed persist stays
+  quiescent); contract documented on the method (call only as part of a
+  real re-pair; misuse against a non-reset watch stalls, never corrupts —
+  the watch's version rule refuses regressed versions). Pins: new
+  `SyncUnrecoverableQuiescenceTests.swift` (5 tests) incl. the review's
+  named pin: files held (7, 11), corrupted both, every trigger driven,
+  transport + digest publisher provably received NOTHING, machine state
+  never moved, ingest is a full no-op.
+- **§1/§2 — identity ceiling on the WRITE path.**
+  `validatePhoneSyncIdentityBounds(_:)` now runs at the top of BOTH
+  conformers' `save()` (before even the high-water append), throwing new
+  `PhoneSyncIdentityOverflowError`; bound is inclusive
+  `0...maximumPhoneSyncIdentity` consistently across read, save, and
+  increment (the increment PAST the ceiling is what fails, at persist
+  time, before any transmit — deliver/persist-before-execute makes save
+  the transmission choke point). 5 new pins in
+  `PhoneSyncStatePersistingTests` (save-refusal both conformers + files
+  unchanged, at-ceiling round-trip, launch-increment past ceiling throws
+  with transport untouched, catalog-edit overflow surfaced on
+  `lastCatalogPushFailure` with zero transmissions).
+- **§6 — deterministic race pins, no wall-clock.** `settleRealWork()`
+  (50 ms sleep) deleted from TestSupport. The epoch pin now captures the
+  untracked retry `Task` via new internal seam
+  `PhoneSyncCoordinator.mostRecentCatalogRetryTaskForTesting` and awaits
+  `.value`; the coalescer pin captures countdown A's handle via new
+  internal seam `QuietPeriodCoalescer.currentTaskForTesting` and awaits
+  it after releasing the wake gate. Both negative assertions now run only
+  after the stale work has provably completed.
+
+Round-2 closed fixes untouched: SwiftDataStore/ReplicatedSessionApplyTests
+not in the diff at all (placeholder rollback); epoch guards, token guard,
+and catalog retry/surface logic unchanged (only read-only seams added).
+
+Verification: `swift test` 703/73 green (was 693/72; +10 pins);
+`BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests` 2/2;
+`swift build -c release` clean; QuietPeriodCoalescerTests and
+PushTriggerTests each run 5x — 10/10 green (~0.001 s / ~0.09 s, no
+wall-clock dependence). Revert-verified all three (cp-backup, revert,
+re-run, restore — no git ops): gates stripped → quiescence pins fail on
+the exact transmit-from-zero trace; validation stripped → out-of-range
+identity persisted AND transmitted; token guard stripped → coalescer pin
+fails 3/3; epoch guards stripped → epoch pin fails 3/3 with the [2, 1]
+resurrection.
+
+Disagreements: none. Round 3's §1 explicitly overrules round 2's
+"deliberately not auto-mitigated" doc stance; the doc now says the
+opposite and explains why.
+
+Next:
+- Hand off for dispatcher re-review. Same out-of-scope follow-ups as
+  before (app wiring, real WCSession conformers — m4-03/m4-06). The host
+  app must surface `syncStateUnrecoverable` and offer the re-pair flow
+  that calls `resetSyncStateForRePair()` — app-integration work.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m4-04
+Branch: task/burly-m4-04 (f224412 → e5b908e → 387549b → this round 3 fix)
+Status: 3 round-3 fixes done + pinned + revert-verified, 703 tests green,
+release build clean. Committed (not pushed).
+Next action: hand off for dispatcher re-review; no local work pending.
+```

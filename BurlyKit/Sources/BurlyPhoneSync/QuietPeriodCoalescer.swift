@@ -156,6 +156,17 @@ public actor QuietPeriodCoalescer<Payload: Sendable> {
         afterWakeTestHook = hook
     }
 
+    /// Internal test seam (round 3, §6): the currently-installed countdown
+    /// task. The wake-before-fire pin captures countdown A's handle here
+    /// *before* the superseding `coalesce()` replaces `currentTask` with
+    /// B's, then awaits `A.value` after releasing the wake gate — the
+    /// deterministic "A has definitely finished its fire attempt" signal a
+    /// fixed wall-clock sleep could not provide (the executor may simply
+    /// not schedule A's queued `fire` inside an arbitrary window, letting
+    /// a pre-fix regression pass by timing luck). Read-only; changes no
+    /// production behavior.
+    var currentTaskForTesting: Task<Void, Never>? { currentTask }
+
     /// Awaits the in-flight chain — the task currently waiting to fire or
     /// actively performing, and any rerun `fire()` schedules after it — to
     /// fully settle. Test-only in spirit (production never needs to "wait"

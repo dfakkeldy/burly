@@ -159,18 +159,30 @@ public final class PhoneSyncCoordinator {
     /// missing/unreadable/semantically invalid — a surfaced recovery event,
     /// not a silent reset. See `PhoneSyncStatePersisting`'s doc.
     public private(set) var recoveredFromCorruptState = false
-    /// m4-04 review round 2, finding 1: `true` when `init` could get NO
-    /// trustworthy identity from EITHER the primary state file or the
-    /// high-water-mark log (`PhoneSyncStateUnrecoverableError`) — the
-    /// "both unreadable" edge blocker 1's original fix missed. The
-    /// coordinator still constructs and functions (a fresh, zeroed `State`
-    /// — there is nothing else to build one from), but that zero is NOT a
-    /// resumed identity here; it is an explicit "the sync relationship's
-    /// own bookkeeping is gone" flag. Deliberately not auto-mitigated
-    /// (e.g. by refusing to push) — the correct response, re-pairing or
-    /// rebuilding the sync relationship, is a decision only a host app
-    /// (and ultimately the user) can make; this just makes sure it is
-    /// never made silently.
+    /// m4-04 review round 2, finding 1 + round 3, §1: `true` when `init`
+    /// could get NO trustworthy identity from EITHER the primary state file
+    /// or the high-water-mark log (`PhoneSyncStateUnrecoverableError`) —
+    /// the "both unreadable" edge blocker 1's original fix missed. The
+    /// coordinator still constructs (with a fresh, zeroed `State` — there
+    /// is nothing else to build one from), but that zero is NOT a resumed
+    /// identity, and while this flag is `true` the coordinator is
+    /// **quiescent**: every public trigger and ingest entry point is a
+    /// silent no-op — no machine event runs, no state is persisted, and
+    /// **nothing is ever handed to the transport or the digest publisher**
+    /// (round 3, §1: detection alone was not enough — a zeroed state that
+    /// still pushes retransmits `(version, generation)` identities this
+    /// phone already used, regressing the watch below its true version and
+    /// aliasing generations a live transfer may still hold). Nothing is
+    /// lost by the quiescence: the watch retains its own durable copy of
+    /// every session until an ack it will not receive, and re-delivers
+    /// after the relationship is rebuilt.
+    ///
+    /// The only exit is the caller-invoked, explicit
+    /// `resetSyncStateForRePair()` — re-pairing/rebuilding the sync
+    /// relationship is a decision only a host app (and ultimately the
+    /// user) can make; this flag makes sure it is never made silently, and
+    /// the gates make sure no stale identity leaves the device while it is
+    /// pending.
     public private(set) var syncStateUnrecoverable = false
 
     private let catalogDebouncer: QuietPeriodCoalescer<Void>
@@ -229,13 +241,17 @@ public final class PhoneSyncCoordinator {
                 self.lastDailyPushAt = nil
             }
         } catch is PhoneSyncStateUnrecoverableError {
-            // m4-04 review round 2, finding 1: neither the primary nor the
-            // high-water log gave a trustworthy identity — construct a
-            // fresh state (there is nothing else to build one from) but
-            // flag it distinctly from an ordinary single-file corruption
-            // recovery, since "start fresh" here genuinely risks
-            // reusing/aliasing an identity a live transfer or the watch's
-            // own records might still remember.
+            // m4-04 review round 2, finding 1 + round 3, §1: neither the
+            // primary nor the high-water log gave a trustworthy identity —
+            // construct a fresh state (there is nothing else to build one
+            // from), flag it distinctly from an ordinary single-file
+            // corruption recovery, and QUIESCE: every push/ingest entry
+            // point below gates on `syncStateUnrecoverable`, so this
+            // zeroed state can never be transmitted, persisted, or
+            // laundered into a clean-looking save. "Start fresh" here
+            // genuinely risks reusing/aliasing an identity a live transfer
+            // or the watch's own records still remember — the flag alone
+            // (round 2's fix) surfaced that risk without preventing it.
             self.state = BurlyPhoneSyncMachine.State()
             self.lastDailyPushAt = nil
             self.recoveredFromCorruptState = true
@@ -269,6 +285,12 @@ public final class PhoneSyncCoordinator {
     /// lookup `PhoneSyncMachine.Event.sessionReceived`'s doc describes),
     /// routes it through the machine, and executes whatever it decides.
     public func sessionReceived(_ payload: BurlySessionPayloadDTO) async throws {
+        // Round 3, §1: quiescent while unrecoverable — a delivery accepted
+        // here would end in an ack + digest publish carrying a zeroed
+        // identity. Dropping it silently is safe: the watch keeps its own
+        // durable copy until the ack that will not come, and re-delivers
+        // once the relationship is rebuilt.
+        guard syncStateUnrecoverable == false else { return }
         let storedRevision = try store.session(id: payload.session.id)?.revision
         let commands = try deliver(.sessionReceived(payload, storedRevision: storedRevision))
         try await execute(commands, originalPayload: payload)
@@ -282,6 +304,7 @@ public final class PhoneSyncCoordinator {
     /// that event's doc for why an unconditional resend is the liveness-
     /// correct choice).
     public func applicationDidLaunch() async throws {
+        guard syncStateUnrecoverable == false else { return } // Round 3, §1.
         try await runEvent(.snapshotPushTriggered)
     }
 
@@ -293,6 +316,11 @@ public final class PhoneSyncCoordinator {
     /// try again, since the original edge is otherwise gone forever once
     /// `isWatchAppInstalled` is already `true`.
     public func watchAppInstalledDidChange(_ isInstalled: Bool) async throws {
+        // Round 3, §1: quiescent while unrecoverable — not even the edge
+        // bookkeeping runs, so a post-reset install signal (the host app
+        // re-drives current install state after a re-pair) is a clean
+        // false→true edge again.
+        guard syncStateUnrecoverable == false else { return }
         let wasInstalled = isWatchAppInstalled
         isWatchAppInstalled = isInstalled
         guard isInstalled else {
@@ -325,6 +353,7 @@ public final class PhoneSyncCoordinator {
     /// succeeds — a failed push (a store read, a transport enqueue) must
     /// not suppress the next 24 h of attempts on top of the failure itself.
     public func dailyPushIfDue() async throws {
+        guard syncStateUnrecoverable == false else { return } // Round 3, §1.
         let now = clock.now
         if let last = lastDailyPushAt, now.timeIntervalSince(last) < configuration.dailyPushInterval {
             return
@@ -340,6 +369,9 @@ public final class PhoneSyncCoordinator {
     /// `deliverCatalogChanged`'s doc for what happens if the push that
     /// results from it fails.
     public func catalogDidChange() async {
+        // Round 3, §1: quiescent while unrecoverable — not even a debounce
+        // countdown is scheduled (nothing may fire later either).
+        guard syncStateUnrecoverable == false else { return }
         await catalogDebouncer.coalesce(()) { [weak self] _ in
             await self?.deliverCatalogChanged()
         }
@@ -351,6 +383,7 @@ public final class PhoneSyncCoordinator {
     /// `publishDigest` *execution* is coalesced exactly like a burst of
     /// confirmations would be.
     public func historyDidChange() async throws {
+        guard syncStateUnrecoverable == false else { return } // Round 3, §1.
         try await runEvent(.historyChanged)
     }
 
@@ -358,7 +391,64 @@ public final class PhoneSyncCoordinator {
     /// transfer, echoing the `(version, generation)` identity
     /// `.transmitSnapshot` started it with.
     public func snapshotTransferFinished(version: Int, generation: Int) async throws {
+        // Round 3, §1: quiescent while unrecoverable. Handling a late
+        // transport callback would run `deliver(_:)`, whose
+        // `persistRuntimeState()` would launder the zeroed state into a
+        // clean-looking save — making the NEXT relaunch load `(0, 0)` as
+        // if it were a resumed identity, with no unrecoverable flag at all.
+        guard syncStateUnrecoverable == false else { return }
         try await runEvent(.snapshotTransferFinished(version: version, generation: generation))
+    }
+
+    // MARK: - Explicit reset (round 3, §1 — the only exit from quiescence)
+
+    /// The caller-invoked exit from the `syncStateUnrecoverable` quiescent
+    /// mode: durably persists a **fresh, zeroed identity domain** and only
+    /// then lifts the gates.
+    ///
+    /// ## Contract
+    ///
+    /// - **Call this only as part of deliberately rebuilding the sync
+    ///   relationship** (a re-pair: the watch app reinstalled/reset, so the
+    ///   watch's own §5 state — its adopted snapshot version, its pruning
+    ///   bookkeeping — is fresh too). The §5 wire protocol carries no
+    ///   explicit domain/epoch marker, so the watch "recognizes" the reset
+    ///   only through the re-pair itself: a genuinely fresh watch accepts
+    ///   the restarted version line from zero exactly as it would a first
+    ///   pairing.
+    /// - **Misuse cannot corrupt, only stall.** If a caller invokes this
+    ///   against a watch that was NOT reset, the watch's own version rule
+    ///   refuses the regressed snapshot versions (stalled adoption until
+    ///   the restarted line catches up), and `snapshotTransferFinished`'s
+    ///   full-identity match means a pre-corruption transfer's late
+    ///   callback can at worst prematurely clear the advisory outstanding
+    ///   slot — a cost §5's cancel-and-resend liveness already absorbs.
+    ///   No identity ever regresses on the *watch's* side and no data is
+    ///   overwritten; still, the intended flow is reset-both-sides.
+    /// - **No-op unless unrecoverable.** On a healthy coordinator this
+    ///   returns immediately — it can never be used to regress a live
+    ///   identity line.
+    /// - **Durability before liveness.** The fresh state is persisted
+    ///   *first*; if that save throws, the error propagates and the
+    ///   coordinator stays fully quiescent (the flag remains set) — the
+    ///   gates never lift on an identity domain that is not durably on
+    ///   disk, because an unpersisted reset would repeat the exact
+    ///   "transmitted identity with no durable record" hazard this whole
+    ///   fix closes.
+    /// - Does not invent or recover identities: the pre-corruption
+    ///   `(version, generation)` line is gone, and this deliberately does
+    ///   not guess at it (round 3, §1 — no invented identities). It starts
+    ///   a new line the re-paired watch treats as fresh.
+    public func resetSyncStateForRePair() throws {
+        guard syncStateUnrecoverable else { return }
+        let fresh = PhoneSyncRuntimeState(machineState: BurlyPhoneSyncMachine.State(), lastDailyPushAt: nil)
+        try statePersisting.save(fresh)
+        state = fresh.machineState
+        lastDailyPushAt = nil
+        pendingInstallPushRetry = false
+        lastCatalogPushFailure = nil
+        syncStateUnrecoverable = false
+        recoveredFromCorruptState = false
     }
 
     // MARK: - Test/diagnostic surface
@@ -385,6 +475,19 @@ public final class PhoneSyncCoordinator {
     /// (incorrectly, pre-fix) start interleaving its own transport calls.
     var executionWaiterCountForTesting: Int { executionWaiters.count }
 
+    /// Internal test seam (round 3, §6): the most recently scheduled
+    /// catalog-push retry `Task`. A retry is deliberately untracked in
+    /// production (fire-and-forget; nothing awaits it), which left the
+    /// stale-retry pin with no completion signal — a fixed wall-clock
+    /// sleep cannot prove the retry did NOT transmit, because the executor
+    /// may simply not have scheduled it inside the window. Awaiting this
+    /// handle's `value` is the deterministic signal: when it resumes, the
+    /// retry has definitely run to completion — reached its epoch check
+    /// and either backed off (post-fix) or replayed its stale commands
+    /// (pre-fix) — so a negative assertion after it cannot be a false
+    /// green. Holding the last handle changes no production behavior.
+    private(set) var mostRecentCatalogRetryTaskForTesting: Task<Void, Never>?
+
     // MARK: - Catalog-edit push: retry + surface (major 3)
 
     /// The debounced fire for a catalog edit. Unlike a session-ingest
@@ -409,6 +512,11 @@ public final class PhoneSyncCoordinator {
     /// same retry treatment as a transport failure, through
     /// `persistThenExecuteCatalogCommands` below.
     private func deliverCatalogChanged() async {
+        // Round 3, §1: defense in depth — `catalogDidChange()` is already
+        // gated (and the flag is only ever set in `init`, before any
+        // debounce can exist), but a debounced fire must never transmit
+        // from an unrecoverable state regardless of how it was scheduled.
+        guard syncStateUnrecoverable == false else { return }
         catalogBatchEpoch += 1
         let epoch = catalogBatchEpoch
         let commands = machine.handle(.catalogChanged, &state, now: clock.now)
@@ -437,7 +545,7 @@ public final class PhoneSyncCoordinator {
             guard retriesRemaining > 0 else { return }
             let scheduler = self.scheduler
             let quietPeriod = configuration.catalogEditDebounce
-            Task { [weak self] in
+            mostRecentCatalogRetryTaskForTesting = Task { [weak self] in
                 try? await scheduler.sleep(for: quietPeriod)
                 await self?.persistThenExecuteCatalogCommands(commands, epoch: epoch, retriesRemaining: retriesRemaining - 1)
             }
@@ -460,7 +568,7 @@ public final class PhoneSyncCoordinator {
             guard retriesRemaining > 0 else { return }
             let scheduler = self.scheduler
             let quietPeriod = configuration.catalogEditDebounce
-            Task { [weak self] in
+            mostRecentCatalogRetryTaskForTesting = Task { [weak self] in
                 try? await scheduler.sleep(for: quietPeriod)
                 await self?.executeCatalogCommands(commands, epoch: epoch, retriesRemaining: retriesRemaining - 1)
             }
@@ -513,6 +621,12 @@ public final class PhoneSyncCoordinator {
         _ commands: [BurlyPhoneSyncMachine.Command],
         originalPayload: BurlySessionPayloadDTO?
     ) async throws {
+        // Round 3, §1: the last line of defense — every transport call in
+        // this type flows through here (and every digest publish through
+        // `publishDigestNow`, gated the same way), so even a path that
+        // slipped past the per-trigger gates cannot transmit from an
+        // unrecoverable state.
+        guard syncStateUnrecoverable == false else { return }
         await acquireExecutionLock()
         defer { releaseExecutionLock() }
         try await executeUnlocked(commands, originalPayload: originalPayload)
@@ -621,6 +735,9 @@ public final class PhoneSyncCoordinator {
     /// to by the time it fires; a failed derivation just means the next
     /// history-changed/confirmed event tries again.
     private func publishDigestNow() async {
+        // Round 3, §1: the digest publisher is a transmission to the watch
+        // too (it carries `snapshotVersion`) — gated like the transport.
+        guard syncStateUnrecoverable == false else { return }
         let snapshotVersion = state.latestSnapshotVersion
         let ackedSessionIDs = Set(state.ackAge.keys)
         guard let payload = try? SessionDigestGenerator.generate(

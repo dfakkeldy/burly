@@ -89,23 +89,17 @@ func makePhoneStore(clock: any WallClock = TestClock()) throws -> SwiftDataStore
     try SwiftDataStore(kind: .phone, at: .inMemory, clock: clock)
 }
 
-/// Settles a detached, UNTRACKED `Task` (m4-04 review round 2, findings 5
-/// and 6: a catalog-retry `Task` is not held by any `QuietPeriodCoalescer`,
-/// so `drainPendingDebounces()` cannot await it; `ManualTriggerScheduler
-/// .settle()`'s pure `Task.yield()` loop was observed to be insufficient on
-/// its own in a busy test context — with several concurrent chains recently
-/// active, 50 cooperative yields did not reliably let a freshly-resumed
-/// background `Task` reach and complete its own actor calls before the
-/// calling test's own continuation ran again). A brief, bounded REAL sleep
-/// is the standard mitigation for exactly this class of "confirm an effect
-/// did NOT happen" assertion when no other completion signal is available:
-/// it can only make the assertion MORE likely to catch a real straggling
-/// effect, never less, so it does not introduce a wrong-direction flake —
-/// the risk it trades away is a slower test, not a less trustworthy one.
-func settleRealWork() async {
-    await Task.yield()
-    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-}
+// NOTE (round 3, §6): the former `settleRealWork()` helper (a 50 ms real
+// sleep used to "settle" untracked background tasks before negative
+// assertions) is deliberately GONE. A fixed sleep cannot prove absence —
+// the executor may simply not schedule the straggling task inside the
+// window, letting a real regression pass by timing luck. Every pin that
+// needs to assert "the stale work definitely ran and was rejected" now
+// awaits a deterministic completion signal instead:
+// `PhoneSyncCoordinator.mostRecentCatalogRetryTaskForTesting` for the
+// untracked catalog-retry task, and
+// `QuietPeriodCoalescer.currentTaskForTesting` for a captured countdown's
+// own task handle. Do not reintroduce wall-clock settling.
 
 // MARK: - Transport / publisher fakes
 

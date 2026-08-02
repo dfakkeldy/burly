@@ -285,6 +285,12 @@ struct PushTriggerTests {
         #expect(await transport.transmissions.isEmpty, "A's only attempt failed")
         #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 1)
         let retryWaiterID = await scheduler.waitForFreshWaiter(excluding: [editWaiterID])
+        // Round 3, §6: capture the retry Task's handle NOW (it was
+        // scheduled synchronously inside A's failed execute attempt, which
+        // the drain above fully awaited) — awaiting it later is the
+        // deterministic completion signal the old 50 ms settle could not
+        // give.
+        let staleRetryTask = try #require(coordinator.mostRecentCatalogRetryTaskForTesting)
 
         // Edit B arrives next. Its own debounce ties A's retry EXACTLY on
         // paper (both scheduled `catalogEditDebounce` after the same
@@ -311,7 +317,15 @@ struct PushTriggerTests {
         // matches — B's delivery bumped `catalogBatchEpoch` — so the retry
         // backs off without touching the transport at all.
         scheduler.resumeWaiter(id: retryWaiterID)
-        await settleRealWork()
+        // Round 3, §6: await the retry Task itself — when this resumes,
+        // the stale retry has DEFINITELY run to completion: it reached its
+        // epoch check and either backed off (post-fix) or fully replayed
+        // its stale transmit (pre-fix). The negative assertions below can
+        // therefore never run "too early"; against pre-fix code this pin
+        // fails deterministically, not by scheduling luck. (The awaiting
+        // test suspends off the main actor, so the retry's own hop onto it
+        // cannot deadlock.)
+        await staleRetryTask.value
 
         #expect(await transport.transmissions.map(\.generation) == [2], "A's stale retry must NOT have resurrected generation 1")
         #expect(await transport.cancellations.map(\.generation) == [1], "no new cancel either — the stale retry must be a complete no-op")
