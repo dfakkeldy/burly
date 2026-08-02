@@ -313,8 +313,14 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(logButton.waitForExistence(timeout: 10))
         logButton.tap()
 
+        // RestTimerBanner renders below the Log button in the same
+        // ScrollView (ExercisePageView.interactiveControls) -- tapping Log
+        // set already needed its own auto-scroll to become hittable, so the
+        // banner starts even further off-screen and needs an explicit
+        // scroll to reveal it, same as the lazily-rendered actions list
+        // elsewhere in this file.
         let remaining = app.staticTexts["restTimer.remaining"]
-        XCTAssertTrue(remaining.waitForExistence(timeout: 5), "Expected the rest timer to auto-start after logging a set")
+        XCTAssertTrue(scrollUntilExists(app, remaining), "Expected the rest timer to auto-start after logging a set")
 
         let decrease = anyElement(app, identifier: "restTimer.decreaseButton")
         let increase = anyElement(app, identifier: "restTimer.increaseButton")

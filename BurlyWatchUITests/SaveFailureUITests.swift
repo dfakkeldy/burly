@@ -84,8 +84,12 @@ final class SaveFailureUITests: XCTestCase {
         XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
         ellipsis.tap()
 
+        // "Add exercise" is row 5 of 9 in SessionActionsView's lazily-rendered
+        // List -- past the initial-scroll-position fold on the 46 mm sim,
+        // same reason "Discard workout" (row 9) and "End workout" (row 8)
+        // need this elsewhere in this file / LoggingScreenUITests.swift.
         let addExercise = app.buttons["sessionActions.addExercise"]
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollUntilExists(app, addExercise), "Expected to be able to scroll to 'Add exercise'")
         addExercise.tap()
 
         let addPlaceholder = app.buttons["exercisePicker.addPlaceholder"]

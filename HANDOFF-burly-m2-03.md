@@ -160,7 +160,7 @@ checking `restTimer.remaining`; switch `sessionActions.addExercise` to
 chain needs the same `onDismiss`-deferred pattern `LoggingScreenView`
 already uses for sheet→dialog handoffs, or just a scroll).
 
-Resume:
+Resume (superseded by the 2026-08-02 Round B entry below):
 ```
 Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-03
 Branch: task/burly-m2-03
@@ -176,4 +176,126 @@ Next action (needs dispatcher go-ahead first, no unauthorized re-run):
    needs the same onDismiss-deferred pattern the sheet->dialog handoff
    already uses (see PendingSessionAction's doc).
 Then: ONE more Scripts/acceptance-sim.sh run.
+```
+
+## 2026-08-02 — Round B (authorized): the three fixes applied, still NOT green
+
+Dispatcher authorized fixing the three failing tests with a one-run budget.
+All three were addressed; **the run (`Scripts/output/runs/20260802T075453Z`)
+still failed with the exact same three tests failing**, but the new
+evidence overturns part of the Round A diagnosis. Reported honestly per
+"if anything still fails, stop — no rerun." No further sim runs performed.
+
+What was done:
+
+1. **`testRestTimerControlsHaveMinimumHitRegions`**: replaced the bare
+   `remaining.waitForExistence(timeout: 5)` with
+   `scrollUntilExists(app, remaining)` (8 swipe-up attempts over ~17s).
+   **Still failed, same assertion.** New evidence this time: the scroll
+   loop ran its full 8 attempts and `restTimer.remaining` never existed at
+   any scroll position. `ExercisePageView`'s `ScrollView` wraps a **plain
+   `VStack`, not a `LazyVStack`** — unlike `SessionActionsView`'s `List`
+   (which genuinely defers off-screen rows), a plain `VStack` constructs
+   all children immediately regardless of scroll position, and
+   `XCUIElement.exists` does not require on-screen visibility. So this was
+   never actually a scroll problem — the Round A diagnosis was wrong. The
+   real question is why `viewModel.isRestRunning` (or the log itself)
+   isn't true after tapping `logSetButton`, and that remains open: a
+   structurally near-identical test in the same run,
+   `testSummaryNeverShowsInventedPRLabel` (tap routine row -> wait for
+   `logSetButton` -> tap it, no extra settling wait), logs successfully and
+   reaches "End workout" without incident in the same run. What's
+   different about this one is unclear without a live debugging session
+   (screenshot/accessibility-snapshot at the failure point) that a blind
+   fix-and-rerun can't provide.
+
+2. **`testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds`**:
+   replaced `addExercise.waitForExistence(timeout: 5)` with
+   `scrollUntilExists(app, addExercise)`. **Still failed** — new failure
+   text this time: `"Expected to be able to scroll to 'Add exercise'"`,
+   after 8 full swipe-up attempts (~17s) that never revealed
+   `sessionActions.addExercise`. Same conclusion as #1: this was not
+   purely a scroll/off-screen problem the way "End workout" (row 8) and
+   "Discard workout" (row 9) are elsewhere in this suite — something is
+   preventing that row from existing in the tree at all in this specific
+   flow (ellipsis -> "Add exercise", immediately after Start, no fault
+   active yet since `createExercise` only fails on the row *after* this
+   one is tapped). Root cause not yet identified.
+
+3. **`testDiscardFailureBlocksAndRetrySucceeds`**: researched first, per
+   the dispatcher's instruction, before touching code. Confirmed via a web
+   search that chaining two SwiftUI presentation modifiers (toggling one
+   `isPresented` binding off and a second one on in the same synchronous
+   state update) is a documented, known-unreliable pattern across
+   `.sheet`/`.alert`/`.confirmationDialog` — the same class of problem this
+   file already works around for the sheet -> confirmationDialog handoff
+   (`PendingSessionAction` + `onDismiss`). Concluded this is a **real,
+   pre-existing defect** in `LoggingScreenView`'s double-confirm discard
+   flow (`confirmDiscardStepOne()` flips `isShowingDiscardStepOne` off and
+   `isShowingDiscardStepTwo` on in one call), not a test artifact, and not
+   something this task's earlier fix rounds introduced. Fix applied:
+   merged the two `.confirmationDialog` modifiers into **one**, whose
+   `isPresented` binding (`isShowingDiscardStepOne || isShowingDiscardStepTwo`)
+   never toggles off between the two steps, with title/actions computed
+   from which step is active — so SwiftUI only has to update an
+   already-presented dialog's content, never chain a second presentation.
+   **Still failed at the same point** (waiting for "Discard permanently"
+   after tapping "Discard"). This means the fix as implemented did not
+   resolve it. Revised hypothesis: SwiftUI's `.confirmationDialog` may not
+   live-update its title/actions builder while already presented on this
+   watchOS version/wersion — i.e., the dialog may render once at
+   presentation time and not re-diff on a later state change even though
+   `isPresented` never went false. That would need a structurally
+   different fix (e.g., drop `.confirmationDialog` for this flow and use a
+   dedicated full-screen confirm view the way the m2-03 review's blocker
+   fix already does for `SessionConflictView`, which has no
+   presented-modifier chaining at all) — not verified, because no further
+   sim runs are authorized this round.
+
+No regressions: all 12 previously-passing tests (the 9 cleanly-fixed
+findings' pins plus the 3 that already passed in round A) still pass,
+including `testFinishSaveFailureIsRecoverableWithoutReFinishing` and
+`testLogSetSaveFailureBlocksScreenAndRetrySucceeds` (F6/F7) and both
+`SessionConflictUITests` tests (F1). `BurlyKit` (557/557) and the
+migration spike (2/2) still green, unaffected (still no BurlyKit changes
+in this task).
+
+Verification this round:
+- `cd BurlyKit && swift test`: 557/557 pass.
+- `BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests`: 2/2 pass.
+- `Scripts/acceptance-sim.sh`: BurlyPhoneUITests 1/1 pass. BurlyWatchUITests
+  **12/15 pass, 3 fail** (same three as round A, different/more informative
+  failure signatures — see above). Exit 65, `acceptance-sim: FAIL`.
+  Result bundle: `Scripts/output/runs/20260802T075453Z/BurlyWatchUITests.xcresult`.
+
+Not merge-ready. This needs a **live debugging session** next (attach to
+the sim, screenshot/dump the accessibility tree at the moment of failure
+for `testRestTimerControlsHaveMinimumHitRegions` and
+`testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds`, and confirm
+or refute the "confirmationDialog doesn't live-update" hypothesis for
+`testDiscardFailureBlocksAndRetrySucceeds`) rather than another blind
+fix-and-rerun cycle — two rounds of plausible-but-wrong static diagnosis
+in a row is a signal to stop guessing, per the global "after two failed
+approaches, stop adding machinery, reassess" rule.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-03
+Branch: task/burly-m2-03 (HEAD after this entry's commit)
+Two fix rounds (A, B) have each closed some failures but left the same
+three tests red, with contradicting diagnoses each time. Needs a live
+simulator debugging session (screenshots / accessibility snapshot at the
+failure point), not another blind code-guess-and-rerun:
+1. `testRestTimerControlsHaveMinimumHitRegions` /
+   `testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds`: attach to
+   the sim mid-test (or add explicit screenshot attachments right before
+   the failing assertion) to see what's actually on screen when the
+   expected element doesn't exist -- confirm whether logging/navigation
+   genuinely didn't happen, or something else is going on.
+2. `testDiscardFailureBlocksAndRetrySucceeds`: verify whether the merged
+   single-`.confirmationDialog` actually live-updates its title/actions in
+   place on watchOS 26, or replace it with a dedicated full-screen confirm
+   view (no `.confirmationDialog` at all) modeled on `SessionConflictView`.
+Do not spend a third acceptance-sim.sh run on another guess without first
+getting a screenshot/log of the actual on-screen state at failure time.
 ```

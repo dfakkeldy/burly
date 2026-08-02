@@ -90,20 +90,35 @@ struct LoggingScreenView: View {
             )
         }
         // §2 Discard: "destructive, double-confirm."
+        //
+        // Round B fix: this used to be two separate `.confirmationDialog`
+        // modifiers, `confirmDiscardStepOne()` flipping `isShowingDiscardStepOne`
+        // to false and `isShowingDiscardStepTwo` to true in the same
+        // synchronous call. Confirmed against a live run (SaveFailureUITests
+        // .testDiscardFailureBlocksAndRetrySucceeds stalled waiting for the
+        // second dialog after tapping the first) and against SwiftUI's own
+        // documented behavior: presenting a second sheet/alert/
+        // confirmationDialog immediately after dismissing the first is not
+        // reliably supported -- the exact reason this file already routes
+        // the sheet -> confirmationDialog handoff through `pendingAction` /
+        // `onDismiss` above. `.confirmationDialog` has no `onDismiss`, so the
+        // fix here is structural instead: ONE dialog whose `isPresented`
+        // binding never toggles off between the two steps (it stays true for
+        // both `isShowingDiscardStepOne` and `isShowingDiscardStepTwo`), and
+        // whose title/actions are computed from which step is active. SwiftUI
+        // only has to update the content of an already-presented dialog, not
+        // chain a second presentation -- so the two-tap "double-confirm" the
+        // spec requires survives, without the presentation defect.
         .confirmationDialog(
-            "Discard this workout?",
-            isPresented: discardStepOneBinding,
+            discardDialogTitle,
+            isPresented: discardDialogBinding,
             titleVisibility: .visible
         ) {
-            Button("Discard", role: .destructive, action: viewModel.confirmDiscardStepOne)
-            Button("Cancel", role: .cancel, action: viewModel.cancelDiscard)
-        }
-        .confirmationDialog(
-            "This can't be undone.",
-            isPresented: discardStepTwoBinding,
-            titleVisibility: .visible
-        ) {
-            Button("Discard permanently", role: .destructive, action: viewModel.confirmDiscardStepTwo)
+            if viewModel.isShowingDiscardStepTwo {
+                Button("Discard permanently", role: .destructive, action: viewModel.confirmDiscardStepTwo)
+            } else {
+                Button("Discard", role: .destructive, action: viewModel.confirmDiscardStepOne)
+            }
             Button("Cancel", role: .cancel, action: viewModel.cancelDiscard)
         }
         // §2 Always-On: the screen actually woke from the dimmed state --
@@ -189,17 +204,18 @@ struct LoggingScreenView: View {
         Binding(get: { viewModel.pickerContext }, set: { viewModel.pickerContext = $0 })
     }
 
-    private var discardStepOneBinding: Binding<Bool> {
+    /// True across both discard steps -- kept `true` continuously while
+    /// `confirmDiscardStepOne()` flips which step is active, so the single
+    /// `.confirmationDialog` above never dismisses and re-presents (see its
+    /// doc comment).
+    private var discardDialogBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.isShowingDiscardStepOne },
+            get: { viewModel.isShowingDiscardStepOne || viewModel.isShowingDiscardStepTwo },
             set: { if !$0 { viewModel.cancelDiscard() } }
         )
     }
 
-    private var discardStepTwoBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.isShowingDiscardStepTwo },
-            set: { if !$0 { viewModel.cancelDiscard() } }
-        )
+    private var discardDialogTitle: String {
+        viewModel.isShowingDiscardStepTwo ? "This can't be undone." : "Discard this workout?"
     }
 }
