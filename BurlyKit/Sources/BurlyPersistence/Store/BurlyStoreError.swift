@@ -105,4 +105,21 @@ public enum BurlyStoreError: Error, Equatable {
     /// failure rather than handing a poisoned `Weight` back into equality,
     /// sorting, volume, PR, or chart math.
     case corruptedWeight(id: UUID, underlying: WeightValidationError)
+    // There is deliberately no `unboundedStatsQuery` case (m6-01 fix round
+    // 2, review item 7 — reverting round 1's fix for this same finding).
+    // Round 1 refused an all-nil `loggedSetSlices`/`loggedSessionDates`
+    // call at runtime, but a runtime check on an *optional* `Date` cannot
+    // stop a non-nil sentinel (`since: .distantPast`) from meaning the
+    // same "unbounded" thing while satisfying "not nil" — and round 1's
+    // own benchmark had quietly started relying on exactly that sentinel
+    // to express "all-time". Round 2 closes the gap by API shape instead:
+    // `loggedSetSlices` split into an exercise-bounded form (mandatory
+    // `UUID`, no way to omit it) and an all-exercises form that takes a
+    // validated `TrailingWindow` domain type instead of a `Date` a caller
+    // could sentinel past; `loggedSessionDates`'s `since` became a plain
+    // non-optional `Date`, with the genuinely-unbounded case promoted to
+    // its own explicit, documented method, `allLoggedSessionDates()`. None
+    // of `BurlyStore`'s stats-query methods can express an unbounded call
+    // anymore, so there is no longer a runtime error to throw for one —
+    // see `BurlyStore`'s stats-queries doc for the full reasoning.
 }

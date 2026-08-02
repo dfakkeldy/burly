@@ -619,6 +619,101 @@ public final class SwiftDataStore: BurlyStore {
             .map { try $0.snapshot() }
     }
 
+    // MARK: - Stats queries (§7; see the protocol doc for why these exist)
+
+    public func loggedSetSlices(
+        exerciseID: UUID,
+        since: Date?,
+        through: Date?
+    ) throws -> [SetRecordSlice] {
+        try fetchSetSlices(
+            predicate: Self.setRecordFilterPredicate(exerciseID: exerciseID, since: since, through: through),
+            exerciseID: exerciseID
+        )
+    }
+
+    public func loggedSetSlices(
+        window: TrailingWindow,
+        through asOf: Date,
+        calendar: Calendar
+    ) throws -> [SetRecordSlice] {
+        let (since, through) = window.dateRange(asOf: asOf, calendar: calendar)
+        return try fetchSetSlices(
+            predicate: Self.setRecordFilterPredicate(exerciseID: nil, since: since, through: through),
+            exerciseID: nil
+        )
+    }
+
+    /// Shared fetch/map body for both `loggedSetSlices` overloads above —
+    /// they differ only in how the predicate and `exerciseID` (for the
+    /// belt-and-suspenders Swift-side check) are produced.
+    private func fetchSetSlices(
+        predicate: Predicate<SetRecord>?,
+        exerciseID: UUID?
+    ) throws -> [SetRecordSlice] {
+        var descriptor = FetchDescriptor<SetRecord>(predicate: predicate)
+        // One batched prefetch instead of one fault per row: every slice
+        // needs its parent `SessionItem` (for the exercise reference) and
+        // that item's `Session` (for `state`/`startedAt`) — the two hops
+        // this query exists to avoid amplifying (see the protocol doc).
+        descriptor.relationshipKeyPathsForPrefetching = [\.sessionItem, \.sessionItem?.session, \.sessionItem?.exercise]
+
+        // Not a `compactMap`: `SetRecord.snapshot()` throws on a corrupted
+        // stored weight (m1-06 review, finding M5), and a stats query
+        // should fail the same way every other read of this column does,
+        // not silently drop the offending row from a chart.
+        var slices: [SetRecordSlice] = []
+        for record in try context.fetch(descriptor) {
+            guard
+                let item = record.sessionItem,
+                let session = item.session,
+                // Swift-side, not in the predicate: `SessionState` cannot be
+                // captured in a `#Predicate` (see the protocol doc). The
+                // date bound (and, when given, the exercise bound — both
+                // already applied above) are what keep this from
+                // degenerating into a full-history scan even though the
+                // state check happens after the fetch.
+                session.state == .logged,
+                // Redundant with the predicate above when `exerciseID` is
+                // non-nil (belt-and-suspenders against a predicate that
+                // silently no-ops — the same posture `resumableActiveSession`
+                // takes toward a table it does not fully trust); free when
+                // `exerciseID` is nil.
+                exerciseID == nil || item.exercise?.id == exerciseID
+            else { continue }
+            slices.append(
+                SetRecordSlice(
+                    sessionID: session.id,
+                    sessionStartedAt: session.startedAt,
+                    exerciseID: item.exercise?.id,
+                    set: try record.snapshot()
+                )
+            )
+        }
+        return slices
+    }
+
+    public func loggedSessionDates(since: Date, through: Date?) throws -> [Date] {
+        // No relationship prefetching: this query never touches `.items`,
+        // so there is nothing beyond the row itself to fault.
+        let descriptor = FetchDescriptor<Session>(
+            predicate: Self.sessionDatePredicate(since: since, through: through)
+        )
+        return try context.fetch(descriptor)
+            .filter { $0.state == .logged }
+            .map(\.startedAt)
+    }
+
+    public func allLoggedSessionDates() throws -> [Date] {
+        // No predicate at all: the deliberate, documented exemption — see
+        // the protocol doc on this method for why an unbounded fetch is
+        // safe here specifically.
+        let descriptor = FetchDescriptor<Session>()
+        return try context.fetch(descriptor)
+            .filter { $0.state == .logged }
+            .map(\.startedAt)
+    }
+
     /// **Internal** (m1-06 review round D), for the mirror-image reason
     /// `upsertLastPerformance` is: the prune on its own, in its own save,
     /// is the half of a §5 `digest` whose isolation the M2 finding was
@@ -708,6 +803,78 @@ public final class SwiftDataStore: BurlyStore {
             context.rollback()
             throw error
         }
+    }
+
+    /// One `Predicate<SetRecord>` per presence combination of `exerciseID`/
+    /// `since`/`through` (eight, all spelled out), rather than one clever
+    /// expression that tries to cover all of them (m6-01): `#Predicate`'s
+    /// macro needs a literal comparison against a non-optional bound at
+    /// each call site, and force-unwrapping an optional inside the macro
+    /// body is exactly the kind of "compiles, fails at runtime" trap
+    /// `ActiveSessionJournal.swift` already documents one instance of.
+    /// Eight small, obviously-correct predicates cost nothing a ninth,
+    /// cleverer one would have saved.
+    ///
+    /// `sessionItem?.exercise?.id == exerciseID` — a two-hop relationship
+    /// traversal — is exercised at 50k rows by
+    /// `StatsQueryBenchmarkTests`/`StatsQueryTests`' exercise-scoping test;
+    /// it is comparing a `UUID`, not capturing a `SessionState`, so it does
+    /// not hit the enum-predicate failure mode. Pushing it into the
+    /// predicate (rather than fetching every row and filtering in Swift)
+    /// is what turns the PR chart's "all-time, one exercise" query — the
+    /// one range that cannot bound itself by date — from an O(total
+    /// history) fetch into an O(that exercise's history) one: measured on
+    /// `StatsQueryBenchmarkTests`' 50k-row store, this took the query from
+    /// 4.04 s / 172 MB peak RSS (fetch everything, filter in Swift) to
+    /// 0.51 s / 40 MB (filter in the predicate) for the same 4,306-row
+    /// result — see the benchmark's own comments and this task's handoff
+    /// for the exact numbers and how to reproduce them.
+    private static func setRecordFilterPredicate(
+        exerciseID: UUID?,
+        since: Date?,
+        through: Date?
+    ) -> Predicate<SetRecord>? {
+        switch (exerciseID, since, through) {
+        case (nil, nil, nil):
+            return nil
+        case let (nil, since?, nil):
+            return #Predicate<SetRecord> { $0.completedAt >= since }
+        case let (nil, nil, through?):
+            return #Predicate<SetRecord> { $0.completedAt <= through }
+        case let (nil, since?, through?):
+            return #Predicate<SetRecord> { $0.completedAt >= since && $0.completedAt <= through }
+        case let (exerciseID?, nil, nil):
+            return #Predicate<SetRecord> { $0.sessionItem?.exercise?.id == exerciseID }
+        case let (exerciseID?, since?, nil):
+            return #Predicate<SetRecord> {
+                $0.sessionItem?.exercise?.id == exerciseID && $0.completedAt >= since
+            }
+        case let (exerciseID?, nil, through?):
+            return #Predicate<SetRecord> {
+                $0.sessionItem?.exercise?.id == exerciseID && $0.completedAt <= through
+            }
+        case let (exerciseID?, since?, through?):
+            return #Predicate<SetRecord> {
+                $0.sessionItem?.exercise?.id == exerciseID
+                    && $0.completedAt >= since
+                    && $0.completedAt <= through
+            }
+        }
+    }
+
+    /// `Session`'s counterpart to `setRecordFilterPredicate(exerciseID:
+    /// since:through:)`, bounding `startedAt` instead of `completedAt` (and
+    /// with no exercise dimension — `loggedSessionDates` never has one).
+    /// `since` is non-optional (m6-01 fix round 2, review item 7:
+    /// `loggedSessionDates(since:through:)`'s `since` parameter is now a
+    /// plain `Date`, so there is no `nil` case left to switch on here —
+    /// the fully-unbounded fetch lives only in `allLoggedSessionDates()`,
+    /// which builds its own predicate-less `FetchDescriptor` directly).
+    private static func sessionDatePredicate(since: Date, through: Date?) -> Predicate<Session> {
+        if let through {
+            return #Predicate<Session> { $0.startedAt >= since && $0.startedAt <= through }
+        }
+        return #Predicate<Session> { $0.startedAt >= since }
     }
 
     /// Single fetch-by-id helper. `id` is unique on every model, so
