@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Watch app shell root (spec §2 home, §5 fresh install). Switches between
 // the routine list, the "waiting for iPhone" state, and a store-failure
-// fallback, then hosts the §2 navigation stubs (Start, "Empty session").
+// fallback, then routes Start / "Empty session" (§2) to the real session
+// flow via SessionEntryView (m2-03).
 
 import SwiftUI
 import BurlyPersistence
@@ -9,9 +10,11 @@ import BurlyPersistence
 @MainActor
 struct ContentView: View {
     @State private var viewModel: WatchHomeViewModel
+    private let store: BurlyStore
     @Environment(\.scenePhase) private var scenePhase
 
     init(store: BurlyStore) {
+        self.store = store
         _viewModel = State(initialValue: WatchHomeViewModel(store: store))
     }
 
@@ -19,7 +22,7 @@ struct ContentView: View {
         NavigationStack {
             content
                 .navigationDestination(for: HomeRoute.self) { route in
-                    SessionStartStubView(route: route)
+                    SessionEntryView(route: route, store: store)
                 }
         }
         .task { viewModel.load() }
@@ -43,7 +46,12 @@ struct ContentView: View {
         case .waitingForPhone:
             WaitingForPhoneView()
         case .loaded(let rows):
+            // Reload on every reappearance (m2-03): finishing or discarding
+            // a workout pops back here, and the "last done N days ago" text
+            // on the routine that was just run needs to reflect it without
+            // waiting for a scenePhase transition.
             RoutineListView(rows: rows)
+                .onAppear { viewModel.load() }
         case .failed(let message):
             // A visible retry, not just a scenePhase-triggered one (m2-01
             // review finding 4.1): a transient failure shouldn't require

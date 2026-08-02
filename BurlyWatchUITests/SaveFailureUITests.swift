@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import XCTest
+
+/// m2-03 review findings 6-9: "a lifter mid-workout must never be lied to
+/// about whether their sets are saved." A real storage failure essentially
+/// never happens against the simulator's SwiftData store, so these tests
+/// drive `WatchDemoSeed`'s `FaultInjectingStore` -- a decorator that wraps
+/// the real store and deterministically fails one named method for a
+/// chosen number of calls -- via the `BURLY_WATCH_UI_TEST_FAULT*` launch-
+/// environment keys. Every scenario below still seeds the same "Leg Day" /
+/// "Push/Pull" routines `.routines` does; only the fault axis differs.
+final class SaveFailureUITests: XCTestCase {
+    private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
+    private static let faultKey = "BURLY_WATCH_UI_TEST_FAULT"
+    private static let faultSuccessesKey = "BURLY_WATCH_UI_TEST_FAULT_SUCCESSES"
+    private static let faultCountKey = "BURLY_WATCH_UI_TEST_FAULT_COUNT"
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
+
+    /// Finding 7: an ordinary logged-set save failure must block the
+    /// screen -- never a success haptic/advance on an unsaved set -- and
+    /// Retry must actually recover.
+    func testLogSetSaveFailureBlocksScreenAndRetrySucceeds() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.faultKey] = "saveActiveSession"
+        app.launchEnvironment[Self.faultSuccessesKey] = "1" // let Start's own save through
+        app.launchEnvironment[Self.faultCountKey] = "1" // fail exactly the first logged set's save
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+
+        XCTAssertTrue(app.staticTexts["exercisePage.name"].waitForExistence(timeout: 10))
+        let setCounter = app.staticTexts["exercisePage.setCounter"]
+        XCTAssertTrue(waitFor { setCounter.exists && setCounter.label == "Set 1 of 3" })
+
+        let logButton = app.buttons["logSetButton"]
+        XCTAssertTrue(logButton.waitForExistence(timeout: 5))
+        logButton.tap()
+
+        let saveFailureHeading = app.staticTexts["saveFailure.heading"]
+        XCTAssertTrue(
+            saveFailureHeading.waitForExistence(timeout: 5),
+            "Expected a blocking save-failure state -- never a success haptic/advance on an unsaved set"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-saveFailure-logSet")
+
+        let retryButton = app.buttons["saveFailure.retryButton"]
+        XCTAssertTrue(retryButton.waitForExistence(timeout: 5))
+        retryButton.tap()
+
+        // Retry succeeds (the fault only fires once): back on the logging
+        // screen, genuinely advanced to set 2 -- exactly one set logged,
+        // not zero (masked failure) and not two (a double-apply from a
+        // botched rollback).
+        XCTAssertTrue(
+            waitFor { setCounter.exists && setCounter.label == "Set 2 of 3" },
+            "Expected the retried log to succeed and advance to exactly set 2"
+        )
+        XCTAssertFalse(app.staticTexts["saveFailure.heading"].exists)
+    }
+
+    /// Finding 8: placeholder exercise creation must not commit the engine
+    /// mutation unless catalog persistence succeeds.
+    func testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.faultKey] = "createExercise"
+        app.launchEnvironment[Self.faultSuccessesKey] = "0" // the very first createExercise call is the placeholder attempt
+        app.launchEnvironment[Self.faultCountKey] = "1"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+        XCTAssertTrue(app.staticTexts["exercisePage.name"].waitForExistence(timeout: 10))
+
+        let ellipsis = anyElement(app, identifier: "ellipsisMenu")
+        XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
+        ellipsis.tap()
+
+        // m2-03 review round 3 (final pass): "Add exercise" is now row 1 of
+        // 9 in SessionActionsView's List (see that file's doc on the
+        // frequent-first/destructive-last row order) -- no scroll needed,
+        // for the same reason a lifter reaching for it mid-workout
+        // shouldn't need to scroll either. This used to be row 5, exactly
+        // one row past this small watch List's reliable no-scroll fold; a
+        // live investigation caught the scroll-to-reveal-it step itself
+        // flaking under full-gate load even with a finer-grained scroll
+        // technique. Reordering the menu fixed the root cause for the test
+        // and the real UI at once, rather than continuing to chase a more
+        // reliable scroll mechanism for an item that never needed to be
+        // below the fold in the first place.
+        let addExercise = app.buttons["sessionActions.addExercise"]
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5), "Expected 'Add exercise' to be visible without scrolling")
+        addExercise.tap()
+
+        let addPlaceholder = app.buttons["exercisePicker.addPlaceholder"]
+        XCTAssertTrue(
+            addPlaceholder.waitForExistence(timeout: 5),
+            "Expected the ellipsis sheet's dismissal to hand off to the add-exercise picker"
+        )
+        addPlaceholder.tap()
+
+        let saveFailureHeading = app.staticTexts["saveFailure.heading"]
+        XCTAssertTrue(
+            saveFailureHeading.waitForExistence(timeout: 5),
+            "Expected placeholder creation to block on a catalog-persistence failure rather than leaving a dangling session reference"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-saveFailure-placeholderExercise")
+
+        let retryButton = app.buttons["saveFailure.retryButton"]
+        XCTAssertTrue(retryButton.waitForExistence(timeout: 5))
+        retryButton.tap()
+
+        // Retry succeeds and routes to the freshly-created placeholder's
+        // own page.
+        XCTAssertTrue(
+            waitFor { !saveFailureHeading.exists && app.staticTexts["exercisePage.name"].exists },
+            "Expected the retried placeholder creation to succeed and land on the new item"
+        )
+    }
+
+    /// Finding 9: Discard must set `didDiscard` only after a successful
+    /// deletion -- reachable directly from the ellipsis menu, not only
+    /// from the End-workout summary, so its failure state must be visible
+    /// from there too.
+    func testDiscardFailureBlocksAndRetrySucceeds() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.faultKey] = "deleteSession"
+        app.launchEnvironment[Self.faultSuccessesKey] = "0"
+        app.launchEnvironment[Self.faultCountKey] = "1"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+        XCTAssertTrue(app.staticTexts["exercisePage.name"].waitForExistence(timeout: 10))
+
+        let ellipsis = anyElement(app, identifier: "ellipsisMenu")
+        XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
+        ellipsis.tap()
+
+        let discardAction = app.buttons["sessionActions.discardWorkout"]
+        XCTAssertTrue(scrollUntilExists(app, discardAction), "Expected to be able to scroll to 'Discard workout'")
+        discardAction.tap()
+
+        // m2-03 review round 3: the two-step discard confirmation is now a
+        // dedicated `DiscardConfirmView` (a single `.sheet` presentation,
+        // no `.confirmationDialog` chaining -- see that file's doc) whose
+        // buttons carry stable identifiers rather than being looked up by
+        // visible label text, matching this repo's house rule elsewhere.
+        let confirmStepOne = app.buttons["discardConfirm.stepOneButton"]
+        XCTAssertTrue(confirmStepOne.waitForExistence(timeout: 5))
+        confirmStepOne.tap()
+
+        let confirmStepTwo = app.buttons["discardConfirm.stepTwoButton"]
+        XCTAssertTrue(confirmStepTwo.waitForExistence(timeout: 5))
+        confirmStepTwo.tap()
+
+        let saveFailureHeading = app.staticTexts["saveFailure.heading"]
+        XCTAssertTrue(
+            saveFailureHeading.waitForExistence(timeout: 5),
+            "Expected a retryable error, not a silent dismissal, when deleteSession fails"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-saveFailure-discard")
+
+        let retryButton = app.buttons["saveFailure.retryButton"]
+        XCTAssertTrue(retryButton.waitForExistence(timeout: 5))
+        retryButton.tap()
+
+        // Retry succeeds; the screen actually dismisses back to the
+        // routine list -- proof `didDiscard` only ever followed a real
+        // deletion.
+        XCTAssertTrue(
+            legDayRow.waitForExistence(timeout: 10),
+            "Expected the retried discard to succeed and return to the routine list"
+        )
+    }
+
+    /// Finding 6: a Finish whose `engine.finish()` succeeded but whose
+    /// follow-up save failed must be recoverable without re-invoking
+    /// `finish()` (which would now throw `.sessionNotActive`) -- Keep
+    /// going/Discard must be disabled once Finish has been attempted, and
+    /// Retry must actually recover.
+    func testFinishSaveFailureIsRecoverableWithoutReFinishing() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.faultKey] = "saveActiveSession"
+        app.launchEnvironment[Self.faultSuccessesKey] = "1" // Start's own save
+        app.launchEnvironment[Self.faultCountKey] = "1" // fail the Finish save
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+        XCTAssertTrue(app.staticTexts["exercisePage.name"].waitForExistence(timeout: 10))
+
+        let ellipsis = anyElement(app, identifier: "ellipsisMenu")
+        XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
+        ellipsis.tap()
+        let endWorkout = app.buttons["sessionActions.endWorkout"]
+        XCTAssertTrue(scrollUntilExists(app, endWorkout), "Expected to be able to scroll to 'End workout'")
+        endWorkout.tap()
+
+        let summaryHeading = app.staticTexts["sessionSummary.heading"]
+        XCTAssertTrue(summaryHeading.waitForExistence(timeout: 5))
+
+        let finishButton = app.buttons["sessionSummary.finishButton"]
+        XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
+        finishButton.tap()
+
+        let saveError = app.staticTexts["sessionSummary.saveError"]
+        XCTAssertTrue(
+            saveError.waitForExistence(timeout: 5),
+            "Expected a recoverable error, not a silently stuck screen, when Finish's save fails"
+        )
+        XCTAssertFalse(
+            app.buttons["sessionSummary.keepGoingButton"].isEnabled,
+            "Keep going must be disabled once Finish has been attempted -- the in-memory session is already .logged"
+        )
+        XCTAssertFalse(
+            app.buttons["sessionSummary.discardButton"].isEnabled,
+            "Discard must be disabled once Finish has been attempted"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-saveFailure-finish")
+
+        let retryButton = app.buttons["sessionSummary.retryFinishButton"]
+        XCTAssertTrue(retryButton.waitForExistence(timeout: 5))
+        retryButton.tap()
+
+        XCTAssertTrue(
+            waitFor { summaryHeading.exists && summaryHeading.label == "Workout saved" },
+            "Expected the retried Finish save to succeed without calling engine.finish() again"
+        )
+    }
+
+    // MARK: - Helpers
+
+    /// Scrolls `SessionActionsView`'s lazily-rendered `List` in smaller
+    /// increments than a plain `app.swipeUp()`. Confirmed via a live
+    /// accessibility-tree dump (m2-03 review round 3): a full-screen
+    /// `swipeUp()` on this 9-row list jumps straight from rows 1-4 to rows
+    /// 6-9, skipping whatever sits at row 5 entirely at every single
+    /// attempt, because the swipe distance overshoots by more than one
+    /// row's height. A partial drag of roughly one row's height per step
+    /// guarantees every row passes through the rendered range at some
+    /// checkpoint -- `maxAttempts` is raised accordingly since each step now
+    /// covers less ground.
+    ///
+    /// Still used for "End workout" (row 8) and "Discard workout" (row 9)
+    /// below -- both land inside the post-swipe window this drag reaches,
+    /// same as before. "Add exercise" no longer uses this helper: the
+    /// dispatcher's final-round fix was to reorder `SessionActionsView`
+    /// itself so the two most common mid-session edits ("Add exercise,"
+    /// "Swap exercise") sit above the fold, removing the scroll dependency
+    /// at the root instead of continuing to refine how the scroll is
+    /// performed -- see that file's doc for the full rationale
+    /// (frequent/safe first, destructive last is also a real UX
+    /// improvement, not just a test workaround).
+    private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 20) -> Bool {
+        for _ in 0..<maxAttempts {
+            if element.exists {
+                Thread.sleep(forTimeInterval: 0.4)
+                return true
+            }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        return element.exists
+    }
+
+    private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return condition()
+    }
+
+    private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    private func attachScreenshot(from app: XCUIApplication, name: String) {
+        let screenshot = app.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

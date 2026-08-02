@@ -71,19 +71,18 @@ final class BurlyWatchUITests: XCTestCase {
 
         attachScreenshot(from: app, name: "BurlyWatch-routineList")
 
+        // m2-03: Start now pushes the real logging screen (SessionEntryView
+        // -> LoggingScreenView), not the m2-01 stub -- see
+        // LoggingScreenUITests.swift for the full session-flow coverage
+        // this unlocks (spec §2 acceptance #3/#5). This test's job stays the
+        // routine list's own contract: Start reaches a real, non-dead-end
+        // destination naming the routine that was tapped.
         legDay.tap()
-        let stubHeading = app.staticTexts["sessionStartStubView.heading"]
-        XCTAssertTrue(stubHeading.waitForExistence(timeout: 5), "Expected Start to navigate to the session stub")
-        // Not asserting the full composed sentence ("Starting Leg Day"): the
-        // wording isn't the contract (m2-01 review finding 6.2), but the
-        // correct routine reaching the stub is, so it's checked by
-        // containment instead of an exact match.
-        XCTAssertTrue(
-            stubHeading.label.contains("Leg Day"),
-            "Expected the session stub to name the routine that was started"
-        )
+        let exerciseName = app.staticTexts["exercisePage.name"]
+        XCTAssertTrue(exerciseName.waitForExistence(timeout: 10), "Expected Start to navigate to the real logging screen")
+        XCTAssertEqual(exerciseName.label, "Back Squat", "Expected Leg Day's own exercise on the logging screen")
 
-        attachScreenshot(from: app, name: "BurlyWatch-startStub")
+        attachScreenshot(from: app, name: "BurlyWatch-startLoggingScreen")
     }
 
     /// m2-01 review findings 2.1/2.2: once a recognized scenario is
@@ -108,6 +107,31 @@ final class BurlyWatchUITests: XCTestCase {
         )
 
         attachScreenshot(from: app, name: "BurlyWatch-brokenSeed")
+    }
+
+    /// m2-03 review finding 12 (carried gap, closed): once the launch-
+    /// environment key is present, an unrecognized value must fail closed
+    /// -- never fall through to the real on-device store. Mirrors
+    /// `testBrokenSeedScenarioFailsClosedToErrorState` above; this is the
+    /// "typo'd scenario name" half of the same fail-closed contract
+    /// (mirrors BurlyPhone's PhoneDemoSeed fix, m5-01 review round 2
+    /// finding 2).
+    func testUnrecognizedScenarioValueFailsClosedToErrorState() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routine" // typo of "routines"
+        app.launch()
+
+        let heading = app.staticTexts["storeUnavailableView.heading"]
+        XCTAssertTrue(
+            heading.waitForExistence(timeout: 15),
+            "Expected a store-unavailable error state for an unrecognized scenario value"
+        )
+        XCTAssertFalse(
+            app.staticTexts["waitingForPhoneView.headline"].exists,
+            "An unrecognized scenario value must not render as the ordinary empty-store waiting state"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-unrecognizedScenario")
     }
 
     /// Looks a stable identifier up regardless of the accessibility element
