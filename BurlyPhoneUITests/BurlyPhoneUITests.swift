@@ -13,7 +13,11 @@ import XCTest
 /// BurlyWatchUITests + WatchDemoSeed. Every assertion goes through the
 /// stable `accessibilityIdentifier`s the shell's views expose, not through
 /// visible copy (m2-01 review finding 6.2), except where the wording itself
-/// is the spec contract.
+/// is the spec contract. The one structural exception is the tab bar
+/// buttons: iOS 26's iPhone UITabBarButton ignores accessibilityIdentifier
+/// (a known UIKit bug since iOS 10 -- this task's acceptance run failed
+/// exactly there), so they are selected by their spec'd titles, which §9
+/// names verbatim.
 final class BurlyPhoneUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -36,10 +40,20 @@ final class BurlyPhoneUITests: XCTestCase {
             "Expected History (the default tab) to show its empty state on a fresh store"
         )
 
+        // Tab bar buttons on iOS 26's iPhone tab bar ignore
+        // accessibilityIdentifier (a known UIKit bug since iOS 10; this
+        // task's acceptance run failed on `tabBars.buttons["tab.routines"]`
+        // for exactly that reason). The buttons do expose their title as
+        // the label, and spec §9 names the four tabs verbatim, so each
+        // button is selected by its spec'd title -- the same
+        // contractual-wording exception as the Import placeholder heading
+        // below. The shell still tags each tab item's Label with the
+        // `tab.*` identifiers; those propagate on iPad's Liquid Glass
+        // toolbar, so both dialects stay in place.
         let tabs: [(button: String, content: String)] = [
-            ("tab.routines", "routinesTab.emptyState.heading"),
-            ("tab.stats", "statsTab.emptyState.heading"),
-            ("tab.settings", "settingsTab.importRow")
+            ("Routines", "routinesTab.emptyState.heading"),
+            ("Stats", "statsTab.emptyState.heading"),
+            ("Settings", "settingsTab.importRow")
         ]
         for tab in tabs {
             let button = app.tabBars.buttons[tab.button]
@@ -56,7 +70,7 @@ final class BurlyPhoneUITests: XCTestCase {
         }
 
         // And back to the default tab.
-        app.tabBars.buttons["tab.history"].tap()
+        app.tabBars.buttons["History"].tap()
         XCTAssertTrue(
             historyEmpty.waitForExistence(timeout: 5),
             "Expected History to be reachable again"
