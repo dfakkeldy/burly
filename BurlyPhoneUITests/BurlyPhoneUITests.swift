@@ -292,6 +292,18 @@ final class BurlyPhoneUITests: XCTestCase {
         app.buttons["catalog.custom.muscleTag.forearms"].tap()
         XCTAssertEqual(app.buttons["catalog.custom.muscleTag.biceps"].value as? String, "Selected")
         app.buttons["catalog.custom.createButton"].tap()
+
+        // The catalog is sorted alphabetically by name (~100 curated rows)
+        // and SwiftUI's List only materializes on-screen rows into the
+        // accessibility tree. A freshly created "U"-named custom exercise
+        // sorts well past the initial viewport, so it never appears to
+        // `waitForExistence` without first narrowing the list -- exactly
+        // like the archive step below already does. Search by the new name
+        // to bring its row on-screen before asserting it rendered.
+        let catalogSearch = app.searchFields["Search exercises"]
+        XCTAssertTrue(catalogSearch.waitForExistence(timeout: 5))
+        catalogSearch.tap()
+        catalogSearch.typeText(customName)
         XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Biceps · Forearms"].exists)
         app.buttons["catalog.doneButton"].tap()
