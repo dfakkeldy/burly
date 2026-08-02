@@ -71,7 +71,7 @@ final class BurlyPhoneUITests: XCTestCase {
         // toolbar, so both dialects stay in place.
         let tabs: [(button: String, content: String)] = [
             ("Routines", "routinesTab.emptyState.heading"),
-            ("Stats", "statsTab.emptyState.heading"),
+            ("Stats", "statsTab.progression.empty"),
             ("Settings", "settingsTab.importRow")
         ]
         for tab in tabs {
@@ -211,11 +211,10 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: relaunched, name: "BurlyPhone-relaunchSkipsWelcome")
     }
 
-    /// Finding 6, populated side: the seeded store's real rows must render —
-    /// History shows the logged-session row (keyed by session id), Stats
-    /// shows the workout count, Routines shows the two seeded routines
-    /// (keyed by routine id, finding 8). A shell that hardcodes empty states
-    /// fails here.
+    /// Finding 6, populated side: the seeded store's real rows and all four
+    /// §7 charts must render. The fixture spans a year and includes recent
+    /// multi-tag plus unattributed working sets, so a chart implementation
+    /// cannot pass by hardcoding a non-empty shell state.
     func testPopulatedScenarioRendersRealRows() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
@@ -231,24 +230,21 @@ final class BurlyPhoneUITests: XCTestCase {
             "Expected the seeded logged session to render as a History row"
         )
 
-        // Stats shows the scalar workout count, not an empty state — and
-        // the count itself must render as the seeded value "1" (m5-01
-        // review round 2, finding 3: a doubled-backslash interpolation bug
-        // once made this row render the literal text
-        // "\(viewModel.loggedSessionCount)" instead of the number, which a
-        // mere existence check on the row's identifier couldn't catch).
+        // Stats has one stable leaf identifier per real chart. These
+        // assertions intentionally do not inspect chart-renderer internals;
+        // they prove each chart's data branch rather than its empty branch.
         app.tabBars.buttons["Stats"].tap()
-        let workoutCountRow = app.staticTexts["statsTab.workoutCountRow"]
-        XCTAssertTrue(
-            workoutCountRow.waitForExistence(timeout: 5),
-            "Expected Stats to show the workout count on the populated store"
-        )
-        let renderedCount = ([workoutCountRow.label, workoutCountRow.value as? String ?? ""])
-            .joined(separator: " ")
-        XCTAssertTrue(
-            renderedCount.contains("1") && renderedCount.contains("\\(") == false,
-            "Expected the workout count row to render the seeded count (1) as text, got: \(renderedCount)"
-        )
+        for chartIdentifier in [
+            "statsTab.progression.chart",
+            "statsTab.volume.chart",
+            "statsTab.muscleSplit.chart",
+            "statsTab.consistency.chart"
+        ] {
+            XCTAssertTrue(
+                anyElement(app, identifier: chartIdentifier).waitForExistence(timeout: 15),
+                "Expected populated scenario to render \(chartIdentifier)"
+            )
+        }
 
         // Routines shows the seeded routines, each keyed by its id.
         app.tabBars.buttons["Routines"].tap()
@@ -262,6 +258,33 @@ final class BurlyPhoneUITests: XCTestCase {
         )
 
         attachScreenshot(from: app, name: "BurlyPhone-populatedRows")
+    }
+
+    /// Spec §7 acceptance #3, empty side: each independently meaningful
+    /// chart has a genuine empty state on a deterministic empty history.
+    /// This catches both crashes during chart construction and a misleading
+    /// dashboard-level substitute that hides which stat lacks data.
+    func testStatsChartsShowIndependentEmptyStates() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        app.tabBars.buttons["Stats"].tap()
+        for emptyIdentifier in [
+            "statsTab.progression.empty",
+            "statsTab.volume.empty",
+            "statsTab.muscleSplit.empty",
+            "statsTab.consistency.empty"
+        ] {
+            XCTAssertTrue(
+                app.staticTexts[emptyIdentifier].waitForExistence(timeout: 15),
+                "Expected empty history to show \(emptyIdentifier)"
+            )
+        }
+        XCTAssertFalse(anyElement(app, identifier: "statsTab.progression.chart").exists)
+
+        attachScreenshot(from: app, name: "BurlyPhone-statsEmpty")
     }
 
     /// Finding 6, fail-closed side: once a scenario is recognized, a seed
