@@ -357,4 +357,68 @@ cd /Users/dfakkeldy/Developer/worktrees/burly-m7-01/BurlyKit
 swift test        # 474 tests, 43 suites
 BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
 ```
-Branch `task/burly-m7-01`, commit pending on top of e98f134, not pushed.
+Branch `task/burly-m7-01`, commit e70229e on top of e98f134, not pushed.
+
+## 2026-08-02 — Round-4 review: containment CONFIRMED secure, two LOW findings fixed (round D, final round)
+
+Round 4 confirmed containment secure — entry paths complete, no partial-row
+leaks, tiling proven, all round-1/2/3 regressions pass — with exactly two
+LOW findings. Both fixed in this round; **this closes the task** pending
+final dispatcher sign-off (no more open findings expected).
+
+**Finding 1 — `approxRowsLost` undercount.** The scalar that trips a
+quoted-context bound was being advanced by `CSVTokenizer`'s `quotedField`
+case's own `i += 1` BEFORE `consumeToEOF`'s skip loop ever got a chance to
+count it, so a bound tripped BY a terminator silently omitted that
+terminator from the count. Fixed by checking `terminatorLength(at: i)`
+*before* calling `appendToField` in the `quotedField` case: if the append
+trips the bound AND the scalar is (or begins) a line terminator, that
+terminator is counted as the first lost row and its full width (1 for a
+lone CR/LF, 2 for a CRLF pair) is skipped on entry to `consumeToEOF` —
+"CRLF still once" falls out for free since `terminatorLength(at:)`
+evaluated at the LF's own position already reports length 1 when only the
+LF (not the CR) is what trips it. Pinned with both exact reviewer
+triggers: `boundTrippedByLFStillCountsIt` (quote + `maxFieldLength` x's +
+LF + EOF → 1, was 0) and `boundTrippedByLFHalfOfCRLFStillCountsItOnce`
+(`maxFieldLength - 1` x's + CRLF → 1, was 0). Verified both fail against
+the pre-fix code (reverted to the old unconditional `i += 1`, confirmed
+both report `approxRowsLost: 0`, restored).
+
+**Finding 2 — fuzz "bound tripped" helper over-broad.** The bound-trip
+detector in `assertFullCoverageNoCrashNoHang` matched ANY
+`.unterminatedQuoteConsumedRemainder`, but that case's `approxRowsLost: 0`
+variant is ALSO exactly what an ordinary "ran out of input while quoted,
+no bound ever tripped" outcome reports — so a short unterminated trailing
+quote (which the short-hostile-input corpus produces easily) could satisfy
+the "bounds actually trip" guarantee in `adversarialFuzzBoundTrippingAndQuotedHeavyShapes`
+without any bound ever having tripped. Fixed the detector to require
+`.oversizedRecord` OR `.unterminatedQuoteConsumedRemainder` with
+`approxRowsLost > 0` (that counter is airtight — it only ever increments
+inside `consumeToEOF`, entered only via a genuine bound trip). Also
+tightened the corpus generator itself per the adjudication's "adjust the
+seed corpus if needed so the guarantee is real": trial 0's oversized field
+is no longer left to the probabilistic branch (whose range could, for
+some RNG draws, land just under `maxFieldLength` and trip nothing) — it's
+now deterministically forced to `maxFieldLength + 100`, guaranteeing a
+genuine trip regardless of RNG behavior. Verified empirically (a
+standalone script running the OLD detector's exact switch statement
+against `.unterminatedQuoteConsumedRemainder(approxRowsLost: 0)`) that the
+prior detector does report `true` for a natural, bound-free case — proving
+the fix's distinction is real, not cosmetic.
+
+```
+cd BurlyKit && rm -rf .build && swift test
+# Test run with 476 tests in 43 suites passed
+
+BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+# Test run with 2 tests in 1 suite passed
+```
+
+Resume (if anything further comes back):
+```
+cd /Users/dfakkeldy/Developer/worktrees/burly-m7-01/BurlyKit
+swift test        # 476 tests, 43 suites
+BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+```
+Branch `task/burly-m7-01`, commit pending on top of e70229e, not pushed.
+Task closes after this round pending final dispatcher confirmation.

@@ -128,6 +128,39 @@ struct CSVTokenizerTests {
         #expect(rows == [.fields(["a", "b"]), .unterminatedQuoteConsumedRemainder(approxRowsLost: 1)])
     }
 
+    // MARK: - m7-01 adversarial review round 4 — approxRowsLost undercount
+
+    @Test("round-4 finding 1 — a bound tripped BY a terminator still counts that terminator as one lost row (reviewer trigger a: LF trips the field bound)")
+    func boundTrippedByLFStillCountsIt() {
+        // Pinning regression: the scalar that trips a quoted-context bound
+        // was advanced by the `quotedField` caller's own `i += 1` BEFORE
+        // `consumeToEOF`'s skip loop ever got a chance to count it — so a
+        // bound tripped BY a terminator silently omitted that terminator
+        // from `approxRowsLost`. Exact reviewer trigger: an open quote,
+        // exactly `maxFieldLength` x's (fills the field to precisely the
+        // bound, still legal), then a bare LF that trips the bound on
+        // itself, then EOF. Old behavior undercounted this as 0; correct
+        // is 1.
+        let csv = "\"" + String(repeating: "x", count: CSVTokenizer.maxFieldLength) + "\n"
+        let rows = CSVTokenizer.rows(in: csv)
+        #expect(rows == [.unterminatedQuoteConsumedRemainder(approxRowsLost: 1)])
+    }
+
+    @Test("round-4 finding 1 — a CRLF whose LF trips the bound is still counted exactly once, not zero (reviewer trigger b)")
+    func boundTrippedByLFHalfOfCRLFStillCountsItOnce() {
+        // Exact reviewer trigger: `maxFieldLength - 1` x's (one short of
+        // the bound), then a CRLF pair — the CR fits under the bound and
+        // is appended as ordinary content (no trip), but the LF is what
+        // trips it. "CRLF still once": the pair must be counted as ONE
+        // lost row, not the zero the old code produced (the CR's harmless
+        // append doesn't contribute a count on its own; the trip lands
+        // exactly on the LF's own position, which `terminatorLength(at:)`
+        // reports as length 1 there — no double-counting the CR).
+        let csv = "\"" + String(repeating: "x", count: CSVTokenizer.maxFieldLength - 1) + "\r\n"
+        let rows = CSVTokenizer.rows(in: csv)
+        #expect(rows == [.unterminatedQuoteConsumedRemainder(approxRowsLost: 1)])
+    }
+
     @Test("round-3 adjudication 1 — an oversized quoted field consumes ALL subsequent rows, even a genuine later closing quote and well-formed rows, rather than resynchronizing")
     func oversizedQuotedFieldNeverResynchronizesEvenWithAGenuineCloseLater() {
         // Pinning regression (round-3 adjudication 1, replacing round-2's
@@ -392,19 +425,35 @@ struct CSVTokenizerTests {
         // actually reaches the code paths finding 6.1 flagged as
         // completely untested (the reviewer measured zero trials reaching
         // any bound in the round-2 version of this test).
+        //
+        // Round-4 finding 6.1-follow-up: TWO fixes to the guarantee below.
+        // (1) `assertFullCoverageNoCrashNoHang`'s "did a bound trip"
+        // signal now requires a GENUINE trip (`.oversizedRecord`, or
+        // `.unterminatedQuoteConsumedRemainder` with a nonzero
+        // `approxRowsLost`) — a plain `approxRowsLost == 0` result can
+        // also mean an ordinary "ran out of input while quoted" case with
+        // NO bound ever tripped (e.g. a short trailing unterminated quote
+        // in the SHORT corpus above), which must not silently satisfy
+        // this corpus's "bounds actually trip" guarantee. (2) trial 0's
+        // field size is no longer left to the probabilistic `makeHuge`
+        // branch (which could, for some values of the RNG draw, land
+        // just UNDER `maxFieldLength` and never trip anything) — it's
+        // deterministically forced to exceed the bound, so the guarantee
+        // below is real regardless of how the RNG happens to behave for
+        // this seed, not just overwhelmingly likely.
         var rng = SplitMix64(seed: 0x807A_9E11)
-        var atLeastOneBoundOrConsumedRemainderTripped = false
+        var atLeastOneGenuineBoundTrip = false
 
         for trial in 0..<15 {
-            let csv = generateQuotedHeavyHostileCSV(using: &rng)
-            let (rows, tripped) = assertFullCoverageNoCrashNoHang(of: csv, trialLabel: "quoted-heavy trial \(trial)")
-            if tripped { atLeastOneBoundOrConsumedRemainderTripped = true }
+            let csv = generateQuotedHeavyHostileCSV(using: &rng, guaranteeOversizedField: trial == 0)
+            let (rows, trippedGenuinely) = assertFullCoverageNoCrashNoHang(of: csv, trialLabel: "quoted-heavy trial \(trial)")
+            if trippedGenuinely { atLeastOneGenuineBoundTrip = true }
             _ = rows
         }
 
         #expect(
-            atLeastOneBoundOrConsumedRemainderTripped,
-            "expected at least one trial in this bound-stressing corpus to actually trip a size bound or consume-to-EOF path"
+            atLeastOneGenuineBoundTrip,
+            "expected at least one trial in this bound-stressing corpus to genuinely trip a size bound (not merely reach a natural, bound-free unterminated-quote-at-EOF outcome)"
         )
     }
 }
@@ -420,14 +469,13 @@ private enum CSVFieldTestSupport {
 /// explicit iteration budget (never the test harness's wall-clock
 /// timeout) and full/non-overlapping/single-pass scalar coverage
 /// reconstructed from the diagnostic per-iteration step ranges. Returns
-/// the tokenized rows and whether any bound-tripping/consume-to-EOF
-/// outcome appeared, so the bound-stressing corpus can assert it actually
-/// reached one.
+/// the tokenized rows and whether a GENUINE bound trip appeared, so the
+/// bound-stressing corpus can assert it actually reached one.
 @discardableResult
 private func assertFullCoverageNoCrashNoHang(
     of text: String,
     trialLabel: String
-) -> (rows: [CSVTokenizer.Row], trippedABoundOrConsumedRemainder: Bool) {
+) -> (rows: [CSVTokenizer.Row], trippedAGenuineBound: Bool) {
     let scalarCount = text.unicodeScalars.count
     // By construction every main-loop iteration advances by at least one
     // scalar, so a correct scan never needs more iterations than there are
@@ -470,15 +518,29 @@ private func assertFullCoverageNoCrashNoHang(
     #expect(!sawZeroLengthStep, "\(trialLabel): a step consumed zero scalars — no forward progress")
     #expect(expectedNext == scalarCount, "\(trialLabel): coverage ended at \(expectedNext), expected \(scalarCount)")
 
-    let tripped = rows.contains { row in
+    // Round-4 finding 6.1-follow-up: a GENUINE bound trip is either
+    // `.oversizedRecord` (always unquoted-context) or
+    // `.unterminatedQuoteConsumedRemainder` with a NONZERO `approxRowsLost`
+    // — that counter only ever increments inside `consumeToEOF`, which is
+    // only ever entered via an actual field/record-size bound tripping on
+    // quoted content (see `CSVTokenizer`'s FAILURE-MODE TABLE). A zero
+    // `approxRowsLost` is NOT proof of a trip: it's also exactly what an
+    // ordinary "ran out of input while a quote was still open, no bound
+    // ever tripped" outcome reports (e.g. a short trailing unterminated
+    // quote in the short-hostile-input corpus) — treating that as a
+    // "bound tripped" signal is precisely the over-broad detection this
+    // finding flagged.
+    let trippedAGenuineBound = rows.contains { row in
         switch row {
-        case .oversizedRecord, .unterminatedQuoteConsumedRemainder:
+        case .oversizedRecord:
             return true
+        case .unterminatedQuoteConsumedRemainder(let approxRowsLost):
+            return approxRowsLost > 0
         default:
             return false
         }
     }
-    return (rows, tripped)
+    return (rows, trippedAGenuineBound)
 }
 
 /// Builds one hostile CSV blob deliberately shaped to exercise code paths
@@ -490,14 +552,27 @@ private func assertFullCoverageNoCrashNoHang(
 /// reviewer scenario, where an escaped quote's append is what trips the
 /// bound). `String(repeating:)` for the bulk run keeps this fast even at
 /// field-bound scale, unlike a character-by-character random walk.
-private func generateQuotedHeavyHostileCSV(using rng: inout SplitMix64) -> String {
+///
+/// - Parameter guaranteeOversizedField: When `true`, the first row's field
+///   size is NOT left to the probabilistic branch below (whose range can,
+///   for some RNG draws, land just under `maxFieldLength` and never trip
+///   anything) — it's forced to deterministically exceed the bound
+///   (round-4 finding 6.1-follow-up: the corpus must GUARANTEE a genuine
+///   trip, not just make one likely).
+private func generateQuotedHeavyHostileCSV(using rng: inout SplitMix64, guaranteeOversizedField: Bool) -> String {
     var lines = ["header"]
     let rowCount = 2 + Int(rng.next() % 3) // 2-4 rows
-    for _ in 0..<rowCount {
-        let makeHuge = rng.next() % 3 == 0
-        let bulkLength = makeHuge
-            ? CSVTokenizer.maxFieldLength - 20 + Int(rng.next() % 64) // straddles the field bound
-            : 4 + Int(rng.next() % 40)
+    for rowIndex in 0..<rowCount {
+        let forceOversized = guaranteeOversizedField && rowIndex == 0
+        let makeHuge = forceOversized || rng.next() % 3 == 0
+        let bulkLength: Int
+        if forceOversized {
+            bulkLength = CSVTokenizer.maxFieldLength + 100 // unambiguously over the bound
+        } else if makeHuge {
+            bulkLength = CSVTokenizer.maxFieldLength - 20 + Int(rng.next() % 64) // straddles the field bound
+        } else {
+            bulkLength = 4 + Int(rng.next() % 40)
+        }
         var content = String(repeating: "x", count: bulkLength)
         // A few embedded terminators plus an escaped-quote pair right at
         // the end of the bulk run.

@@ -559,8 +559,30 @@ enum CSVTokenizer {
                     // field/record size bounds inside `appendToField`,
                     // which route a trip here to `consumeToEOF` — see
                     // FAILURE-MODE TABLE.
+                    //
+                    // Round-4 finding (approxRowsLost undercount): checked
+                    // BEFORE appending, not after — if `c` trips the bound
+                    // AND is itself (or begins) a line terminator, that
+                    // exact terminator must still be counted as one lost
+                    // row. Without this, the scalar that trips the bound
+                    // is consumed by THIS branch's own `i += 1` below
+                    // rather than by `consumeToEOF`'s skip loop, so its
+                    // "terminator-ness" would otherwise vanish uncounted
+                    // — e.g. 1,048,576 x's + LF + EOF undercounted 0 where
+                    // the correct answer is 1. A CRLF whose CR fits under
+                    // the bound (appended as ordinary content, no trip)
+                    // but whose LF is what trips it still counts as
+                    // exactly one lost row, not two: `terminatorLength(at:)`
+                    // evaluated at the LF's own position reports length 1
+                    // for that case with no extra bookkeeping needed.
+                    let terminatorLengthHere = terminatorLength(at: i)
                     appendToField(c, insideQuotedContent: true)
-                    i += 1
+                    if state == .consumeToEOF, let terminatorLengthHere {
+                        consumeToEOFTerminatorCount += 1
+                        i += terminatorLengthHere
+                    } else {
+                        i += 1
+                    }
                 }
 
             case .quoteSeen:
