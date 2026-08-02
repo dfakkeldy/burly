@@ -98,9 +98,11 @@ struct CSVTokenizerTests {
         // Pinning regression: the old tokenizer flushed everything it had
         // absorbed into the open quote as a normal field value — which,
         // when the column count happened to still line up, imported as a
-        // wrong value instead of being caught as malformed.
+        // wrong value instead of being caught as malformed. Reaching true
+        // EOF with no bound ever tripped has nothing left to lose, so
+        // `approxRowsLost` is 0.
         let rows = CSVTokenizer.rows(in: "a,b\n\"oops,still going")
-        #expect(rows == [.fields(["a", "b"]), .unterminatedQuote])
+        #expect(rows == [.fields(["a", "b"]), .unterminatedQuoteConsumedRemainder(approxRowsLost: 0)])
     }
 
     @Test("finding 1.4 — a stray quote after unquoted content has begun is reported malformed, not silently merged")
@@ -112,46 +114,43 @@ struct CSVTokenizerTests {
         #expect(rows == [.fields(["title", "reps"]), .strayQuote])
     }
 
-    @Test("finding 1.5 — a field that grows past the size bound is reported as an oversized record")
-    func oversizedFieldIsReportedMalformed() {
+    @Test("finding 1.5 — an oversized field inside a quote consumes the rest of the file rather than risking a resync")
+    func oversizedFieldInsideQuoteConsumesRemainder() {
+        // Round-3 adjudication 1: a bound tripping WHILE a quote is still
+        // open can never safely resynchronize (see CSVTokenizer's
+        // FAILURE-MODE TABLE) — unlike an unquoted oversized field, this
+        // consumes to true EOF as ONE malformed record instead of
+        // resynchronizing at the next terminator. Here the file ends
+        // shortly after the bound trips, so only the one trailing
+        // terminator is "lost".
         let hugeField = String(repeating: "x", count: CSVTokenizer.maxFieldLength + 10)
         let rows = CSVTokenizer.rows(in: "a,b\n\"\(hugeField)\",2\n")
-        #expect(rows == [.fields(["a", "b"]), .oversizedRecord(.fieldLength(CSVTokenizer.maxFieldLength))])
+        #expect(rows == [.fields(["a", "b"]), .unterminatedQuoteConsumedRemainder(approxRowsLost: 1)])
     }
 
-    @Test("finding 1.5 — an oversized record does not prevent the tokenizer from resynchronizing on the next record")
-    func oversizedRecordResynchronizes() {
-        // Pinning regression (round 2 blocker): the old design kept
-        // treating the record as "still inside quotes" even after the
-        // field bound tripped, so resync only happened once the ACTUAL
-        // closing quote for the huge field turned up later in the input.
-        // The redesign transitions straight to `recordError` the instant
-        // the bound trips, so resync no longer depends on ever finding a
-        // real closing quote at all — proven below by an unterminated
-        // huge field (no closing quote anywhere) still resyncing cleanly.
+    @Test("round-3 adjudication 1 — an oversized quoted field consumes ALL subsequent rows, even a genuine later closing quote and well-formed rows, rather than resynchronizing")
+    func oversizedQuotedFieldNeverResynchronizesEvenWithAGenuineCloseLater() {
+        // Pinning regression (round-3 adjudication 1, replacing round-2's
+        // "resynchronizes on the next record" expectation): the round-2
+        // design transitioned straight to `recordError` and resynchronized
+        // at the very next terminator once a quoted field's bound tripped
+        // — which the round-3 review proved unsafe in general (a bound
+        // tripping inside a legitimate long note is indistinguishable from
+        // one tripping inside truly hostile content). Now ANY bound
+        // tripping while a quote is open gives up on the rest of the
+        // file entirely — "good,row" below, despite being perfectly
+        // well-formed and following a genuine closing quote, must never
+        // import as data.
         let hugeField = String(repeating: "x", count: CSVTokenizer.maxFieldLength + 10)
         let rows = CSVTokenizer.rows(in: "a,b\n\"\(hugeField)\",2\ngood,row\n")
-        #expect(rows == [
-            .fields(["a", "b"]),
-            .oversizedRecord(.fieldLength(CSVTokenizer.maxFieldLength)),
-            .fields(["good", "row"])
-        ])
+        #expect(rows == [.fields(["a", "b"]), .unterminatedQuoteConsumedRemainder(approxRowsLost: 2)])
     }
 
-    @Test("an oversized field with no closing quote at all still resynchronizes at the next real terminator")
-    func oversizedUnclosedFieldStillResynchronizes() {
-        let hugeField = String(repeating: "x", count: CSVTokenizer.maxFieldLength + 10)
-        // No closing quote anywhere — the old design would keep this
-        // "inside quotes" forever and swallow `good,row` as literal
-        // content too; the redesign's `recordError` transition happens the
-        // instant the field bound trips, regardless of whether a closing
-        // quote ever shows up.
+    @Test("an oversized field with no closing quote at all also consumes the remainder, not just resynchronizes")
+    func oversizedUnclosedFieldAlsoConsumesRemainder() {
+        let hugeField = String(repeating: "x", count: CSVFieldTestSupport.maxFieldLengthPlusTen)
         let rows = CSVTokenizer.rows(in: "a,b\n\"\(hugeField)\ngood,row\n")
-        #expect(rows == [
-            .fields(["a", "b"]),
-            .oversizedRecord(.fieldLength(CSVTokenizer.maxFieldLength)),
-            .fields(["good", "row"])
-        ])
+        #expect(rows == [.fields(["a", "b"]), .unterminatedQuoteConsumedRemainder(approxRowsLost: 2)])
     }
 
     @Test("empty input produces no rows")
@@ -159,101 +158,104 @@ struct CSVTokenizerTests {
         #expect(CSVTokenizer.rows(in: "").isEmpty)
     }
 
-    // MARK: - m7-01 adversarial review round 2 — clean-redesign properties
+    // MARK: - m7-01 adversarial review round 3 — adjudication 1 (runaway-quote guard removed)
 
-    @Test("required property 1 — a missing close quote mid-file does not swallow or merge subsequent physical rows forever")
-    func missingCloseQuoteMidFileResynchronizesWithinABoundedPrefix() {
-        // Pinning regression (round-2 blocker): the old tokenizer kept
-        // "inside quotes" state for as long as no closing quote appeared,
-        // so a missing close quote could consume EVERY remaining physical
-        // row in the file into one giant malformed record, with no bound
-        // at all. The redesign's runaway-quote guard
-        // (`maxEmbeddedTerminatorsPerRecord`) caps how many embedded line
-        // breaks an open quote is believed to legitimately contain before
-        // giving up on it ever closing — so the swallowed prefix is always
-        // a small, FIXED size regardless of how many good rows follow,
-        // never "the rest of the file". This file supplies many more good
-        // rows than that bound to make the fixed-size-not-proportional
-        // property observable.
-        let goodRowCount = CSVTokenizer.maxEmbeddedTerminatorsPerRecord * 3
-        let goodRows = (0..<goodRowCount).map { "good\($0),row\($0)" }
+    @Test("round-3 adjudication 1 — a missing close quote mid-file consumes the rest of the file as ONE malformed record; nothing after it ever imports as data")
+    func missingCloseQuoteMidFileConsumesRestOfFile() {
+        // Pinning regression: round 2 introduced a bounded
+        // "maxEmbeddedTerminatorsPerRecord" guard meant to stop a missing
+        // close quote from swallowing arbitrarily many physical rows. The
+        // round-3 review proved this is an INJECTION VECTOR, not a safety
+        // net: Hevy notes are free-form, so a legitimate multi-line note
+        // could exceed any fixed bound, get resynced MID-CONTENT, and have
+        // one of its own lines misread as a fabricated workout row —
+        // silent row-boundary corruption, worse than the data loss it was
+        // meant to prevent. The guard is REMOVED, not retuned: an open
+        // quote that never legitimately closes swallows everything to
+        // true EOF as one honestly-reported malformed record, and nothing
+        // "good-looking" after it is ever reinterpreted as a new row. 50
+        // good-looking rows here is deliberately more than the round-2
+        // guard's old bound (32) — under round 2 this would have
+        // resynchronized around row ~33; under round 3 nothing resyncs no
+        // matter how many rows follow.
+        let goodRows = (0..<50).map { "good\($0),row\($0)" }
         let csv = "\"broken\n" + goodRows.joined(separator: "\n") + "\n"
 
         let rows = CSVTokenizer.rows(in: csv)
 
-        let fieldsRows = rows.compactMap { row -> [String]? in
-            if case .fields(let fields) = row { return fields }
-            return nil
-        }
-        let malformedRows = rows.filter { if case .fields = $0 { return false }; return true }
-
-        // Exactly one malformed record accounts for the whole swallowed
-        // prefix — the runaway-quote guard trips once, resynchronizes
-        // once, not once per swallowed physical line.
-        #expect(malformedRows == [.unterminatedQuote])
-
-        // Whatever survived is an exact, uncorrupted, correctly-ordered
-        // suffix of the good rows — proving nothing after resync was
-        // merged, reordered, or silently dropped — and a solid majority
-        // of the good rows survive despite the bound, since the bound is
-        // tiny relative to how many good rows this file supplies.
-        #expect(fieldsRows.count > goodRowCount / 2)
-        let expectedSuffix = goodRows.suffix(fieldsRows.count).map { row -> [String] in
-            let parts = row.split(separator: ",").map(String.init)
-            return parts
-        }
-        #expect(fieldsRows == expectedSuffix)
-
-        // The key, categorical property: the swallowed prefix's size is
-        // fixed (bounded by the guard), not proportional to how much
-        // "subsequent" content exists — tripling `goodRowCount` above
-        // would swallow the SAME number of rows, not three times as many.
-        let swallowedCount = goodRowCount - fieldsRows.count
-        #expect(swallowedCount <= CSVTokenizer.maxEmbeddedTerminatorsPerRecord + 2)
+        // The entire remainder — every "good" row included — is absorbed
+        // as literal content of the one still-open quoted field; none of
+        // it is ever reinterpreted as CSV structure. No bound ever trips
+        // (the file is small), so the tokenizer reaches true EOF still
+        // inside the open quote with nothing further to "lose".
+        #expect(rows == [.unterminatedQuoteConsumedRemainder(approxRowsLost: 0)])
     }
 
-    @Test("required property 1 — a later physical row's quote cannot reach back and falsely close an earlier unterminated field, merging rows")
-    func laterQuoteCannotMergeAcrossAnUnterminatedField() {
-        // Pinning regression (round-2 blocker, second half): "if a later
-        // physical row contains a quote, that quote can close the earlier
-        // field and merge the rows into one logical record." The redesign
-        // never lets a LATER row's quote close an earlier still-open one —
-        // `recordError` (entered via the runaway-quote guard) stops
-        // interpreting quote syntax entirely, so a quote appearing well
-        // after the bound trips is just more skipped content, never a
-        // false close.
-        let goodRowCount = CSVTokenizer.maxEmbeddedTerminatorsPerRecord + 5
-        var lines = ["\"broken"]
-        lines.append(contentsOf: (0..<goodRowCount).map { "line\($0)" })
-        // A row containing a quote character placed well past the
-        // runaway-quote bound — must NOT be interpreted as closing the
-        // long-dead field from line 1.
-        lines.append("\"reopened\",value")
-        lines.append("final,row")
-        let csv = lines.joined(separator: "\n") + "\n"
+    @Test("round-3 adjudication 1 — once a bound trips inside an open quote, a later well-formed-looking quoted row in the discarded remainder is never reinterpreted as new row structure")
+    func laterQuoteInConsumedRemainderIsNeverReinterpreted() {
+        // Distinguishes the (removed) round-2 defect from what remains
+        // TRUE and required: once `consumeToEOF` is entered (because a
+        // bound tripped, not merely because a quote is still open with no
+        // failure yet), literally nothing afterward — not even a
+        // perfectly well-formed, correctly quoted row — is ever
+        // reinterpreted as data.
+        let hugeField = String(repeating: "x", count: CSVFieldTestSupport.maxFieldLengthPlusTen)
+        let csv = "a,b\n\"\(hugeField)\ngood-looking,\"quoted\",row\nfinal,row\n"
 
         let rows = CSVTokenizer.rows(in: csv)
 
-        // The genuinely final, unambiguous row must still parse cleanly —
-        // if the stray quote had reached back and reopened/merged
-        // anything, this row's clean field split would be the first
-        // casualty.
-        #expect(rows.last == .fields(["final", "row"]))
-        // No two `.fields` rows may be textually identical to a merge of
-        // multiple source lines — every accounted `.fields` row must
-        // correspond to exactly one source line's content.
         let fieldsRows = rows.compactMap { row -> [String]? in
             if case .fields(let fields) = row { return fields }
             return nil
         }
-        #expect(fieldsRows.allSatisfy { $0.count <= 2 })
+        // Only the header-shaped first row survives; the syntactically
+        // well-formed "good-looking" and "final" rows are both swallowed.
+        #expect(fieldsRows == [["a", "b"]])
     }
+
+    @Test("round-3 finding 1.1 — an escaped-quote append that trips the record-size bound is not clobbered back into quotedField; nothing after it imports as data")
+    func escapedQuoteAppendTrippingBoundIsNotClobbered() {
+        // Pinning regression: `quoteSeen`'s escaped-quote branch called
+        // `appendToField` (which can trip a bound and enter an error
+        // state) and then unconditionally reassigned `state =
+        // .quotedField` immediately afterward — silently UNDOING the
+        // error transition. The dangerous consequence only shows up when
+        // the VERY NEXT scalar after the clobbered escape is itself a
+        // real closing quote (not more plain content, which would
+        // harmlessly re-trip the same bound on its own): `quotedField`'s
+        // own `"` handling unconditionally enters `quoteSeen` regardless
+        // of prior state, so the clobber lets the tokenizer walk straight
+        // back to a legal-looking close, comma, and terminator — emitting
+        // the oversized record as ordinary `.fields` data (and resuming
+        // normal parsing for everything after it) instead of ever
+        // reporting it malformed. Exact reviewer scenario: four ~1 MiB
+        // fields, then a field containing "abcd" followed by an escaped
+        // quote pair positioned so its second `"` (the literal-quote
+        // append) is the exact scalar that trips the per-record bound,
+        // immediately followed by the field's real closing quote.
+        let fieldSize = (CSVTokenizer.maxRecordLength - 4) / 4
+        let bigField = String(repeating: "y", count: fieldSize)
+        let firstFourFields = Array(repeating: bigField, count: 4).joined(separator: ",")
+        let csv = "header\n" + firstFourFields + ",\"abcd\"\"\",lastfield\ngood,row\n"
+
+        let rows = CSVTokenizer.rows(in: csv)
+
+        // Fixed behavior: the whole oversized record — including
+        // "lastfield" and the well-formed "good,row" that follows — is
+        // discarded as one malformed record, never split back out into
+        // ordinary `.fields` data.
+        #expect(rows == [.fields(["header"]), .unterminatedQuoteConsumedRemainder(approxRowsLost: 2)])
+    }
+
+    // MARK: - required property 2 (post-quote transitions — unaffected by round 3)
 
     @Test("required property 2 — content after a closing quote is malformed, not silently concatenated onto the value")
     func contentAfterClosingQuoteIsMalformed() {
         // Pinning regression (round-2 new defect #1): `"Bench Press
         // (Barbell)"junk` used to tokenize as the single value
-        // `Bench Press (Barbell)junk` instead of being rejected.
+        // `Bench Press (Barbell)junk` instead of being rejected. This is
+        // unquoted context (the quote already closed) — still safe to
+        // resynchronize under round 3's adjudication.
         let rows = CSVTokenizer.rows(in: "title,note\n\"Bench Press (Barbell)\"junk,fine\n")
         #expect(rows == [.fields(["title", "note"]), .contentAfterClosingQuote])
     }
@@ -276,10 +278,14 @@ struct CSVTokenizerTests {
         #expect(rows == [.fields(["a", "b"]), .fields(["c", "d"])])
     }
 
+    // MARK: - required property 3 (bounded everything, unquoted context)
+
     @Test("required property 3 — a record whose total content exceeds the per-record bound is reported oversized, even though no single field is over the per-field bound")
     func recordTotalSizeBoundIsEnforced() {
         // Five unquoted fields, each safely under `maxFieldLength` on its
-        // own, but summing well past `maxRecordLength` together.
+        // own, but summing well past `maxRecordLength` together. Unquoted
+        // context: still safe to resynchronize under round 3's
+        // adjudication.
         let bigFieldSize = (CSVTokenizer.maxFieldLength / 2)
         let bigField = String(repeating: "y", count: bigFieldSize)
         let fieldCount = (CSVTokenizer.maxRecordLength / bigFieldSize) + 2
@@ -310,15 +316,50 @@ struct CSVTokenizerTests {
         ])
     }
 
-    // MARK: - Adversarial self-check (m7-01 review round 2 verification requirement)
+    // MARK: - m7-01 round 3 finding 3.2 — field-count boundary off-by-one
 
-    @Test("adversarial fuzz — hostile random byte-strings never crash, never hang, and never produce overlapping rows")
-    func adversarialFuzzNeverCrashesOrOverlaps() {
-        // Fixed seed: deterministic across runs. A small, hostile alphabet
-        // (quotes, commas, CR, LF, backslash, digits, letters, a couple of
-        // multi-scalar/combining characters) maximizes the odds of hitting
-        // every state-machine transition, including invalid ones, without
-        // needing an enormous corpus.
+    @Test("round-3 finding 3.2 — exactly maxFieldsPerRecord fields is legal")
+    func exactlyMaxFieldsPerRecordIsLegal() {
+        let fields = Array(repeating: "x", count: CSVTokenizer.maxFieldsPerRecord)
+        let row = fields.joined(separator: ",")
+        let rows = CSVTokenizer.rows(in: "header\n" + row + "\n")
+        #expect(rows == [.fields(["header"]), .fields(fields)])
+    }
+
+    @Test("round-3 finding 3.2 — pinning regression: maxFieldsPerRecord + 1 fields is oversized, not silently allowed")
+    func oneMoreThanMaxFieldsPerRecordIsOversized() {
+        // Pinning regression: the round-2 boundary check was `fieldCount
+        // <= maxFieldsPerRecord` evaluated AFTER incrementing for the
+        // field just started, which actually permitted
+        // `maxFieldsPerRecord + 1` fields before ever tripping.
+        let fields = Array(repeating: "x", count: CSVTokenizer.maxFieldsPerRecord + 1)
+        let row = fields.joined(separator: ",")
+        let rows = CSVTokenizer.rows(in: "header\n" + row + "\n")
+        #expect(rows == [.fields(["header"]), .oversizedRecord(.fieldCount(CSVTokenizer.maxFieldsPerRecord))])
+    }
+
+    // MARK: - Adversarial self-check (m7-01 review round 2 verification requirement; strengthened round 3 finding 6.1)
+
+    @Test("adversarial fuzz — short hostile random byte-strings never crash; explicit iteration-budget termination; full non-overlapping single-pass scalar coverage")
+    func adversarialFuzzShortHostileInputsFullCoverage() {
+        // What this proves, exactly (round-3 finding 6.1: the prior
+        // version of this test overstated itself — it only checked for
+        // no-crash and a loose scalar-count inequality that couldn't
+        // detect an overlapping or gapped read, and the reviewer measured
+        // ZERO trials in it ever reaching any size bound):
+        //   1. Never crashes on a short, densely hostile random string
+        //      (fixed seed, deterministic).
+        //   2. Always terminates — proven by an explicit iteration budget
+        //      (`CSVTokenizer.rowsWithDiagnostics`'s `iterationBudget`),
+        //      NOT by relying on the test harness's wall-clock timeout to
+        //      catch a hang.
+        //   3. Reads the ENTIRE input exactly once, front to back, with no
+        //      gap and no overlap — proven mechanically by reconstructing
+        //      full scalar coverage from the diagnostic per-iteration step
+        //      ranges, not merely inferred from output sizes.
+        // This corpus is short and NOT expected to trip any size bound —
+        // see `adversarialFuzzBoundTrippingAndQuotedHeavyShapes` below for
+        // a corpus specifically built to do that.
         var rng = SplitMix64(seed: 0xC5F_7001)
         let alphabet: [Character] = [
             "\"", ",", "\r", "\n", "a", "b", "0", "1", "\\", " ",
@@ -334,30 +375,138 @@ struct CSVTokenizerTests {
                 hostile.append(alphabet[index])
             }
 
-            // Never crashes, never hangs: simply calling this and
-            // returning is the assertion. A hung/looping tokenizer would
-            // time out the whole test run instead of failing gracefully,
-            // so this also stands in for "always terminates".
-            let rows = CSVTokenizer.rows(in: hostile)
-
-            // Never returns rows whose parse position overlaps: every
-            // `.fields` row's total reconstructed content must be
-            // consistent with having consumed a disjoint slice of the
-            // input — verified indirectly by confirming the tokenizer
-            // never produces more `.fields([String])` field-content
-            // scalars in total than existed in the source text (a
-            // duplicated/overlapping read would over-count).
-            let totalFieldScalars = rows.reduce(into: 0) { total, row in
-                if case .fields(let fields) = row {
-                    total += fields.reduce(0) { $0 + $1.unicodeScalars.count }
-                }
-            }
-            #expect(
-                totalFieldScalars <= hostile.unicodeScalars.count,
-                "trial \(trial) produced more field content than input scalars for input: \(hostile.debugDescription)"
-            )
+            assertFullCoverageNoCrashNoHang(of: hostile, trialLabel: "short trial \(trial)")
         }
     }
+
+    @Test("adversarial fuzz — quoted-heavy shapes that actually trip size bounds: escaped quotes at boundaries, long embedded-terminator runs, oversized fields")
+    func adversarialFuzzBoundTrippingAndQuotedHeavyShapes() {
+        // Round-3 finding 6.1(b): the short-corpus fuzz test above can
+        // never exercise `maxFieldLength`/`maxRecordLength`/
+        // `maxFieldsPerRecord` — its longest input is 200 scalars. This
+        // corpus deliberately builds long quoted runs (sometimes past the
+        // field bound), embeds terminators inside them, and places an
+        // escaped-quote pair immediately after the bulk content
+        // (mirroring finding 1.1's exact reviewer shape: an escaped
+        // quote's append is what trips the bound) — proving the fuzz net
+        // actually reaches the code paths finding 6.1 flagged as
+        // completely untested (the reviewer measured zero trials reaching
+        // any bound in the round-2 version of this test).
+        var rng = SplitMix64(seed: 0x807A_9E11)
+        var atLeastOneBoundOrConsumedRemainderTripped = false
+
+        for trial in 0..<15 {
+            let csv = generateQuotedHeavyHostileCSV(using: &rng)
+            let (rows, tripped) = assertFullCoverageNoCrashNoHang(of: csv, trialLabel: "quoted-heavy trial \(trial)")
+            if tripped { atLeastOneBoundOrConsumedRemainderTripped = true }
+            _ = rows
+        }
+
+        #expect(
+            atLeastOneBoundOrConsumedRemainderTripped,
+            "expected at least one trial in this bound-stressing corpus to actually trip a size bound or consume-to-EOF path"
+        )
+    }
+}
+
+/// Small shared constant so the "oversized field" tests below don't each
+/// redundantly recompute `maxFieldLength + 10`.
+private enum CSVFieldTestSupport {
+    static let maxFieldLengthPlusTen = CSVTokenizer.maxFieldLength + 10
+}
+
+/// Shared assertion helper (round-3 finding 6.1): runs `text` through
+/// `CSVTokenizer.rowsWithDiagnostics`, asserting termination via an
+/// explicit iteration budget (never the test harness's wall-clock
+/// timeout) and full/non-overlapping/single-pass scalar coverage
+/// reconstructed from the diagnostic per-iteration step ranges. Returns
+/// the tokenized rows and whether any bound-tripping/consume-to-EOF
+/// outcome appeared, so the bound-stressing corpus can assert it actually
+/// reached one.
+@discardableResult
+private func assertFullCoverageNoCrashNoHang(
+    of text: String,
+    trialLabel: String
+) -> (rows: [CSVTokenizer.Row], trippedABoundOrConsumedRemainder: Bool) {
+    let scalarCount = text.unicodeScalars.count
+    // By construction every main-loop iteration advances by at least one
+    // scalar, so a correct scan never needs more iterations than there are
+    // scalars; +16 is slack for small/edge-case inputs, not a "just in
+    // case" fudge for tolerating a real hang.
+    let budget = scalarCount + 16
+
+    let (rows, steps, budgetExceeded) = CSVTokenizer.rowsWithDiagnostics(in: text, iterationBudget: budget)
+
+    #expect(
+        !budgetExceeded,
+        "\(trialLabel): exceeded iteration budget \(budget) for a \(scalarCount)-scalar input — the scan is not making forward progress"
+    )
+
+    // Full, non-overlapping, single-pass coverage: each step's start must
+    // equal the previous step's end (no gap, no overlap, no double-read),
+    // the first step implicitly starts at 0 (`expectedNext`'s initial
+    // value), and the last step's end must equal the input's total scalar
+    // count — together these mechanically reconstruct the ENTIRE input
+    // from the recorded steps alone, rather than merely inferring it from
+    // output sizes. Scanned as plain Swift first and asserted with a
+    // handful of `#expect`s at the end, rather than one `#expect` per
+    // step — a huge quoted field can produce millions of single-scalar
+    // steps, and Swift Testing's per-call bookkeeping makes one `#expect`
+    // per step prohibitively slow at that scale (a fixed number of
+    // assertions keeps this test fast regardless of input size).
+    var expectedNext = 0
+    var firstGapOrOverlap: (atScalar: Int, expectedScalar: Int)?
+    var sawZeroLengthStep = false
+    for step in steps {
+        if step.lowerBound != expectedNext, firstGapOrOverlap == nil {
+            firstGapOrOverlap = (step.lowerBound, expectedNext)
+        }
+        if step.isEmpty {
+            sawZeroLengthStep = true
+        }
+        expectedNext = step.upperBound
+    }
+    #expect(firstGapOrOverlap == nil, "\(trialLabel): gap or overlap — \(String(describing: firstGapOrOverlap))")
+    #expect(!sawZeroLengthStep, "\(trialLabel): a step consumed zero scalars — no forward progress")
+    #expect(expectedNext == scalarCount, "\(trialLabel): coverage ended at \(expectedNext), expected \(scalarCount)")
+
+    let tripped = rows.contains { row in
+        switch row {
+        case .oversizedRecord, .unterminatedQuoteConsumedRemainder:
+            return true
+        default:
+            return false
+        }
+    }
+    return (rows, tripped)
+}
+
+/// Builds one hostile CSV blob deliberately shaped to exercise code paths
+/// a short-random-character fuzz corpus can't reach: quoted runs long
+/// enough to sometimes cross `CSVTokenizer.maxFieldLength`, embedded
+/// terminators inside them, and an escaped-quote pair placed immediately
+/// after the bulk content — including, roughly a third of the time,
+/// landing right at the size boundary (mirroring finding 1.1's exact
+/// reviewer scenario, where an escaped quote's append is what trips the
+/// bound). `String(repeating:)` for the bulk run keeps this fast even at
+/// field-bound scale, unlike a character-by-character random walk.
+private func generateQuotedHeavyHostileCSV(using rng: inout SplitMix64) -> String {
+    var lines = ["header"]
+    let rowCount = 2 + Int(rng.next() % 3) // 2-4 rows
+    for _ in 0..<rowCount {
+        let makeHuge = rng.next() % 3 == 0
+        let bulkLength = makeHuge
+            ? CSVTokenizer.maxFieldLength - 20 + Int(rng.next() % 64) // straddles the field bound
+            : 4 + Int(rng.next() % 40)
+        var content = String(repeating: "x", count: bulkLength)
+        // A few embedded terminators plus an escaped-quote pair right at
+        // the end of the bulk run.
+        content += "\n\r\"\"more"
+        let closesProperly = rng.next() % 4 != 0
+        let field = closesProperly ? "\"\(content)\"" : "\"\(content)"
+        lines.append(field + ",field2")
+    }
+    return lines.joined(separator: "\n") + "\n"
 }
 
 /// Tiny, dependency-free, deterministic PRNG for the adversarial fuzz test

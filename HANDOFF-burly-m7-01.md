@@ -213,4 +213,148 @@ cd /Users/dfakkeldy/Developer/worktrees/burly-m7-01/BurlyKit
 swift test        # 466 tests, 43 suites
 BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
 ```
-Branch `task/burly-m7-01`, commit pending on top of 5693e85, not pushed.
+Branch `task/burly-m7-01`, commit e98f134 on top of 5693e85, not pushed.
+
+## 2026-08-02 — Round-3 review (NOT-SAFE, narrow finding set): runaway-quote guard removed as an injection vector; state-clobber, off-by-one, and accounting-contract fixes (round C)
+
+Done: dispatcher adjudications implemented exactly as directed.
+
+**Adjudication 1 (the big one) — `maxEmbeddedTerminatorsPerRecord` REMOVED, not
+retuned.** The reviewer proved round B's "runaway-quote guard" was an
+injection vector: a legitimate free-form Hevy note could exceed any fixed
+embedded-terminator bound, get resynced MID-CONTENT, and have one of its
+own lines misread as a fabricated workout row — silent row-boundary
+corruption, worse than the data loss the guard was meant to prevent. New
+rule, implemented exactly as adjudicated: resynchronization is only
+trustworthy in UNQUOTED context. `CSVTokenizer` gained a new terminal state,
+`consumeToEOF`: any failure discovered while a quote is still open
+(unterminated quote at true EOF, or a field/record bound tripping on
+content inside an open quote) consumes every remaining scalar to the true
+end of the file WITHOUT buffering (bounded memory — just skip), then emits
+exactly ONE `.unterminatedQuoteConsumedRemainder(approxRowsLost:)` —
+`approxRowsLost` counts terminators seen while skipping (0 when the
+failure was discovered exactly at EOF, with nothing left to skip). Bounds
+tripped OUTSIDE any open quote (stray quote, content-after-closing-quote,
+oversized field/record/field-count in unquoted content) are unaffected —
+they still resynchronize at the next terminator via `recordError`, since
+that recovery was never the unsafe part. Renamed `MalformedRowReason
+.unterminatedQuote` → `.unterminatedQuoteConsumedRemainder(approxRowsLost:)`
+to match. Full failure-mode table (quoted vs. unquoted context) is
+documented in `CSVTokenizer.swift`'s file header.
+
+**FIX 2 (High, finding 1.1) — state clobber.** `quoteSeen`'s escaped-quote
+branch called `appendToField` (which can trip a bound and enter an error
+state) then unconditionally reassigned `state = .quotedField` right after,
+silently undoing the error transition. Guarded the same way `handleComma`
+already was (`if state != .recordError && state != .consumeToEOF`).
+Verified the exact dangerous consequence by temporarily reintroducing the
+clobber: with the bug present, the reviewer's scenario (four ~1 MiB
+fields, then `"abcd"""` positioned so the escaped quote's append trips the
+per-record bound, followed by `,lastfield` and a well-formed `good,row`)
+produced `[.fields(["header"]), .oversizedRecord(.recordLength(_)),
+.fields(["good", "row"])]` — the oversized record silently resynced and
+`good,row` imported as if nothing were wrong. Fixed, it correctly produces
+`[.fields(["header"]), .unterminatedQuoteConsumedRemainder(approxRowsLost: 2)]`.
+Pinned in `CSVTokenizerTests.escapedQuoteAppendTrippingBoundIsNotClobbered`.
+
+**FIX 3 (Medium, 3.1) — contract text + no faked counts.** `oversizedRecord`/
+tokenizer-level malformed rows were never scanned for per-category drops
+(correct — the row was never safely tokenized, and there is no safe way to
+scan unparseable bytes for an `rpe`/`superset_id` value). This was already
+true in the code; the gap was that `HevyImportSummary`'s doc didn't say so.
+Added an explicit CONTRACT paragraph to the struct doc: per-category counts
+cover only rows that reached field-level decoding; tokenizer-level failures
+are covered by `malformedRows` + reasons instead. Pinned with
+`tokenizerLevelFailuresNeverFakeDropCounts` (blank/stray-quote/
+content-after-close rows all report zero across every per-category
+counter).
+
+**FIX 4 (Low, 3.2) — field-count off-by-one.** `startNewField`'s bound
+check was `fieldCount <= maxFieldsPerRecord` evaluated AFTER incrementing
+for the field just started, which actually permitted
+`maxFieldsPerRecord + 1` fields before ever tripping. Changed to `fieldCount
+< maxFieldsPerRecord`. Verified by temporarily reintroducing the `<=` form:
+`oneMoreThanMaxFieldsPerRecordIsOversized` (4097 fields) failed as expected;
+restored, both it and `exactlyMaxFieldsPerRecordIsLegal` (4096 fields) pass.
+
+**FIX 5 (Medium, 4.1) — mixed invalid-byte + genuine-U+FFFD file.** Kept the
+conservative quarantine (every U+FFFD-bearing row is flagged when the whole
+file needed the lossy decode fallback, even a row whose U+FFFD was always
+genuine content) but surfaced it: added `HevyImportSummary
+.encodingDamageDetected: Bool`. Byte-range precision (flagging only the
+row whose bytes actually failed) is deferred to m7-03 — noted in the
+summary's doc and here. Pinned with
+`coexistingInvalidByteAndLegitimateReplacementCharacterAreBothQuarantinedAndFlagged`
+(both rows flagged, flag set) and `cleanFileReportsNoEncodingDamage` (flag
+clear on a normal file).
+
+**FIX 1's "surface honestly" + FIX 6 (Medium, 6.1) — fuzz test
+strengthening.**
+- Added `HevyImportSummary.rowsLostToUnterminatedQuote: Int` (sum of
+  `approxRowsLost` across every `.unterminatedQuoteConsumedRemainder`
+  malformed row) so the whole-file cost is visible directly on the
+  summary. Pinned in `rowsLostToUnterminatedQuoteIsSurfacedOnSummary`.
+- `CSVTokenizer` gained a test/diagnostic-only `rowsWithDiagnostics(in:
+  iterationBudget:)` entry point (production `rows(in:)` is an unchanged
+  thin wrapper — zero added cost) that exposes, per main-loop iteration,
+  the exact scalar range consumed, plus an explicit iteration budget.
+- Retitled and re-split the adversarial fuzz test into two, each claiming
+  exactly what it proves (reviewer measured ZERO trials in the old version
+  ever reaching a bound):
+  - `adversarialFuzzShortHostileInputsFullCoverage`: 300 short
+    (≤200-scalar) trials from a hostile alphabet, asserting (a) no crash,
+    (b) termination via the explicit iteration budget (not the test
+    timeout), (c) full/non-overlapping/single-pass scalar coverage
+    mechanically reconstructed from the diagnostic step ranges.
+  - `adversarialFuzzBoundTrippingAndQuotedHeavyShapes`: 15 trials
+    deliberately building long quoted runs that straddle
+    `maxFieldLength`, with embedded terminators and an escaped-quote pair
+    placed right at the boundary (mirroring finding 1.1's shape) — asserts
+    the same coverage/termination properties AND that at least one trial
+    actually trips a bound or the consume-to-EOF path.
+  - The coverage assertion loop scans plain Swift first and calls
+    `#expect` a fixed handful of times per trial rather than once per
+    step — a huge quoted field can produce millions of single-scalar
+    steps, and one `#expect` per step was measured at ~14s; the
+    scan-then-assert-once version runs in ~3s for the whole suite.
+
+Verified no regression on every round-1/round-2 pin the round-3 review
+confirmed closed (re-ran by name):
+`twoAliasesOfSameExerciseInOneSessionGetDistinctIDs`,
+`bothTimestampFormatsForSameInstantProduceSameSessionID`,
+`bomIsStrippedBeforeHeaderResolution`, `bareCRInsideQuotesIsPreserved`,
+`blankInteriorRecordIsReportedNotSilentlyDropped`,
+`tokenizerLevelMalformedRecordsSurfaceAsMalformedRows`,
+`contentAfterClosingQuoteIsMalformed`,
+`contentAfterClosingQuoteNeverCreatesACorruptedExercise` — all green.
+
+Every fix pinned by a test manually confirmed to fail against the pre-fix
+behavior (temporary inline reverts, reran the specific test, confirmed
+failure, restored — confirmed no `TEMP` markers or diff drift remained
+afterward via `git diff --stat` before committing). No disagreements with
+the dispatcher's adjudications; all fixed exactly as directed.
+
+```
+cd BurlyKit && rm -rf .build && swift test
+# Test run with 474 tests in 43 suites passed
+
+BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+# Test run with 2 tests in 1 suite passed
+```
+
+Spec/design note for whoever picks this up next: `CSVTokenizer`'s new
+FAILURE-MODE TABLE (top of `CSVTokenizer.swift`) is now the canonical
+reference for "what happens on failure X in context Y" — read it before
+touching tokenizer error-recovery again; the round-2→round-3 history is a
+cautionary tale about tuning a bound instead of asking whether
+resynchronization is safe at all in that context.
+
+Next: awaiting dispatcher re-review of round C.
+
+Resume:
+```
+cd /Users/dfakkeldy/Developer/worktrees/burly-m7-01/BurlyKit
+swift test        # 474 tests, 43 suites
+BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+```
+Branch `task/burly-m7-01`, commit pending on top of e98f134, not pushed.

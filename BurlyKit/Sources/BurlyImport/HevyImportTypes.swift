@@ -65,10 +65,20 @@ public enum MalformedRowReason: Sendable, Equatable {
     /// 1.7) — visibly counted rather than silently vanishing and shifting
     /// subsequent row numbers.
     case blankRow
-    /// The record's last field was still inside an open quote when
-    /// scanning it ended (finding 1.3) — the record is discarded rather
-    /// than importing whatever partial value it absorbed.
-    case unterminatedQuote
+    /// A quote was still open when a failure was discovered — either the
+    /// file ended with it never closed (finding 1.3), or a field/record
+    /// size bound tripped on content inside it. m7-01 round 3: resyncing
+    /// after a quoted-context failure is NOT safe (a bounded "how many
+    /// embedded terminators" guard was proven to let a legitimate
+    /// multi-line note get resynced mid-content and misread as a
+    /// fabricated row) — so everything from the point of failure to the
+    /// true end of the file is discarded as ONE record, never
+    /// reinterpreted as CSV structure again. `approxRowsLost` is an
+    /// honest, approximate count of physical rows skipped that way (0 when
+    /// the failure was discovered exactly at EOF, with nothing left to
+    /// skip). See `HevyImportSummary.rowsLostToUnterminatedQuote` for the
+    /// whole-file total surfaced to callers.
+    case unterminatedQuoteConsumedRemainder(approxRowsLost: Int)
     /// A `"` appeared somewhere other than the true start of a field
     /// (finding 1.4) — e.g. an unquoted `1"2"` value.
     case strayQuoteInField
@@ -113,6 +123,23 @@ public struct MalformedRow: Sendable, Equatable {
 /// never drift from the values the same parse actually produced (spec §8
 /// acceptance #4's concern, for whichever later task wires up the preview
 /// screen).
+///
+/// CONTRACT (m7-01 round 3 finding 3.1): the per-category dropped-value
+/// counts below (`rpeValuesDropped`, `supersetRowsDropped`,
+/// `exerciseNotesDropped`, `setIndexValuesDropped`,
+/// `unknownColumnValuesDropped`, `nonStandardSetTypeMarkersFlattened`)
+/// cover ONLY rows that reached field-level decoding — i.e. rows the
+/// tokenizer successfully split into named fields (`CSVTokenizer.Row
+/// .fields`), whatever `decodeRow` then did with them (imported, cardio,
+/// or malformed for some other reason). A row the TOKENIZER itself
+/// couldn't safely turn into fields at all — blank, an unterminated quote,
+/// a stray quote, content glued onto a closing quote, or an oversized
+/// record — never reaches field decoding, so it is NEVER reflected in
+/// these counters; there is no safe way to scan for an `rpe`/`superset_id`
+/// value inside data that was never reliably tokenized; inventing a count
+/// from unparseable bytes would be worse than reporting none. Every such
+/// row is instead fully accounted for in `malformedRows`, with a
+/// `MalformedRowReason` naming exactly why it couldn't be tokenized.
 public struct HevyImportSummary: Sendable, Equatable {
     public let sessionsImported: Int
     public let setsImported: Int
@@ -130,28 +157,33 @@ public struct HevyImportSummary: Sendable, Equatable {
     /// malformed row for an unrelated reason (m7-01 review findings
     /// 4.1/4.2: a value present in the file is counted as dropped the
     /// moment Burly's schema can't carry it, independent of that row's
-    /// other fate). Burly's schema has no RPE field.
+    /// other fate) — see the struct's CONTRACT doc for the scope this
+    /// "regardless of fate" promise does NOT extend to (tokenizer-level
+    /// failures). Burly's schema has no RPE field.
     public let rpeValuesDropped: Int
     /// Every row whose `superset_id` column had a value (same
-    /// fate-independent counting as `rpeValuesDropped` above). Burly's
-    /// schema has no superset concept.
+    /// fate-independent counting, and the same tokenizer-level-failure
+    /// exclusion, as `rpeValuesDropped` above). Burly's schema has no
+    /// superset concept.
     public let supersetRowsDropped: Int
     /// Every row whose `set_type` was present and neither "normal" nor
     /// "warmup" (Hevy's "failure"/"dropset" markers, or anything else
-    /// non-standard) — same fate-independent counting as
-    /// `rpeValuesDropped` above. An imported row with a non-standard
-    /// `set_type` still becomes a normal set per spec §8; this counts the
-    /// marker's presence in the file either way, not just the imported
-    /// case.
+    /// non-standard) — same fate-independent counting, and the same
+    /// tokenizer-level-failure exclusion, as `rpeValuesDropped` above. An
+    /// imported row with a non-standard `set_type` still becomes a normal
+    /// set per spec §8; this counts the marker's presence in the file
+    /// either way, not just the imported case.
     public let nonStandardSetTypeMarkersFlattened: Int
     /// Every row whose `exercise_notes` column had a value (same
-    /// fate-independent counting as `rpeValuesDropped` above). Burly's
-    /// schema has no per-set/per-exercise-item note field.
+    /// fate-independent counting, and the same tokenizer-level-failure
+    /// exclusion, as `rpeValuesDropped` above). Burly's schema has no
+    /// per-set/per-exercise-item note field.
     public let exerciseNotesDropped: Int
     /// Every row whose `set_index` column had a value (finding 4.4; same
-    /// fate-independent counting as `rpeValuesDropped` above). Read only
-    /// to report that it was discarded — see `HevyCSVImporter`'s doc
-    /// comment on why set order is taken from row order instead.
+    /// fate-independent counting, and the same tokenizer-level-failure
+    /// exclusion, as `rpeValuesDropped` above). Read only to report that it
+    /// was discarded — see `HevyCSVImporter`'s doc comment on why set order
+    /// is taken from row order instead.
     public let setIndexValuesDropped: Int
     /// Total count of nonempty values found in header columns this
     /// importer doesn't recognize at all (finding 4.3) — e.g. a `tempo` or
@@ -165,6 +197,31 @@ public struct HevyImportSummary: Sendable, Equatable {
     /// discarded, since Hevy's convention is that every row of a session
     /// repeats the same session-level values.
     public let conflictingSessionMetadataDropped: Int
+    /// Sum of `approxRowsLost` across every
+    /// `.unterminatedQuoteConsumedRemainder` malformed row (m7-01 round 3
+    /// finding: this must be surfaced honestly, not buried only inside
+    /// `malformedRows`' reasons). An open quote whose failure is discovered
+    /// mid-file consumes the rest of the file as one malformed record
+    /// rather than risk an unsafe resynchronization (see
+    /// `CSVTokenizer`'s FAILURE-MODE TABLE) — this is the whole-file total
+    /// of physical rows that cost, approximated by counting terminators
+    /// skipped while doing so. Zero on a file with no such failure.
+    public let rowsLostToUnterminatedQuote: Int
+    /// `true` when this file's bytes required the lossy UTF-8 fallback
+    /// decode (m7-01 round 3 finding 4.1) — i.e. at least one byte
+    /// anywhere in the file was not valid UTF-8. When this is `true`,
+    /// EVERY row containing a U+FFFD scalar is conservatively quarantined
+    /// as `.invalidUTF8`, including a row whose U+FFFD was always genuine
+    /// content rather than decode corruption: this module cannot yet tell
+    /// the two apart without byte-range-precise tracking through the
+    /// decode step, and quarantining a few clean rows is preferred over
+    /// ever risking importing corrupted bytes as real data. Byte-range
+    /// precision (only flagging the specific row whose bytes actually
+    /// failed to decode) is deferred to m7-03, once a real Hevy export is
+    /// in hand to validate the approach against. `false` means the whole
+    /// file decoded as strict UTF-8, so any U+FFFD present is unconditionally
+    /// legitimate content and never quarantined for encoding reasons.
+    public let encodingDamageDetected: Bool
     /// Every row that couldn't be turned into a set at all, with why.
     public let malformedRows: [MalformedRow]
 
@@ -183,6 +240,8 @@ public struct HevyImportSummary: Sendable, Equatable {
         setIndexValuesDropped: Int,
         unknownColumnValuesDropped: Int,
         conflictingSessionMetadataDropped: Int,
+        rowsLostToUnterminatedQuote: Int,
+        encodingDamageDetected: Bool,
         malformedRows: [MalformedRow]
     ) {
         self.sessionsImported = sessionsImported
@@ -197,6 +256,8 @@ public struct HevyImportSummary: Sendable, Equatable {
         self.setIndexValuesDropped = setIndexValuesDropped
         self.unknownColumnValuesDropped = unknownColumnValuesDropped
         self.conflictingSessionMetadataDropped = conflictingSessionMetadataDropped
+        self.rowsLostToUnterminatedQuote = rowsLostToUnterminatedQuote
+        self.encodingDamageDetected = encodingDamageDetected
         self.malformedRows = malformedRows
     }
 }

@@ -854,6 +854,107 @@ struct HevyCSVImporterTests {
         #expect(result.summary.setsImported == 1)
         #expect(result.summary.unknownColumnValuesDropped == 2)
     }
+
+    // MARK: - m7-01 adversarial review round 3
+
+    @Test("round-3 adjudication 1 — an unterminated quote's consumed remainder is surfaced honestly on the summary, not just buried in the malformed-row list")
+    func rowsLostToUnterminatedQuoteIsSurfacedOnSummary() throws {
+        // Pinning regression / FIX 1 "surface the count honestly": once a
+        // bound trips inside an open quote, everything from that point to
+        // true EOF is discarded as one malformed record (round-3
+        // adjudication — see CSVTokenizer's FAILURE-MODE TABLE). The
+        // whole-file total of how many rows that cost must be visible
+        // directly on the summary, not something a caller has to
+        // reconstruct by filtering `malformedRows` for this one reason
+        // and summing its payloads. (A plain unterminated quote with no
+        // bound ever tripped reaches true EOF with nothing further to
+        // lose — see the CSVTokenizer test pinning `approxRowsLost == 0`
+        // for that case — so this test deliberately trips the field-size
+        // bound to exercise a nonzero count.)
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let goodRow = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5"
+        let hugeField = String(repeating: "x", count: CSVTokenizer.maxFieldLength + 10)
+        // The bound trips partway through this row's first (quoted)
+        // field; everything after — the rest of this row, plus the two
+        // "good-looking" rows that follow — is discarded as one record.
+        let brokenRow = "\"\(hugeField)\",b,c,d,e,f,g"
+        let swallowedA = "whatever,row,four"
+        let swallowedB = "whatever,row,five"
+        let csv = [header, goodRow, brokenRow, swallowedA, swallowedB].joined(separator: "\n") + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.setsImported == 1)
+        #expect(result.summary.malformedRowCount == 1)
+        guard case .unterminatedQuoteConsumedRemainder(let approxRowsLost) = result.summary.malformedRows.first?.reason else {
+            Issue.record("expected .unterminatedQuoteConsumedRemainder, got \(String(describing: result.summary.malformedRows.first?.reason))")
+            return
+        }
+        // Three terminators are skipped after the bound trips: the end of
+        // the broken row itself, and the ends of the two swallowed rows.
+        #expect(approxRowsLost == 3)
+        #expect(result.summary.rowsLostToUnterminatedQuote == 3)
+    }
+
+    @Test("round-3 finding 3.1 — tokenizer-level malformed rows never fake per-category drop counts from unparseable data")
+    func tokenizerLevelFailuresNeverFakeDropCounts() throws {
+        // Contract pin (FIX 3): a row the tokenizer itself couldn't safely
+        // turn into fields at all (blank, oversized, stray quote,
+        // content-after-closing-quote, unterminated quote) must NEVER be
+        // reflected in the per-category dropped-value counters — there is
+        // no safe way to scan for an rpe/superset_id/etc. value inside
+        // data that was never reliably tokenized. Every category should
+        // read exactly zero here even though every row is malformed.
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let blank = ""
+        let strayQuote = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",Bad\"Title,1,\"normal\",80,5"
+        let contentAfterClose = "\"Push Day\"junk,\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5"
+        let csv = [header, blank, strayQuote, contentAfterClose].joined(separator: "\n") + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.malformedRowCount == 3)
+        #expect(result.summary.setsImported == 0)
+        #expect(result.summary.rpeValuesDropped == 0)
+        #expect(result.summary.supersetRowsDropped == 0)
+        #expect(result.summary.exerciseNotesDropped == 0)
+        #expect(result.summary.setIndexValuesDropped == 0)
+        #expect(result.summary.unknownColumnValuesDropped == 0)
+        #expect(result.summary.nonStandardSetTypeMarkersFlattened == 0)
+    }
+
+    @Test("round-3 finding 4.1 — a genuinely invalid byte elsewhere in the file conservatively quarantines an otherwise-clean row containing a real U+FFFD too, and the summary says so")
+    func coexistingInvalidByteAndLegitimateReplacementCharacterAreBothQuarantinedAndFlagged() throws {
+        // Adjudicated outcome: keep the conservative quarantine (never
+        // invent data), but surface that it happened. Byte-range
+        // precision (flagging only the row whose bytes actually failed)
+        // is deferred to m7-03.
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let cleanRowWithRealFFFD = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Weird \u{FFFD} Press\",1,\"normal\",80,5"
+        var bytes = Data((header + "\n" + cleanRowWithRealFFFD + "\n").utf8)
+        var brokenRow = Data("\"Push Day\",\"2025-06-15 09:00:00\",\"2025-06-15 09:30:00\",\"Bad".utf8)
+        brokenRow.append(0xFF) // invalid standalone UTF-8 byte
+        brokenRow.append(Data("Row\",2,\"normal\",80,5\n".utf8))
+        bytes.append(brokenRow)
+
+        let result = try HevyCSVImporter.parse(csvData: bytes, catalog: try loadCatalog())
+
+        // Conservative quarantine: the whole file needed the lossy
+        // fallback, so EVERY row containing U+FFFD is flagged, including
+        // the row whose U+FFFD was always genuine content.
+        #expect(result.summary.malformedRowCount == 2)
+        #expect(result.summary.malformedRows.allSatisfy { $0.reason == .invalidUTF8 })
+        #expect(result.summary.setsImported == 0)
+        #expect(result.summary.encodingDamageDetected == true)
+    }
+
+    @Test("round-3 finding 4.1 — a file with no invalid bytes at all reports encodingDamageDetected false")
+    func cleanFileReportsNoEncodingDamage() throws {
+        let csv = HevyCSVGeneratorTestSupport.singleRowCSV()
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+        #expect(result.summary.encodingDamageDetected == false)
+        #expect(result.summary.rowsLostToUnterminatedQuote == 0)
+    }
 }
 
 /// Tiny hand-written single-row CSV builder for hostile-input tests that

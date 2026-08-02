@@ -58,13 +58,25 @@ public enum HevyCSVImporter {
     /// sequences become U+FFFD) so every otherwise-valid row's text
     /// survives intact. Which path was taken is threaded through to the
     /// per-row loop (round-2 fix, see `parseImpl`'s `strictDecodeSucceeded`
-    /// doc): only a row's replacement character introduced by the LOSSY
-    /// fallback is malformed (`.invalidUTF8`); a real U+FFFD the file
-    /// legitimately contained is not, since strict decoding already proved
-    /// every byte in the file was valid UTF-8. A header corrupted enough to
-    /// be unrecognizable still aborts via `.unrecognizedHeader` either way,
-    /// since a replacement character breaks its exact required-column-name
-    /// match.
+    /// doc) and surfaced honestly on the result as
+    /// `HevyImportSummary.encodingDamageDetected`:
+    ///   - Strict decode succeeded: a U+FFFD scalar anywhere is
+    ///     unconditionally legitimate content (strict decoding already
+    ///     proved every byte in the file was valid UTF-8) and imports
+    ///     normally.
+    ///   - Strict decode failed (lossy fallback used): EVERY row
+    ///     containing U+FFFD is conservatively quarantined as
+    ///     `.invalidUTF8`, INCLUDING a row whose U+FFFD would have been
+    ///     genuine content on its own (m7-01 round 3 finding 4.1) — this
+    ///     module can't yet tell "this row's bytes were actually bad" from
+    ///     "this row always had a real replacement character" without
+    ///     byte-range-precise tracking through the decode step, and
+    ///     quarantining a few clean rows is preferred over ever risking
+    ///     corrupted bytes importing as real data. Byte-range precision is
+    ///     deferred to m7-03 (the real-Hevy-export verification gate).
+    /// A header corrupted enough to be unrecognizable still aborts via
+    /// `.unrecognizedHeader` either way, since a replacement character
+    /// breaks its exact required-column-name match.
     public static func parse(
         csvData: Data,
         catalog: CatalogSeed,
@@ -102,14 +114,17 @@ public enum HevyCSVImporter {
     /// Shared implementation behind both public `parse` overloads.
     ///
     /// - Parameter strictDecodeSucceeded: Whether the WHOLE FILE decoded as
-    ///   strict UTF-8 (round-2 U+FFFD-honesty fix). When `true`, a U+FFFD
-    ///   scalar anywhere in a row's fields is legitimate content — real
-    ///   replacement characters the source text actually contained — and
-    ///   must import normally, exactly like any other character. Only when
-    ///   `false` (the whole-file strict decode failed, so `csv` came from
-    ///   the LOSSY fallback) does a row's U+FFFD mean that SPECIFIC row's
-    ///   bytes were genuinely undecodable, and only then is it flagged
-    ///   `.invalidUTF8` — routed through the normal per-row malformed path
+    ///   strict UTF-8 (round-2 U+FFFD-honesty fix; round-3 finding 4.1 —
+    ///   see this type's doc and `HevyImportSummary.encodingDamageDetected`
+    ///   for the conservative-quarantine tradeoff this flag drives). When
+    ///   `true`, a U+FFFD scalar anywhere in a row's fields is legitimate
+    ///   content — real replacement characters the source text actually
+    ///   contained — and must import normally, exactly like any other
+    ///   character. When `false` (the whole-file strict decode failed, so
+    ///   `csv` came from the LOSSY fallback), EVERY row whose fields
+    ///   contain U+FFFD is flagged `.invalidUTF8`, whether or not that
+    ///   specific row's own bytes were the ones that actually failed to
+    ///   decode — routed through the normal per-row malformed path
     ///   (metadata-drop accounting included), not a pre-decode early
     ///   return, so a flagged row is accounted exactly like every other
     ///   malformed reason.
@@ -153,6 +168,7 @@ public enum HevyCSVImporter {
         var setIndexValuesDropped = 0
         var unknownColumnValuesDropped = 0
         var conflictingSessionMetadataDropped = 0
+        var rowsLostToUnterminatedQuote = 0
 
         func applyDrops(_ drops: RowMetadataDrops) {
             if drops.hasRPE { rpeValuesDropped += 1 }
@@ -174,8 +190,12 @@ public enum HevyCSVImporter {
             case .blank:
                 malformedRows.append(MalformedRow(rowNumber: rowNumber, rawFields: [], reason: .blankRow))
                 continue
-            case .unterminatedQuote:
-                malformedRows.append(MalformedRow(rowNumber: rowNumber, rawFields: [], reason: .unterminatedQuote))
+            case .unterminatedQuoteConsumedRemainder(let approxRowsLost):
+                malformedRows.append(MalformedRow(
+                    rowNumber: rowNumber, rawFields: [],
+                    reason: .unterminatedQuoteConsumedRemainder(approxRowsLost: approxRowsLost)
+                ))
+                rowsLostToUnterminatedQuote += approxRowsLost
                 continue
             case .strayQuote:
                 malformedRows.append(MalformedRow(rowNumber: rowNumber, rawFields: [], reason: .strayQuoteInField))
@@ -323,6 +343,8 @@ public enum HevyCSVImporter {
             setIndexValuesDropped: setIndexValuesDropped,
             unknownColumnValuesDropped: unknownColumnValuesDropped,
             conflictingSessionMetadataDropped: conflictingSessionMetadataDropped,
+            rowsLostToUnterminatedQuote: rowsLostToUnterminatedQuote,
+            encodingDamageDetected: !strictDecodeSucceeded,
             malformedRows: malformedRows
         )
 
