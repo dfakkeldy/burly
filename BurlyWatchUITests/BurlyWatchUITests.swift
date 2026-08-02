@@ -109,6 +109,31 @@ final class BurlyWatchUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyWatch-brokenSeed")
     }
 
+    /// m2-03 review finding 12 (carried gap, closed): once the launch-
+    /// environment key is present, an unrecognized value must fail closed
+    /// -- never fall through to the real on-device store. Mirrors
+    /// `testBrokenSeedScenarioFailsClosedToErrorState` above; this is the
+    /// "typo'd scenario name" half of the same fail-closed contract
+    /// (mirrors BurlyPhone's PhoneDemoSeed fix, m5-01 review round 2
+    /// finding 2).
+    func testUnrecognizedScenarioValueFailsClosedToErrorState() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routine" // typo of "routines"
+        app.launch()
+
+        let heading = app.staticTexts["storeUnavailableView.heading"]
+        XCTAssertTrue(
+            heading.waitForExistence(timeout: 15),
+            "Expected a store-unavailable error state for an unrecognized scenario value"
+        )
+        XCTAssertFalse(
+            app.staticTexts["waitingForPhoneView.headline"].exists,
+            "An unrecognized scenario value must not render as the ordinary empty-store waiting state"
+        )
+
+        attachScreenshot(from: app, name: "BurlyWatch-unrecognizedScenario")
+    }
+
     /// Looks a stable identifier up regardless of the accessibility element
     /// type SwiftUI/watchOS happens to expose it as (`.cell`, `.button`,
     /// `.other`, ...) -- used for containers like the "Empty session" row,

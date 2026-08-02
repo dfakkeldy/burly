@@ -142,6 +142,12 @@ final class LoggingScreenUITests: XCTestCase {
     /// seeded with no `ExerciseLastPerformance` at all -- the ghost row
     /// must render an empty state on both, with no crash and no numbers
     /// carried over from one page to the next.
+    ///
+    /// Also m2-03 review finding 3: an honestly-empty prefill must never
+    /// render as an invented bodyweight×8. This test previously asserted
+    /// the *invented* fallback ("0.0 lb" weight, an implicit "8" reps) --
+    /// it now asserts the honest placeholder and that Log set stays
+    /// disabled until the lifter enters a real value.
     func testAbsentDigestRendersEmptyGhostsAcrossPages() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
@@ -158,7 +164,17 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(waitFor { ghost.exists && ghost.label == "No previous data" })
 
         let weightControl = anyElement(app, identifier: "weightControl")
-        XCTAssertTrue((weightControl.value as? String)?.contains("0.0 lb") == true, "Expected bodyweight fallback with no digest")
+        let repsControl = anyElement(app, identifier: "repsControl")
+        let logButton = app.buttons["logSetButton"]
+        XCTAssertTrue(
+            waitFor { (weightControl.value as? String)?.contains("not set") == true },
+            "Expected an honest 'not set' placeholder, not an invented bodyweight value, with no digest"
+        )
+        XCTAssertTrue(
+            waitFor { (repsControl.value as? String) == "not set" },
+            "Expected an honest 'not set' placeholder, not an invented '8', with no digest"
+        )
+        XCTAssertFalse(logButton.isEnabled, "Expected Log set to be disabled with nothing entered yet -- there is nothing honest to log")
 
         attachScreenshot(from: app, name: "BurlyWatch-ghostRow-absentDigest-benchPress")
 
@@ -172,8 +188,143 @@ final class LoggingScreenUITests: XCTestCase {
             waitFor { ghost.exists && ghost.label == "No previous data" },
             "Expected Pull-Up's ghost row to be empty too, not stale text from Bench Press"
         )
+        XCTAssertTrue(
+            waitFor { (repsControl.value as? String) == "not set" },
+            "Expected Pull-Up's own reps to be freshly empty, not carried over from Bench Press"
+        )
 
         attachScreenshot(from: app, name: "BurlyWatch-ghostRow-absentDigest-pullUp")
+    }
+
+    /// m2-03 review finding 4: skip/swap/add must emit the engine's
+    /// `.pageAway` event, not just its haptic -- arming the weight control
+    /// and then swapping the exercise must land on the new exercise's page
+    /// already re-locked, never armed carried over from the exercise the
+    /// lifter just left.
+    func testSwapExerciseRelocksWeightControl() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+
+        let exerciseName = app.staticTexts["exercisePage.name"]
+        XCTAssertTrue(exerciseName.waitForExistence(timeout: 10))
+
+        let weightControl = anyElement(app, identifier: "weightControl")
+        XCTAssertTrue(waitFor { (weightControl.value as? String)?.contains("locked") == true })
+        weightControl.press(forDuration: 0.6)
+        XCTAssertTrue(
+            waitFor { (weightControl.value as? String)?.contains("armed") == true },
+            "Expected the long press to arm the weight control"
+        )
+
+        let ellipsis = anyElement(app, identifier: "ellipsisMenu")
+        XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
+        ellipsis.tap()
+
+        let swapAction = app.buttons["sessionActions.swapExercise"]
+        XCTAssertTrue(swapAction.waitForExistence(timeout: 5))
+        swapAction.tap()
+
+        let firstCatalogRow = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercisePicker.row.'")
+        ).element(boundBy: 0)
+        XCTAssertTrue(firstCatalogRow.waitForExistence(timeout: 5), "Expected at least one catalog exercise in the swap picker")
+        firstCatalogRow.tap()
+
+        XCTAssertTrue(waitFor { exerciseName.exists }, "Expected the swap to land on a new exercise page")
+        XCTAssertTrue(
+            waitFor { (weightControl.value as? String)?.contains("locked") == true },
+            "Expected the swapped-in exercise to require a fresh arm, not carry the previous armed state"
+        )
+        XCTAssertFalse(
+            (weightControl.value as? String)?.contains("armed") == true,
+            "The weight control must not still read armed after a swap"
+        )
+    }
+
+    /// m2-03 review finding 10: the summary's digest-scoped "beat last
+    /// time" signal must never be labeled a real PR -- `SessionSummary`'s
+    /// own doc explains why the watch cannot compute an all-time one. The
+    /// full-session flow above never exceeds the seeded digest (it logs
+    /// the digest's own numbers back, at best tying its max, never beating
+    /// it), so the row never renders there; this test only pins the
+    /// negative half -- the old, wrong "New PR" copy/identifier must never
+    /// appear anywhere in a completed summary. Driving the true-positive
+    /// path deterministically would require either simulating a Digital
+    /// Crown weight increase (no reliable, calibrated way to do that from
+    /// XCUITest without live simulator tuning this task had no way to
+    /// perform) or a resumed pre-logged session (m2-06's Resume flow,
+    /// explicitly out of scope) -- see the handoff for why this is a
+    /// deliberately incomplete pin rather than a skipped one.
+    func testSummaryNeverShowsInventedPRLabel() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+
+        let logButton = app.buttons["logSetButton"]
+        XCTAssertTrue(logButton.waitForExistence(timeout: 10))
+        logButton.tap()
+
+        let ellipsis = anyElement(app, identifier: "ellipsisMenu")
+        XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
+        ellipsis.tap()
+        let endWorkout = app.buttons["sessionActions.endWorkout"]
+        XCTAssertTrue(scrollUntilExists(app, endWorkout), "Expected to be able to scroll to 'End workout'")
+        endWorkout.tap()
+
+        let summaryHeading = app.staticTexts["sessionSummary.heading"]
+        XCTAssertTrue(summaryHeading.waitForExistence(timeout: 5))
+        XCTAssertFalse(
+            app.staticTexts["sessionSummary.personalRecords"].exists,
+            "The old 'New PR' identifier must no longer exist in the view"
+        )
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'New PR'")).firstMatch.exists,
+            "The summary must never claim a real all-time PR from digest-scoped data"
+        )
+    }
+
+    /// m2-03 review finding 11: the rest timer's tap-to-skip target and
+    /// ±15 s adjust buttons must each have an explicit minimum 44×44pt hit
+    /// region. (Weight/reps micro-buttons get the same fix, but --
+    /// deliberately collapsed into one VoiceOver element apiece via
+    /// `.accessibilityElement(children: .ignore)`, the axiom-accessibility
+    /// custom-adjustable-control pattern -- their individual child buttons
+    /// aren't independently queryable here; see the fix's code comments
+    /// for that half.)
+    func testRestTimerControlsHaveMinimumHitRegions() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+
+        let logButton = app.buttons["logSetButton"]
+        XCTAssertTrue(logButton.waitForExistence(timeout: 10))
+        logButton.tap()
+
+        let remaining = app.staticTexts["restTimer.remaining"]
+        XCTAssertTrue(remaining.waitForExistence(timeout: 5), "Expected the rest timer to auto-start after logging a set")
+
+        let decrease = anyElement(app, identifier: "restTimer.decreaseButton")
+        let increase = anyElement(app, identifier: "restTimer.increaseButton")
+        XCTAssertTrue(decrease.waitForExistence(timeout: 5))
+        XCTAssertTrue(increase.waitForExistence(timeout: 5))
+
+        for (name, element) in [("skip target", remaining), ("decrease button", decrease), ("increase button", increase)] {
+            XCTAssertGreaterThanOrEqual(element.frame.width, 44, "Expected the \(name) to have at least a 44pt-wide hit region")
+            XCTAssertGreaterThanOrEqual(element.frame.height, 44, "Expected the \(name) to have at least a 44pt-tall hit region")
+        }
     }
 
     // MARK: - Helpers

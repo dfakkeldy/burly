@@ -75,6 +75,7 @@ struct ExercisePageView: View {
             GuardedWeightControlView(
                 weight: viewModel.currentWeight,
                 isArmed: viewModel.isWeightArmed,
+                isUnset: viewModel.isWeightUnset,
                 onArm: viewModel.armWeight,
                 onAdjustSteps: viewModel.adjustWeight(bySteps:)
             )
@@ -89,7 +90,10 @@ struct ExercisePageView: View {
             // §2: "one primary full-width Log set button." Also the
             // Double Tap primary action (SessionViewModel.logCurrentSet's
             // doc) -- one call site for both an on-screen tap and the
-            // watchOS Double Tap gesture.
+            // watchOS Double Tap gesture. Disabled while there is nothing
+            // honest to log yet (m2-03 review finding 3): an honestly-empty
+            // prefill must not be logged as an invented bodyweight×8 just
+            // because Double Tap fired.
             Button(action: viewModel.logCurrentSet) {
                 Text("Log set")
                     .frame(maxWidth: .infinity)
@@ -97,6 +101,7 @@ struct ExercisePageView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .handGestureShortcut(.primaryAction)
+            .disabled(!viewModel.canLogCurrentSet)
             .accessibilityIdentifier("logSetButton")
 
             if viewModel.isRestRunning {

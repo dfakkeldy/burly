@@ -32,12 +32,20 @@ struct LoggingScreenView: View {
 
     var body: some View {
         Group {
-            if let finished = viewModel.finishedSummary {
+            // m2-03 review findings 6-9: a blocking save failure takes
+            // priority over everything else on screen -- the lifter cannot
+            // be allowed to keep logging, end the workout, or navigate away
+            // while a mutation's durability is still in question.
+            if let saveFailure = viewModel.saveFailure {
+                SaveFailureView(message: saveFailure, onRetry: viewModel.retrySave)
+            } else if let finished = viewModel.finishedSummary {
                 SessionSummaryView(
                     summary: finished,
                     isFinal: true,
                     isFinishing: false,
+                    saveError: nil,
                     onFinish: {},
+                    onRetryFinish: {},
                     onKeepGoing: {},
                     onDiscard: {},
                     onDone: { dismiss() }
@@ -47,7 +55,9 @@ struct LoggingScreenView: View {
                     summary: preview,
                     isFinal: false,
                     isFinishing: viewModel.isFinishing,
+                    saveError: viewModel.finishSaveError,
                     onFinish: viewModel.commitFinish,
+                    onRetryFinish: viewModel.retryFinishSave,
                     onKeepGoing: viewModel.keepGoing,
                     onDiscard: viewModel.requestDiscard,
                     onDone: {}

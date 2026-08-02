@@ -12,12 +12,21 @@
 // setting exists yet -- that is phone-side, later work) via `Weight
 // .pounds`, rounded to the nearest 0.5 lb for display only, exactly as
 // that property's doc requires ("never round-trip back into kg").
+//
+// `isUnset` (m2-03 review finding 3): true when the §2 prefill ladder came
+// back `.empty` and the lifter has not armed-and-adjusted a real value yet.
+// The engine's `WeightEditState` always holds a concrete `Weight` (0 kg,
+// the same substrate `.bodyweight` uses) -- there is no "no weight"
+// representation there without a BurlyCore change, out of this task's
+// scope. So this view renders the honest placeholder itself rather than
+// presenting that internal zero as if it were real prefill data.
 import SwiftUI
 import BurlyCore
 
 struct GuardedWeightControlView: View {
     let weight: Weight
     let isArmed: Bool
+    let isUnset: Bool
     let onArm: () -> Void
     let onAdjustSteps: (Int) -> Void
 
@@ -37,16 +46,31 @@ struct GuardedWeightControlView: View {
 
             if isArmed {
                 HStack(spacing: 20) {
-                    Button { onAdjustSteps(-1) } label: { Image(systemName: "minus") }
-                        .accessibilityLabel("Decrease weight")
-                    Button { onAdjustSteps(1) } label: { Image(systemName: "plus") }
-                        .accessibilityLabel("Increase weight")
+                    Button { onAdjustSteps(-1) } label: {
+                        Image(systemName: "minus")
+                            // m2-03 review finding 11: explicit minimum hit
+                            // region, visual glyph size unchanged.
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Decrease weight")
+                    Button { onAdjustSteps(1) } label: {
+                        Image(systemName: "plus")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Increase weight")
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity)
             }
         }
         .padding(.vertical, 4)
+        // m2-03 review finding 11: the long-press-to-arm gesture's parent
+        // only had 4 points of vertical padding above; an explicit minimum
+        // frame gives the arm gesture a real 44×44 hit region without
+        // changing how the control looks.
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
         // §2: "Arm: long-press (≈0.5 s) the weight value."
         .onLongPressGesture(minimumDuration: 0.5) {
@@ -94,19 +118,34 @@ struct GuardedWeightControlView: View {
         (weight.pounds * 2).rounded() / 2
     }
 
+    /// Honest placeholder while unset and untouched (m2-03 review finding
+    /// 3) -- once armed, the control is showing a real, editable number
+    /// (0 lb by default, same as any other weight), so the dash only
+    /// applies to the locked, never-yet-armed state.
     private var weightText: String {
-        String(format: "%.1f lb", displayPounds)
+        guard isUnset, !isArmed else {
+            return String(format: "%.1f lb", displayPounds)
+        }
+        return "– lb"
     }
 
     private var accessibilityValueText: String {
-        "\(weightText), \(isArmed ? "armed" : "locked")"
+        let lockWord = isArmed ? "armed" : "locked"
+        guard isUnset, !isArmed else {
+            return "\(String(format: "%.1f lb", displayPounds)), \(lockWord)"
+        }
+        return "not set, \(lockWord)"
     }
 }
 
 #Preview("Locked") {
-    GuardedWeightControlView(weight: Weight(kg: 60), isArmed: false, onArm: {}, onAdjustSteps: { _ in })
+    GuardedWeightControlView(weight: Weight(kg: 60), isArmed: false, isUnset: false, onArm: {}, onAdjustSteps: { _ in })
 }
 
 #Preview("Armed") {
-    GuardedWeightControlView(weight: Weight(kg: 60), isArmed: true, onArm: {}, onAdjustSteps: { _ in })
+    GuardedWeightControlView(weight: Weight(kg: 60), isArmed: true, isUnset: false, onArm: {}, onAdjustSteps: { _ in })
+}
+
+#Preview("Unset") {
+    GuardedWeightControlView(weight: Weight(kg: 0), isArmed: false, isUnset: true, onArm: {}, onAdjustSteps: { _ in })
 }

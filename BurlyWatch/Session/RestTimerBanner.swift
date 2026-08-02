@@ -24,13 +24,21 @@ struct RestTimerBanner: View {
                 onAdjust(-15)
             } label: {
                 Text("-15")
+                    // m2-03 review finding 11: rest-adjust buttons were
+                    // caption-sized text with no minimum hit region --
+                    // explicit frame, visual size unchanged.
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
+            .accessibilityIdentifier("restTimer.decreaseButton")
             .accessibilityLabel("Subtract 15 seconds from rest")
 
             Text(formatted)
                 .font(.system(.body, design: .rounded, weight: .medium))
                 .monospacedDigit()
-                .frame(minWidth: 44)
+                // m2-03 review finding 11: the skip target had a 44 pt
+                // minimum width but no minimum height.
+                .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
                 .onTapGesture { onSkip() }
                 .accessibilityIdentifier("restTimer.remaining")
@@ -42,7 +50,10 @@ struct RestTimerBanner: View {
                 onAdjust(15)
             } label: {
                 Text("+15")
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
+            .accessibilityIdentifier("restTimer.increaseButton")
             .accessibilityLabel("Add 15 seconds to rest")
         }
         .buttonStyle(.plain)
