@@ -60,6 +60,8 @@
 		A723D09FE5094492AB79CEEB /* DiscardConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 254F57FE913F4F9BA160CEB6 /* DiscardConfirmView.swift */; };
 		20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */; };
 		CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */; };
+		D8E90E4D6277CB5652B0A304 /* ResumeSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */; };
+		921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -150,6 +152,8 @@
 		254F57FE913F4F9BA160CEB6 /* DiscardConfirmView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscardConfirmView.swift; sourceTree = "<group>"; };
 		8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionConflictUITests.swift; sourceTree = "<group>"; };
 		8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SaveFailureUITests.swift; sourceTree = "<group>"; };
+		7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeSessionView.swift; sourceTree = "<group>"; };
+		18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -204,6 +208,7 @@
 				853528B539F04B315A179825 /* WaitingForPhoneView.swift */,
 				9F8F8EB3CCE67A8F9C27F537 /* StoreUnavailableView.swift */,
 				796F661042EF39C589E584CF /* WatchDemoSeed.swift */,
+				7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */,
 				E8703080724CA97AF4749DA3 /* Session */,
 			);
 			path = BurlyWatch;
@@ -224,6 +229,7 @@
 				E1213880A20DF51DDFF1862F /* LoggingScreenUITests.swift */,
 				8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */,
 				8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */,
+				18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */,
 			);
 			name = BurlyWatchUITests;
 			path = BurlyWatchUITests;
@@ -502,6 +508,7 @@
 				164D74CD15B34339B54B7F48 /* SaveFailureView.swift in Sources */,
 				60FCDFEFC0C645BDA6503182 /* SessionConflictView.swift in Sources */,
 				A723D09FE5094492AB79CEEB /* DiscardConfirmView.swift in Sources */,
+				D8E90E4D6277CB5652B0A304 /* ResumeSessionView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -513,6 +520,7 @@
 				A28975AC8C65BABB4B67CF00 /* LoggingScreenUITests.swift in Sources */,
 				20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */,
 				CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */,
+				921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

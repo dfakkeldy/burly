@@ -155,18 +155,43 @@ final class SessionViewModel {
     ///   SwiftUI constructs and discards during `State(initialValue:)`
     ///   diffing can no longer write to the store as a side effect of
     ///   existing.
+    ///
+    /// - Parameter startInSummary: m2-06's Resume flow. §2: "Declining
+    ///   resume = normal end-workout summary path" -- a lifter who declines
+    ///   the Resume offer (`ResumeSessionView`) lands on exactly the same
+    ///   Finish/Keep going/Discard preview "End workout" produces, not a
+    ///   separate screen with its own policy. `true` calls
+    ///   `requestEndWorkout()` once, before the pager is ever shown, so
+    ///   `LoggingScreenView.body` renders `endWorkoutPreview` on the very
+    ///   first frame; "Keep going" from there clears it and falls through
+    ///   to the ordinary pager -- i.e. resuming anyway -- exactly like
+    ///   declining-then-changing-your-mind should behave.
     init(
         engine: SessionEngine,
         store: BurlyStore,
         haptics: HapticPlaying = HapticPlayer(),
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        startInSummary: Bool = false
     ) {
         self.engine = engine
         self.store = store
         self.haptics = haptics
         self.now = now
-        self.currentItemID = engine.session.unskippedItems.first?.id
+        // Resume fidelity (m2-06): land on the first item that still has
+        // something left to log, not just the first item overall. A fresh
+        // Start (nothing logged anywhere) picks the same page either way,
+        // so this is a no-op for every existing flow; a Resume of a
+        // multi-item session that already finished its first exercise
+        // lands where the lifter left off instead of paging them back to
+        // an exercise with nothing left to do. Falls back to the first
+        // unskipped item (previous behavior, and `nil` when there is none)
+        // once every item is already fully logged.
+        self.currentItemID = engine.session.unskippedItems.first { engine.session.hasEmptySetSlot($0.id) }?.id
+            ?? engine.session.unskippedItems.first?.id
         refreshPrefill()
+        if startInSummary {
+            requestEndWorkout()
+        }
     }
 
     // MARK: - Reads

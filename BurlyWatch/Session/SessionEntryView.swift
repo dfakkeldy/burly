@@ -26,19 +26,26 @@
 // which SwiftUI guarantees fires once per this view's actual *appearance*
 // in the hierarchy, not once per `body`/`init` evaluation.
 //
-// ## The blocker (m2-03 review finding 1, scoped)
+// ## The blocker (m2-03 review finding 1, scoped) and its m2-06 resolution
 //
-// Building the full §2/§4 Resume flow -- reattaching to an existing active
-// session's *own* logging screen on relaunch -- is m2-06's task. What this
-// view must never do is let a second `Start` reach an unsaved logging
-// screen while a session is already in flight: `store
+// m2-03 left this view unable to let a second `Start` reach an unsaved
+// logging screen while a session is already in flight: `store
 // .saveActiveSession(_:)` refuses a second `.active` session
 // (`.activeSessionAlreadyInFlight`), and the old code only wrote that
 // refusal into an unused `errorMessage` while the (now-broken) logging
-// screen stayed up and running. `start()` checks `resumableActiveSession()`
-// *before* ever building a new engine; if one is already in flight, this
-// routes to `SessionConflictView`'s finish-or-discard choice against that
-// EXISTING session instead.
+// screen stayed up and running. `.emptySession`/`.start` below still check
+// `resumableActiveSession()` *before* ever building a new engine, routing a
+// hit to `SessionConflictView`'s finish-or-discard choice -- kept as
+// defense in depth, though `WatchHomeViewModel` (m2-06) now gates the
+// routine list itself on the same check, so those two routes should no
+// longer be reachable while a session is active.
+//
+// The full §2/§3 Resume flow -- reattaching to an existing active session's
+// *own* logging screen, sets and rest timer intact, on relaunch -- is
+// m2-06's task and is the `.resume(sessionID:enterSummary:)` branch below.
+// `WatchHomeViewModel.load()` is what actually *finds* the resumable
+// session and offers `ResumeSessionView`; this view's job stays narrow --
+// resolve the route it's handed into a live `SessionEngine`.
 import SwiftUI
 import BurlyCore
 import BurlyPersistence
@@ -50,7 +57,7 @@ struct SessionEntryView: View {
     private enum Phase {
         case checking
         case conflict(ActiveSession)
-        case ready(SessionEngine)
+        case ready(SessionEngine, startInSummary: Bool)
         case failed(String)
     }
 
@@ -63,8 +70,8 @@ struct SessionEntryView: View {
                 ProgressView()
             case .conflict(let existing):
                 SessionConflictView(existing: existing, store: store, onResolved: start)
-            case .ready(let engine):
-                LoggingScreenView(engine: engine, store: store)
+            case .ready(let engine, let startInSummary):
+                LoggingScreenView(engine: engine, store: store, startInSummary: startInSummary)
             case .failed(let message):
                 StoreUnavailableView(message: message)
             }
@@ -80,8 +87,35 @@ struct SessionEntryView: View {
     /// once the blocking conflict is cleared, so the originally-requested
     /// route proceeds immediately rather than making the lifter tap Start
     /// twice.
+    ///
+    /// `.resume` (m2-06) is handled first and returns early, on its own
+    /// branch entirely: it names a session `ResumeSessionView` already
+    /// found via `resumableActiveSession()`, so re-running that same
+    /// bounded lookup here and routing a match to `SessionConflictView`
+    /// would treat the very session this route exists to reattach to as a
+    /// second, conflicting one. `.emptySession`/`.start` are new-session
+    /// routes and keep the existing pre-flight check: they only reach here
+    /// by a `NavigationLink` pushed from the routine list, which (m2-06)
+    /// the shell no longer shows while a session is active -- see
+    /// `WatchHomeViewModel`'s doc -- so this remains a defensive check for
+    /// a route that should not be reachable in that state, not the primary
+    /// guard against it.
     private func start() {
         phase = .checking
+
+        if case .resume(let sessionID, let enterSummary) = route {
+            do {
+                guard let existing = try store.activeSession(id: sessionID) else {
+                    phase = .failed("This workout is no longer available.")
+                    return
+                }
+                phase = .ready(SessionEngine(session: existing), startInSummary: enterSummary)
+            } catch {
+                phase = .failed(String(describing: error))
+            }
+            return
+        }
+
         do {
             if let existing = try store.resumableActiveSession() {
                 phase = .conflict(existing)
@@ -107,6 +141,9 @@ struct SessionEntryView: View {
             } catch {
                 phase = .failed(String(describing: error))
             }
+        case .resume:
+            // Handled by the early return above; unreachable.
+            break
         }
     }
 
@@ -117,7 +154,7 @@ struct SessionEntryView: View {
     private func saveAndEnter(_ engine: SessionEngine) {
         do {
             try store.saveActiveSession(engine.session)
-            phase = .ready(engine)
+            phase = .ready(engine, startInSummary: false)
         } catch {
             phase = .failed(String(describing: error))
         }

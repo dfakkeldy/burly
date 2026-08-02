@@ -4,7 +4,22 @@
 // routines can only reach the watch store through it (routine authoring is
 // phone-only, §9), so an empty routine list today always means "nothing has
 // arrived from the iPhone yet," exactly the §5 "waiting for iPhone" case.
-
+//
+// ## Resume (m2-06)
+//
+// §2 "Always-On & recovery": "Relaunch with an `.active` session in store
+// → Resume screen ... Declining resume = normal end-workout summary path."
+// That is a home-shell-level gate, not something reachable only after the
+// lifter picks a routine -- so `load()` checks `resumableActiveSession()`
+// *first*, before ever computing the routine list, exactly like it already
+// treats an empty routine list as "waiting for iPhone" rather than showing
+// an empty list. One consequence worth being explicit about: with this
+// gate in place, the routine list is never shown while a session is
+// active, so `RoutineListView` -> `SessionEntryView`'s own defensive
+// `resumableActiveSession()` pre-check (`SessionConflictView`'s doc) should
+// no longer be reachable in ordinary use -- it stays as a second layer
+// rather than being removed, since this file is the only thing that would
+// have to keep proving that claim if it were the sole guard.
 import Foundation
 import BurlyCore
 import BurlyPersistence
@@ -21,8 +36,27 @@ final class WatchHomeViewModel {
     enum LoadState: Equatable {
         case loading
         case waitingForPhone
+        /// §2 Resume gate (m2-06): an `.active` session was found. Takes
+        /// priority over every other state -- see `load()`.
+        case resumable(ResumablePreview)
         case loaded([RoutineRow])
         case failed(String)
+    }
+
+    /// What `ResumeSessionView` needs to render its prompt, without
+    /// carrying the full `ActiveSession` graph into view-layer state (the
+    /// session itself is re-fetched at `SessionEntryView` once the lifter
+    /// actually picks an action -- see `HomeRoute.resume`'s doc).
+    struct ResumablePreview: Equatable {
+        let sessionID: UUID
+        /// §1: denormalized onto the session itself, so this reads even
+        /// after the routine that started it was archived or deleted.
+        /// `nil` for §2's "Empty session" start, which never names a
+        /// routine at all -- not an error case, so `ResumeSessionView`
+        /// renders a plain fallback rather than treating it as one.
+        let routineName: String?
+        let startedAt: Date
+        let loggedSetCount: Int
     }
 
     struct RoutineRow: Identifiable, Equatable {
@@ -44,6 +78,18 @@ final class WatchHomeViewModel {
 
     func load() {
         do {
+            if let resumable = try store.resumableActiveSession() {
+                state = .resumable(
+                    ResumablePreview(
+                        sessionID: resumable.id,
+                        routineName: resumable.session.routineName,
+                        startedAt: resumable.session.startedAt,
+                        loggedSetCount: resumable.allSets.count
+                    )
+                )
+                return
+            }
+
             let routines = try store.routines(includingArchived: false)
             guard !routines.isEmpty else {
                 state = .waitingForPhone

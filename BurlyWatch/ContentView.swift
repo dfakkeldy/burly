@@ -45,6 +45,16 @@ struct ContentView: View {
             ProgressView()
         case .waitingForPhone:
             WaitingForPhoneView()
+        case .resumable(let preview):
+            // §2 Resume gate (m2-06): takes priority over the routine list
+            // itself -- see `WatchHomeViewModel`'s doc. Reload on
+            // reappearance for the same reason `.loaded` does below:
+            // resolving the conflict from `ResumeSessionView`'s own
+            // Finish/Discard (the decline path) pops back to this same
+            // `content` switch, and only a fresh `load()` notices the
+            // session is no longer active and flips to the routine list.
+            ResumeSessionView(preview: preview)
+                .onAppear { viewModel.load() }
         case .loaded(let rows):
             // Reload on every reappearance (m2-03): finishing or discarding
             // a workout pops back here, and the "last done N days ago" text

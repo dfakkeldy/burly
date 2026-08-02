@@ -41,6 +41,29 @@ enum WatchDemoSeed {
     /// when unset.
     static let faultCountEnvironmentKey = "BURLY_WATCH_UI_TEST_FAULT_COUNT"
 
+    /// Names a unique on-disk store for this launch (m2-06), instead of the
+    /// fresh `.inMemory` store every other scenario gets. Every scenario's
+    /// store is deliberately memory-only, which vanishes the moment the
+    /// process does -- exactly why `XCUIApplication.terminate()` cannot
+    /// prove crash recovery against it. This is the one seam that lets a
+    /// UI test open the *same* store across the `terminate()`/`launch()`
+    /// boundary a real kill-and-relaunch performs, so BurlyWatchUITests can
+    /// drive spec §2 acceptance #4 / §3 acceptance #3 through real UI taps
+    /// -- Start, log a set, kill, relaunch, Resume -- rather than only
+    /// through `BurlyPersistenceTests`' `reopened`-store fixtures.
+    ///
+    /// The value is a bare token, never a path: this app process and the
+    /// XCUITest runner process are different sandboxed processes, and a
+    /// filesystem path the runner computed for itself is not guaranteed
+    /// writable from here. `storeLocation()` below turns the token into a
+    /// URL using *this* process's own `FileManager.temporaryDirectory`, so
+    /// the store opens the same way the real on-device store does (a file
+    /// this app's own container can always write), just at a disposable,
+    /// per-test-run location instead of the shipping one. A test sets this
+    /// once, before either `launch()` call, so both launches derive the
+    /// identical URL and reopen the same file.
+    static let storeTokenEnvironmentKey = "BURLY_WATCH_UI_TEST_STORE_TOKEN"
+
     enum Scenario: String {
         /// Two routines built from the shipped catalog seed (§9); one has a
         /// logged session so its row exercises "last done N days ago," the
@@ -147,17 +170,55 @@ enum WatchDemoSeed {
         guard scenario != .brokenSeed else {
             throw SeedError.intentionallyBroken
         }
-        let store = try SwiftDataStore(kind: .watch, at: .inMemory)
+        let store = try SwiftDataStore(kind: .watch, at: storeLocation())
         switch scenario {
         case .routines:
-            try seedRoutines(into: store)
+            try seedRoutinesIfNeeded(into: store)
         case .activeConflict:
-            try seedRoutines(into: store)
-            try seedActiveConflict(into: store)
+            try seedRoutinesIfNeeded(into: store)
+            try seedActiveConflictIfNeeded(into: store)
         case .empty, .brokenSeed:
             break
         }
         return store
+    }
+
+    /// `.inMemory` (every scenario's original behavior) unless
+    /// `storeTokenEnvironmentKey` names a token -- see that key's doc for
+    /// why this is a token turned into a URL here, not a URL handed in
+    /// directly.
+    private static func storeLocation() -> BurlyStoreLocation {
+        guard
+            let token = ProcessInfo.processInfo.environment[storeTokenEnvironmentKey],
+            !token.isEmpty
+        else {
+            return .inMemory
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "BurlyWatchUITest-\(token).store", directoryHint: .notDirectory)
+        return .file(url)
+    }
+
+    /// Idempotent wrapper around `seedRoutines` (m2-06): a file-backed store
+    /// reopened after `app.terminate()` / `app.launch()` already has these
+    /// rows from the previous launch, and re-running `createRoutine`
+    /// against them would throw `.duplicateID`. `hasRoutines()` (m5-01,
+    /// bounded existence check) is what lets the same scenario name mean
+    /// "seed fresh" on a store's first launch and "leave what's already
+    /// there" on every launch after -- exactly the semantics a real device
+    /// relaunch has (nothing re-seeds an existing store). A no-op for every
+    /// `.inMemory` call site (existing tests): a fresh in-memory store is
+    /// always empty, so this always seeds there, same as before.
+    private static func seedRoutinesIfNeeded(into store: SwiftDataStore) throws {
+        guard try !store.hasRoutines() else { return }
+        try seedRoutines(into: store)
+    }
+
+    /// Same idempotency as `seedRoutinesIfNeeded`, for the second scenario
+    /// that seeds into a store this file might reopen.
+    private static func seedActiveConflictIfNeeded(into store: SwiftDataStore) throws {
+        guard try store.resumableActiveSession() == nil else { return }
+        try seedActiveConflict(into: store)
     }
 
     private static func seedRoutines(into store: SwiftDataStore) throws {
