@@ -1,6 +1,6 @@
 # Burly App Icon Design
 
-**Status:** Visual direction approved on 2026-08-01; written specification awaiting review.
+**Status:** Approved on 2026-08-01.
 
 ## Purpose
 
