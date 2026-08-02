@@ -337,6 +337,54 @@ final class LoggingScreenUITests: XCTestCase {
         }
     }
 
+    /// §3 acceptance #2: logging starts the persisted wall-clock timer;
+    /// the timeline renders a changing value, adjustment immediately moves
+    /// it forward, and the confirm-free countdown tap clears it.
+    func testRestTimerCountsDownAdjustsAndSkips() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+
+        let logButton = app.buttons["logSetButton"]
+        XCTAssertTrue(logButton.waitForExistence(timeout: 10))
+        logButton.tap()
+
+        let remaining = app.staticTexts["restTimer.remaining"]
+        XCTAssertTrue(remaining.waitForExistence(timeout: 5), "Expected a rest countdown after logging a set")
+        let initialSeconds = try restSeconds(from: remaining.value)
+
+        // A timeline update must make progress without an arbitrary sleep.
+        XCTAssertTrue(
+            waitFor(timeout: 3) {
+                guard let current = try? self.restSeconds(from: remaining.value) else { return false }
+                return current < initialSeconds
+            },
+            "Expected the wall-clock countdown to decrease"
+        )
+
+        let increase = anyElement(app, identifier: "restTimer.increaseButton")
+        XCTAssertTrue(increase.waitForExistence(timeout: 5))
+        let beforeIncrease = try restSeconds(from: remaining.value)
+        increase.tap()
+        XCTAssertTrue(
+            waitFor {
+                guard let current = try? self.restSeconds(from: remaining.value) else { return false }
+                return current > beforeIncrease
+            },
+            "Expected +15 seconds to update the countdown immediately"
+        )
+
+        remaining.tap()
+        XCTAssertTrue(
+            waitFor(timeout: 5) { !remaining.exists },
+            "Expected tapping the countdown to skip and clear the rest timer"
+        )
+    }
+
     // MARK: - Helpers
 
     private func assertPrefill(
@@ -384,6 +432,14 @@ final class LoggingScreenUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    private func restSeconds(from value: Any?) throws -> Int {
+        guard let text = value as? String,
+              let seconds = Int(text.split(separator: " ", maxSplits: 1).first ?? "") else {
+            throw RestTimerLabelError.invalid(String(describing: value))
+        }
+        return seconds
+    }
+
     private func attachScreenshot(from app: XCUIApplication, name: String) {
         let screenshot = app.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
@@ -391,4 +447,8 @@ final class LoggingScreenUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+}
+
+private enum RestTimerLabelError: Error {
+    case invalid(String)
 }

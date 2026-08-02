@@ -374,10 +374,14 @@ final class SessionViewModel {
         }
     }
 
-    // MARK: - Rest timer (§3 hosting seam; the timer UI itself is m2-05)
+    // MARK: - Rest timer (§3 hosting seam)
 
     var restRemaining: TimeInterval { engine.restRemaining }
     var isRestRunning: Bool { engine.session.restTimer != nil && engine.restRemaining > 0 }
+    /// The persisted wall-clock state the banner renders. The banner may
+    /// read its dates but never alters this value; RestTimerEngine remains
+    /// the only state machine for rest transitions and haptic decisions.
+    var restTimer: RestTimerState? { engine.session.restTimer }
 
     func adjustRest(by delta: TimeInterval) {
         play(engine.adjustRest(by: delta))
