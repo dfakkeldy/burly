@@ -438,3 +438,143 @@ stopgap while a structural fix is designed. Re-run
 `Scripts/acceptance-sim.sh` (one full attempt) to confirm before declaring
 green.
 ```
+
+## 2026-08-02 — Round D: eliminated the chained-presentation race for real; a DIFFERENT, deeper flake surfaced; m2-03 blocks
+
+Per the dispatcher's instruction, stopped tuning *which* sheet API drives
+the swap/add picker and instead eliminated the chained system presentation
+entirely, applying finding 9's own remedy pattern (a first-class state, not
+a dismiss-then-present handoff) to the picker.
+
+**The fix (pattern (a), NavigationStack push):** `SessionActionsView`
+already hosts its rows inside its own `NavigationStack`. "Swap exercise"
+and "Add exercise" are now `NavigationLink(value: ExercisePickerContext)`
+rows pushing `ExercisePickerView` onto that SAME already-presented
+`NavigationStack` via `.navigationDestination(for:)` -- a plain in-stack
+navigation transition, never a second system presentation, so there is no
+dismiss-then-present race to lose. Selecting an exercise (or "Custom (name
+later)", or Cancel) closes the whole sheet directly (`isPresented = false`
+inside `SessionActionsView`), landing back on the logging screen exactly as
+the old top-level-sheet picker did. Chose push-in-place over "(b) a
+dedicated non-chained presentation" because the natural host
+(`SessionActionsView`'s own `NavigationStack`) already existed -- no new
+presentation surface needed, the smallest structural change that removes
+the chaining.
+
+Mechanical follow-through: `ExercisePickerView` no longer wraps itself in
+its own `NavigationStack` (it's shared between the new pushed-destination
+use and the one remaining direct, unchained caller -- see below), so that
+caller now supplies one. `ExercisePickerContext` changed from
+`Identifiable` to `Hashable` (`NavigationLink(value:)`/
+`.navigationDestination(for:)` need `Hashable`; the synthesized `id` string
+had no other use). `PendingSessionAction.openPicker` case removed -- dead
+code once swap/add stopped going through `pendingAction` -- leaving only
+`.requestDiscard`, whose own dismiss-then-present handoff into
+`DiscardConfirmView` was deliberately left untouched (it has been reliably
+green since finding 9's fix and touching it wasn't asked for or needed).
+
+The "empty session" placeholder's own "Add exercise" button (shown when a
+session has zero items) still sets `viewModel.pickerContext` directly and
+presents via `.sheet(isPresented:)` -- unchanged in shape, because it was
+never routed through another sheet's dismissal in the first place (it's
+tapped from the plain logging screen, not from within the ellipsis sheet),
+so it was never part of the chained-presentation defect.
+
+**Verification before the gate:** a scoped `xcodebuild test -only-testing`
+re-run of the four tests that exercise this surface --
+`testFullSessionFlowLogSwapFinishShowsCorrectTotals`,
+`testSwapExerciseRelocksWeightControl`,
+`testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds`, and
+`testDiscardFailureBlocksAndRetrySucceeds` -- passed 4/4, confirming
+`NavigationLink`/`.navigationDestination(for:)` rows are still found and
+tapped correctly by the existing identifier-based queries
+(`app.buttons["sessionActions.swapExercise"]` etc.) despite the underlying
+construct changing from a plain `Button` to a `NavigationLink`.
+`cd BurlyKit && swift test`: 557/557. `BURLY_RUN_MIGRATION_SPIKE=1 swift
+test --filter MigrationSpikeTests`: 2/2.
+
+**Gate run 1 of the dispatcher's 2-run stability budget
+(`Scripts/output/runs/20260802T090742Z`): FAILED. Per instruction, run 2
+was NOT attempted -- stopping to report instead of chasing a second guess.**
+BurlyPhoneUITests 1/1 pass. BurlyWatchUITests **14/15 pass, 1 fail**:
+`testPlaceholderExerciseCreateFailureBlocksAndRetrySucceeds` again -- but
+at a **different, earlier line than every previous failure**:
+
+```
+SaveFailureUITests.swift:104: XCTAssertTrue failed
+  - Expected to be able to scroll to 'Add exercise'
+```
+
+This is `scrollUntilExists(app, addExercise)` itself returning `false` --
+the picker-presentation code this round's fix targets was **never
+reached**. The log shows all ~20 of the finer-grained drag attempts firing
+(one roughly every second, `t≈13s` to `t≈33s`), each followed by a fresh
+`"sessionActions.addExercise" Button` existence check that never
+succeeds. This is the SAME row-5-of-9 scroll this round's fix was built on
+top of (fixed in round C, verified in round C's own scoped re-runs AND in
+three more scoped re-runs this round, AND never failing again after round
+C in either full-gate attempt at the scroll step specifically) -- but it
+has now, once, failed to reveal the row at all inside a full multi-suite
+gate run, after 20 real drag attempts each of which re-checked existence.
+
+**This is good news and bad news for the picker fix specifically, and a
+new blocker for the task overall:**
+- Good: the chained-presentation defect this round targeted is confirmed
+  eliminated -- neither gate attempt since the `NavigationLink` conversion
+  has reproduced the old "picker never appears after the actions sheet
+  dismisses" failure. The one gate failure since then never got far enough
+  to exercise that code path at all.
+- Bad: a **different, more fundamental flake** is now the blocker --
+  `SessionActionsView`'s `List` scroll-to-reveal-row-5 mechanism itself is
+  unreliable under full-gate load (multiple suites/xcresult bundles/longer
+  session), even with round C's finer-grained drag fix, despite passing
+  every scoped isolated re-run (round C's own verification, and three more
+  in this round) and even the FIRST full-gate attempt's scroll step
+  (that attempt's failure was further downstream, at the picker-presentation
+  step, which no longer reproduces). The scroll mechanism is not
+  deterministically broken -- it is flaky specifically under sustained
+  simulator load, which single-test or few-test scoped runs don't exercise.
+
+**Per the dispatcher's explicit instruction ("if it flakes again even once,
+STOP and report"), no further code changes or gate runs were attempted.**
+The picker-chaining fix is real and should stay; a genuinely different,
+deeper flake (this List's scroll reliability under load) is now the open
+question, and it's a UI-automation/List-rendering reliability question, not
+a presentation-chaining one -- likely needs either a structurally different
+way to reach "Add exercise" that doesn't depend on scrolling this List at
+all (e.g. reordering the ellipsis menu so "Add exercise" sits within the
+initial, no-scroll fold -- a product/UX call, not just a test fix, since it
+changes the menu's row order) or a fundamentally different, more robust
+scroll-to-element technique than either `swipeUp()` or a coordinate-based
+drag (e.g. driving the Digital Crown instead of a touch drag, if XCUITest
+exposes that reliably on watchOS).
+
+Verification this round:
+- `cd BurlyKit && swift test`: 557/557 pass.
+- `BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests`: 2/2 pass.
+- Scoped `xcodebuild test -only-testing` (4 tests exercising the picker
+  surface): 4/4 pass.
+- `Scripts/acceptance-sim.sh` run 1 of 2: BurlyPhoneUITests 1/1 pass,
+  BurlyWatchUITests 14/15 pass (1 fail, scroll-reliability flake above).
+  Run 2 not attempted per instruction. Result bundle:
+  `Scripts/output/runs/20260802T090742Z/BurlyWatchUITests.xcresult`.
+
+**m2-03 blocks.** Not merge-ready.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m2-03
+Branch: task/burly-m2-03 (HEAD after this entry's commit)
+Findings 9 and 11 remain fixed and green. The swap/add picker's chained-
+presentation defect (finding 8's second half) is now confirmed eliminated
+-- NavigationLink/.navigationDestination push inside SessionActionsView's
+own NavigationStack, no dismiss-then-present handoff left for it. A
+DIFFERENT, deeper flake is now the blocker: SessionActionsView's List
+scroll-to-"Add exercise" (row 5 of 9) is unreliable under full-gate load
+despite passing every scoped isolated re-run. Needs either (a) a scroll-
+free way to reach that row (e.g. reordering the ellipsis menu -- a product
+call), or (b) a more robust scroll-to-element technique than a coordinate
+drag (e.g. Digital Crown rotation via XCUITest, if available). Do not
+re-attempt the SAME drag-based scroll fix again without new evidence --
+it has already been tried and shown flaky under load.
+```

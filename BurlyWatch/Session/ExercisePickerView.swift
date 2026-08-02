@@ -9,6 +9,15 @@
 // polish on top of an already-correct, already-tested mutation
 // (`SessionMutator.swapExercise` / `.addExercise`), not a behavior this
 // task's acceptance criteria depend on.
+//
+// m2-03 review round 3 (final pass): this view no longer wraps itself in
+// its own `NavigationStack`. It is plain content meant to be hosted inside
+// a caller-provided one -- `SessionActionsView` pushes it as a
+// `.navigationDestination(for: ExercisePickerContext.self)` (a plain
+// in-stack navigation push, never a second system presentation chained off
+// another sheet's dismissal -- see that file's doc for why), and
+// `LoggingScreenView`'s standalone "empty session" entry point wraps it in
+// its own `NavigationStack` at the call site instead.
 import SwiftUI
 import BurlyCore
 
@@ -27,23 +36,21 @@ struct ExercisePickerView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                if case .add = context {
-                    Button("Custom (name later)", action: onAddPlaceholder)
-                        .accessibilityIdentifier("exercisePicker.addPlaceholder")
-                }
-                ForEach(filtered) { exercise in
-                    Button(exercise.name) { onSelect(exercise.id) }
-                        .accessibilityIdentifier("exercisePicker.row.\(exercise.name)")
-                }
+        List {
+            if case .add = context {
+                Button("Custom (name later)", action: onAddPlaceholder)
+                    .accessibilityIdentifier("exercisePicker.addPlaceholder")
             }
-            .searchable(text: $searchText)
-            .navigationTitle(title)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
-                }
+            ForEach(filtered) { exercise in
+                Button(exercise.name) { onSelect(exercise.id) }
+                    .accessibilityIdentifier("exercisePicker.row.\(exercise.name)")
+            }
+        }
+        .searchable(text: $searchText)
+        .navigationTitle(title)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", action: onCancel)
             }
         }
     }
@@ -57,14 +64,16 @@ struct ExercisePickerView: View {
 }
 
 #Preview {
-    ExercisePickerView(
-        context: .add,
-        exercises: [
-            ExerciseData(name: "Back Squat", muscleGroups: [.quads, .glutes], origin: .curated),
-            ExerciseData(name: "Barbell Bench Press", muscleGroups: [.chest, .triceps], origin: .curated)
-        ],
-        onSelect: { _ in },
-        onAddPlaceholder: {},
-        onCancel: {}
-    )
+    NavigationStack {
+        ExercisePickerView(
+            context: .add,
+            exercises: [
+                ExerciseData(name: "Back Squat", muscleGroups: [.quads, .glutes], origin: .curated),
+                ExerciseData(name: "Barbell Bench Press", muscleGroups: [.chest, .triceps], origin: .curated)
+            ],
+            onSelect: { _ in },
+            onAddPlaceholder: {},
+            onCancel: {}
+        )
+    }
 }

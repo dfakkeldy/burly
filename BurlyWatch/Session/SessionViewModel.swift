@@ -42,18 +42,18 @@ import BurlyCore
 import BurlyPersistence
 
 /// Where a swap/add picker should write its result back to.
-enum ExercisePickerContext: Identifiable, Equatable {
+///
+/// `Hashable`, not `Identifiable` (m2-03 review round 3, final pass): the
+/// ellipsis-menu route to this picker is now a `NavigationLink(value:)` /
+/// `.navigationDestination(for:)` push inside `SessionActionsView`'s own
+/// `NavigationStack` (see that file's doc), which needs `Hashable` --
+/// `Identifiable`/`.sheet(item:)` was the presentation style this round
+/// replaced.
+enum ExercisePickerContext: Hashable {
     /// §2 ellipsis "swap exercise" on this item.
     case swap(itemID: UUID)
     /// §2 ellipsis "add exercise", appended to the end.
     case add
-
-    var id: String {
-        switch self {
-        case .swap(let itemID): "swap-\(itemID.uuidString)"
-        case .add: "add"
-        }
-    }
 }
 
 @MainActor

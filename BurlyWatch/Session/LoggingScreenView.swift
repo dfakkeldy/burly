@@ -9,13 +9,22 @@ import BurlyCore
 import BurlyPersistence
 
 /// An action from the §2 ellipsis sheet that itself opens another
-/// presentation (the swap/add picker, the discard confirmation). SwiftUI
-/// cannot reliably present a second sheet/dialog while the first is still
-/// dismissing, so these are deferred to the actions sheet's `onDismiss`
-/// rather than fired while it's still on screen -- see `LoggingScreenView
-/// .body`.
+/// presentation. SwiftUI cannot reliably present a second sheet/dialog
+/// while the first is still dismissing, so this is deferred to the actions
+/// sheet's `onDismiss` rather than fired while it's still on screen -- see
+/// `LoggingScreenView.body`.
+///
+/// m2-03 review round 3 (final pass): this used to also carry
+/// `.openPicker(ExercisePickerContext)` for the swap/add flow, which shared
+/// this exact dismiss-then-present handoff into a second top-level sheet.
+/// That handoff was the confirmed, if intermittent, root cause of
+/// `SaveFailureUITests.testPlaceholderExerciseCreateFailureBlocksAndRetry
+/// Succeeds`'s flake. Swap/add no longer go through `pendingAction` at all
+/// -- `SessionActionsView` now pushes the picker onto its own
+/// already-presented `NavigationStack` directly (see that file's doc) --
+/// so only the one remaining chained presentation (discard) is left here,
+/// and it has been reliably green.
 enum PendingSessionAction: Equatable {
-    case openPicker(ExercisePickerContext)
     case requestDiscard
 }
 
@@ -73,36 +82,42 @@ struct LoggingScreenView: View {
                 pendingAction: $pendingAction
             )
         }
-        // m2-03 review round 3 (final pass): ground truth (a live
-        // accessibility-tree dump around `testPlaceholderExerciseCreate
-        // FailureBlocksAndRetrySucceeds`) showed the ellipsis sheet
-        // dismissing cleanly and its "Add exercise" row's own action
-        // firing (`pendingAction` set, `isPresented` false), but this
-        // sheet never presenting afterward -- reproducibly, across
-        // multiple settle-delay lengths, so not a timing issue. The
-        // sibling `.sheet(isPresented: discardConfirmBinding)` above,
-        // driven by the exact same `onDismiss -> pendingAction` handoff,
-        // presents reliably every time. The one structural difference is
-        // `.sheet(item:)` vs `.sheet(isPresented:)` -- so this now uses
-        // the same already-proven `isPresented`-driven shape, reading
-        // `viewModel.pickerContext` directly inside the content closure
-        // instead of relying on `item:`'s captured-value semantics.
+        // m2-03 review round 3 (final pass): the ellipsis-menu route to the
+        // swap/add picker no longer goes through this sheet at all --
+        // `SessionActionsView` pushes it directly onto its own
+        // `NavigationStack` (see that file's doc for the full history: a
+        // live accessibility-tree investigation caught the previous
+        // dismiss-then-present chain into a second top-level sheet failing
+        // intermittently, and the fix was to stop chaining a second system
+        // presentation entirely, not to keep tuning which sheet API drives
+        // it).
+        //
+        // This sheet now serves ONLY the "empty session" entry point below
+        // (`emptySessionPlaceholder`'s own "Add exercise" button, which
+        // sets `viewModel.pickerContext` directly from the plain logging
+        // screen -- never from within another sheet's dismissal, so it was
+        // never part of the chained-presentation defect and doesn't need
+        // to change). `ExercisePickerView` no longer wraps itself in a
+        // `NavigationStack` (it's shared with the pushed-destination use
+        // above), so this call site supplies one.
         .sheet(isPresented: isShowingPickerBinding) {
             if let context = viewModel.pickerContext {
-                ExercisePickerView(
-                    context: context,
-                    exercises: viewModel.availableExercises(),
-                    onSelect: { exerciseID in
-                        switch context {
-                        case .swap(let itemID):
-                            viewModel.swap(currentItem: itemID, to: exerciseID)
-                        case .add:
-                            viewModel.addExercise(exerciseID)
-                        }
-                    },
-                    onAddPlaceholder: viewModel.addPlaceholderExercise,
-                    onCancel: { viewModel.pickerContext = nil }
-                )
+                NavigationStack {
+                    ExercisePickerView(
+                        context: context,
+                        exercises: viewModel.availableExercises(),
+                        onSelect: { exerciseID in
+                            switch context {
+                            case .swap(let itemID):
+                                viewModel.swap(currentItem: itemID, to: exerciseID)
+                            case .add:
+                                viewModel.addExercise(exerciseID)
+                            }
+                        },
+                        onAddPlaceholder: viewModel.addPlaceholderExercise,
+                        onCancel: { viewModel.pickerContext = nil }
+                    )
+                }
             }
         }
         // §2 Discard: "destructive, double-confirm."
@@ -197,8 +212,6 @@ struct LoggingScreenView: View {
         guard let action = pendingAction else { return }
         pendingAction = nil
         switch action {
-        case .openPicker(let context):
-            viewModel.pickerContext = context
         case .requestDiscard:
             viewModel.requestDiscard()
         }
