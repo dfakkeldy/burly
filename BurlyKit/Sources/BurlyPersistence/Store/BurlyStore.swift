@@ -606,4 +606,42 @@ public protocol BurlyStore: AnyObject {
     /// prevent. Bounding this with a manufactured window would buy no
     /// safety and would just be a window for its own sake.
     func allLoggedSessionDates() throws -> [Date]
+
+    // MARK: - Phone-shell existence/count (m5-01; bounded)
+    //
+    // The phone shell's appearance must establish "is there anything?" and
+    // "how many workouts?" without hydrating full graphs (m5-01 review
+    // finding 3): a decade-old phone store holds ~40-50k rows, and the
+    // shell's original read (`routines(includingArchived:)` +
+    // `sessions(state:)` on the main actor) snapshotted every routine's
+    // items and every session's items→sets just to draw empty states and a
+    // count. These two queries answer the shell's questions at
+    // existence/count cost instead; the tabs that render rows fetch them
+    // from the existing `routines(includingArchived:)` /
+    // `sessions(state:)` surfaces only when that tab is shown.
+    //
+    // Bounded by real `FetchDescriptor` shapes, not by fetching a table into
+    // Swift and counting/filtering there (m5-01 review round 2, finding 1 —
+    // round 1 called these "predicate-free on purpose" but still fetched
+    // every row). `hasRoutines()` predicates directly on `archivedAt`, its
+    // own stored, non-relationship column, with `fetchLimit = 1`.
+    // `loggedSessionCount()` still cannot predicate on `state` — enum
+    // equality on `SessionState` throws at runtime, pinned by
+    // `swiftDataCannotPredicateOnSessionState` (ActiveSessionTransactionTests)
+    // — so it computes total minus active via two `fetchCount`s instead; see
+    // `SwiftDataStore.loggedSessionCount()`'s doc for why that's exact, not
+    // approximate.
+
+    /// `true` when at least one non-archived routine is stored — the phone
+    /// shell's Routines existence check (§9). Bounded: a `fetchLimit = 1`
+    /// predicate over the routine table only (user-authored, small by
+    /// construction), never `.items`.
+    func hasRoutines() throws -> Bool
+
+    /// How many `.logged` sessions are stored — the phone shell's History
+    /// existence check and Stats scalar (m5-01). Bounded: two `fetchCount`
+    /// aggregates (`Session` total, `ActiveSessionJournal` rows) — no
+    /// `.items`/sets faulting and no row materialization. An `.active`
+    /// workout is not history yet, exactly as `sessions(state:)` documents.
+    func loggedSessionCount() throws -> Int
 }
