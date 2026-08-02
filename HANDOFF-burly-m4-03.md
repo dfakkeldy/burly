@@ -7,9 +7,39 @@ WCSession channels and the watch background-task completion invariant. The
 target has no package dependencies and imports no Burly domain/protocol module.
 
 Branch/head verified before work: `task/burly-m4-03` at
-`6ef0d3738082436c75d4c6240481913b067e35fd`.
+`691b4d769e4a4dbb91042beb0ef5c543ba0afc1d`.
 
 Per task instruction, nothing was committed, pushed, or published.
+
+## Cross-engine review fix round
+
+- **Duplicate system-task identity (MAJOR):**
+  `SystemWCRefreshBackgroundTask.completionID` now derives from
+  `ObjectIdentifier` of the wrapped
+  `WKWatchConnectivityRefreshBackgroundTask`. Re-wrapping the same system
+  task therefore reaches the coordinator with the same key and its existing
+  retention guard makes the second retain a no-op. The coordinator's concrete
+  key/storage types now use `ObjectIdentifier` as well.
+  - Pin: `duplicateWrapperIdentity` constructs two wrapper objects around one
+    fake system task, verifies one retained obligation, opens the activation +
+    queue-drained gate twice, and observes exactly one
+    `setTaskCompletedWithSnapshot(false)` call.
+- **Same-identity snapshot retransmit (MINOR):** before storing a new file
+  transfer at an exact `(version, generation)` key, the adapter removes and
+  cancels any existing handle at that key. Strictly older versions retain the
+  existing supersession behavior; same-version/different-generation handles
+  remain distinct.
+  - Pin: `sameIdentitySnapshotRetransmit` proves the old exact-key handle is
+    cancelled once, the replacement remains live, and later exact cancellation
+    reaches the replacement rather than the old handle.
+- **Adapter import-parser spellings (NIT):** the parser pin now covers the full
+  hardened set used by the machine seam: leading whitespace, `_exported` and
+  `testable` attributes, every access modifier requested by review, attributed
+  modifier combinations, declaration-kind imports, and prose rejection.
+- **Machine manifest guard (ADJACENT):** the marker now anchors on
+  `.target(\n            name: "BurlySyncMachine"`, so the same-named product
+  cannot satisfy the search. Any `dependencies:` inserted before the next
+  target declaration is now inside the inspected slice and fails the guard.
 
 ## Module layout
 
@@ -110,7 +140,48 @@ Per task instruction, nothing was committed, pushed, or published.
 
 ## Verification receipts
 
-### Required full package test
+### Fix-round required full package test (2026-08-02)
+
+The literal `cd BurlyKit && swift test` attempt was denied before compilation:
+the managed sandbox makes `~/.cache/clang/ModuleCache` read-only, and after
+redirecting that cache SwiftPM's nested `sandbox-exec` was also denied. The
+successful equivalent kept the outer managed sandbox active, redirected only
+disposable module caches, and disabled SwiftPM's inner sandbox:
+
+```sh
+cd BurlyKit && \
+CLANG_MODULE_CACHE_PATH=/tmp/burly-m4-03-module-cache \
+SWIFTPM_MODULECACHE_OVERRIDE=/tmp/burly-m4-03-module-cache \
+swift test --disable-sandbox
+```
+
+Result: exit 0. Final-tree build completed in 0.28 s. Swift Testing reported:
+
+```text
+Test run with 631 tests in 66 suites passed after 7.552 seconds.
+```
+
+The existing opt-in stats benchmark and migration spike were skipped by their
+default guards. Per the fix-round instruction, the migration-spike invocation
+is left to the dispatcher in an environment that permits it.
+
+Focused fix-round command (same cache/sandbox accommodation):
+
+```sh
+swift test --disable-sandbox --package-path BurlyKit \
+  --filter 'BurlySyncAdaptersTests|SyncMachineSeamTests'
+```
+
+Result: exit 0, `22 tests in 4 suites passed after 0.011 seconds`.
+
+`git diff --check`: exit 0, no output.
+
+The optional generic-watchOS compile could not resolve the local package under
+this sandbox: Xcode lost CoreSimulator services and attempted writes to the
+read-only user SwiftPM/module caches. No source compilation diagnostic was
+emitted. The dispatcher should rerun the existing generic-watchOS command.
+
+### Original implementation full package test
 
 Command:
 
@@ -127,7 +198,7 @@ Test run with 629 tests in 66 suites passed after 5.551 seconds.
 The stats benchmark and migration spike were skipped in this default run by
 their existing opt-in guards.
 
-### Required migration spike
+### Original implementation migration spike (historical receipt)
 
 The literal command first hit the managed sandbox because SwiftPM attempted to
 write `~/.cache/clang/ModuleCache`. Redirecting the module cache then exposed
@@ -152,7 +223,7 @@ Test run with 2 tests in 1 suite passed after 0.274 seconds.
 SwiftPM emitted read-only user-cache warnings, and CoreData emitted its existing
 store-changed-notification registration warnings; both migration tests passed.
 
-### Platform compilation
+### Original implementation platform compilation (historical receipt)
 
 Commands:
 
@@ -168,7 +239,7 @@ Results: both exit 0 under Xcode 26.6 / iOS 26.5 SDK / watchOS 26.5 SDK. The
 watchOS build includes the concrete `WKWatchConnectivityRefreshBackgroundTask`
 wrapper.
 
-### Focused and compile-time checks
+### Original implementation focused and compile-time checks
 
 - `swift test --filter BurlySyncAdaptersTests`: exit 0,
   `17 tests in 3 suites passed after 0.010 seconds`.
@@ -190,17 +261,23 @@ wrapper.
   interprets payload contents.
 - “Newer snapshot cancels any outstanding snapshot transfer” is treated as a
   strict version increase. Same-version replacements remain distinct by
-  generation and are cancelled only by the machine's exact-key command.
+  generation; an exact same-identity retransmit cancels its existing handle
+  before replacement, while other exact-key cancellation remains machine-led.
 - Reachability changes are surfaced for diagnostics only. They never gate the
   durable queue/file/context channels.
 
 ## Dispatcher state
 
-Expected working-tree changes are only:
+Expected fix-round working-tree changes are only:
 
-- modified `BurlyKit/Package.swift`
-- new `BurlyKit/Sources/BurlySyncAdapters/`
-- new `BurlyKit/Tests/BurlySyncAdaptersTests/`
+- `BurlyKit/Sources/BurlySyncAdapters/SystemWCRefreshBackgroundTask.swift`
+- `BurlyKit/Sources/BurlySyncAdapters/WCBackgroundTaskCompletionState.swift`
+- `BurlyKit/Sources/BurlySyncAdapters/WCSessionAdapter.swift`
+- `BurlyKit/Tests/BurlySyncAdaptersTests/AdapterTestSupport.swift`
+- `BurlyKit/Tests/BurlySyncAdaptersTests/SyncAdapterSeamTests.swift`
+- `BurlyKit/Tests/BurlySyncAdaptersTests/WCBackgroundTaskCompletionTests.swift`
+- `BurlyKit/Tests/BurlySyncAdaptersTests/WCSessionAdapterTests.swift`
+- `BurlyKit/Tests/BurlySyncMachineTests/SyncMachineSeamTests.swift`
 - this handoff file
 
 No commit was attempted because the task explicitly reserves commit ownership

@@ -62,7 +62,7 @@ public struct WCBackgroundTaskCompletionState<TaskID: Hashable & Sendable>: Send
 /// WKWatchConnectivityRefreshBackgroundTask by the watch app.
 @MainActor
 public protocol WCRefreshBackgroundTask: AnyObject {
-    var completionID: UUID { get }
+    var completionID: ObjectIdentifier { get }
     func setTaskCompletedWithSnapshot(_ snapshot: Bool)
 }
 
@@ -70,8 +70,8 @@ public protocol WCRefreshBackgroundTask: AnyObject {
 /// completion decisions exactly once for each retained task.
 @MainActor
 public final class WCBackgroundTaskCoordinator {
-    private var state: WCBackgroundTaskCompletionState<UUID>
-    private var tasks: [UUID: any WCRefreshBackgroundTask] = [:]
+    private var state: WCBackgroundTaskCompletionState<ObjectIdentifier>
+    private var tasks: [ObjectIdentifier: any WCRefreshBackgroundTask] = [:]
 
     public init(
         activationState: WCSessionActivation = .notActivated,
@@ -109,7 +109,7 @@ public final class WCBackgroundTaskCoordinator {
         ))
     }
 
-    private func complete(_ taskIDs: [UUID]) {
+    private func complete(_ taskIDs: [ObjectIdentifier]) {
         for taskID in taskIDs {
             guard let task = tasks.removeValue(forKey: taskID) else { continue }
             task.setTaskCompletedWithSnapshot(false)

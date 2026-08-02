@@ -67,6 +67,27 @@ struct WCSessionAdapterTests {
         #expect(session.fileHandles[2].cancellationCount == 0)
     }
 
+    @Test("same-identity snapshot retransmit cancels the prior handle before replacement")
+    @MainActor
+    func sameIdentitySnapshotRetransmit() {
+        let session = FakeWCSessionTransport()
+        let adapter = makeAdapter(session: session)
+        let identity = SnapshotTransferIdentity(version: 5, generation: 2)
+
+        adapter.execute(.transmitSnapshot(identity: identity, envelope: Data("first".utf8)))
+        let firstHandle = session.fileHandles[0]
+
+        adapter.execute(.transmitSnapshot(identity: identity, envelope: Data("retry".utf8)))
+        let replacementHandle = session.fileHandles[1]
+
+        #expect(firstHandle.cancellationCount == 1)
+        #expect(replacementHandle.cancellationCount == 0)
+
+        adapter.execute(.cancelSnapshotTransfer(identity: identity))
+        #expect(firstHandle.cancellationCount == 1)
+        #expect(replacementHandle.cancellationCount == 1)
+    }
+
     @Test("snapshot finish echoes version and generation without delivery claim")
     @MainActor
     func snapshotFinishFact() async {

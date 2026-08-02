@@ -9,16 +9,15 @@ import Foundation
 /// and let the hasContentPending coordinator complete it.
 @MainActor
 public final class SystemWCRefreshBackgroundTask: WCRefreshBackgroundTask {
-    public let completionID: UUID
     private let task: WKWatchConnectivityRefreshBackgroundTask
 
-    public init(
-        _ task: WKWatchConnectivityRefreshBackgroundTask,
-        completionID: UUID = UUID()
-    ) {
+    public init(_ task: WKWatchConnectivityRefreshBackgroundTask) {
         self.task = task
-        self.completionID = completionID
     }
+
+    /// Identity belongs to the system task, not this disposable wrapper.
+    /// Re-wrapping one wake therefore remains one completion obligation.
+    public var completionID: ObjectIdentifier { ObjectIdentifier(task) }
 
     public func setTaskCompletedWithSnapshot(_ snapshot: Bool) {
         task.setTaskCompletedWithSnapshot(snapshot)

@@ -70,16 +70,28 @@ final class FakeWCSessionTransport: WCSessionTransport {
 }
 
 @MainActor
-final class FakeRefreshBackgroundTask: WCRefreshBackgroundTask {
-    let completionID: UUID
+final class FakeSystemRefreshBackgroundTask {
     private(set) var snapshots: [Bool] = []
-
-    init(completionID: UUID = UUID()) {
-        self.completionID = completionID
-    }
 
     func setTaskCompletedWithSnapshot(_ snapshot: Bool) {
         snapshots.append(snapshot)
+    }
+}
+
+@MainActor
+final class FakeRefreshBackgroundTask: WCRefreshBackgroundTask {
+    let task: FakeSystemRefreshBackgroundTask
+
+    init(wrapping task: FakeSystemRefreshBackgroundTask = FakeSystemRefreshBackgroundTask()) {
+        self.task = task
+    }
+
+    var completionID: ObjectIdentifier { ObjectIdentifier(task) }
+
+    var snapshots: [Bool] { task.snapshots }
+
+    func setTaskCompletedWithSnapshot(_ snapshot: Bool) {
+        task.setTaskCompletedWithSnapshot(snapshot)
     }
 }
 

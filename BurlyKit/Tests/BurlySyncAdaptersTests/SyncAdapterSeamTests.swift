@@ -23,7 +23,7 @@ struct SyncAdapterSeamTests {
         requireSendable(WCSessionAdapterEvent.self)
         requireSendable(WatchWCSessionCommand.self)
         requireSendable(PhoneWCSessionCommand.self)
-        requireSendable(WCBackgroundTaskCompletionState<UUID>.self)
+        requireSendable(WCBackgroundTaskCompletionState<ObjectIdentifier>.self)
     }
 
     @Test("every adapter source imports only Foundation and Apple connectivity frameworks")
@@ -69,14 +69,25 @@ struct SyncAdapterSeamTests {
         #expect(!declaration.contains("dependencies"))
     }
 
-    @Test("import parser recognizes attributed and access-level imports")
+    @Test("import parser recognizes every legal spelling and rejects prose")
     func importParserSpellings() {
         #expect(importedModule(of: "import Foundation") == "Foundation")
+        #expect(importedModule(of: "  import BurlyCore") == "BurlyCore")
+        #expect(importedModule(of: "@_exported import BurlyCore") == "BurlyCore")
+        #expect(importedModule(of: "@testable import BurlySync") == "BurlySync")
         #expect(importedModule(of: "@preconcurrency import WatchKit") == "WatchKit")
         #expect(importedModule(of: "public import BurlyCore") == "BurlyCore")
+        #expect(importedModule(of: "package import BurlySync") == "BurlySync")
+        #expect(importedModule(of: "internal import Observation") == "Observation")
+        #expect(importedModule(of: "fileprivate import CoreData") == "CoreData")
         #expect(importedModule(of: "private import struct BurlySync.Value") == "BurlySync")
+        #expect(importedModule(of: "@testable package import BurlyCore") == "BurlyCore")
+        #expect(importedModule(of: "@preconcurrency public import WatchKit") == "WatchKit")
+        #expect(importedModule(of: "import struct Foundation.Date") == "Foundation")
+        #expect(importedModule(of: "import class BurlyCore.SomeClass") == "BurlyCore")
         #expect(importedModule(of: "// import BurlyCore is forbidden") == nil)
         #expect(importedModule(of: "/// no domain imports") == nil)
+        #expect(importedModule(of: "let importIndex = 3") == nil)
     }
 
     private func requireSendable<T: Sendable>(_ type: T.Type) {}

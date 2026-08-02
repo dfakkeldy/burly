@@ -62,6 +62,11 @@ public final class WCSessionAdapter: WCSessionTransportDelegate {
                 snapshotTransfers.removeValue(forKey: oldIdentity)?.cancel()
             }
 
+            // A retry can carry the exact same version and generation. Do
+            // not orphan its prior OS handle when replacing the dictionary
+            // entry; its eventual callback would otherwise be uncorrelatable.
+            snapshotTransfers.removeValue(forKey: identity)?.cancel()
+
             do {
                 snapshotTransfers[identity] = try session.transferFile(
                     envelope: envelope,

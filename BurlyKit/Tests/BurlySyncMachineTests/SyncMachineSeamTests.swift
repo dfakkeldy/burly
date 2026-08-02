@@ -66,12 +66,12 @@ struct SyncMachineSeamTests {
             encoding: .utf8
         )
 
-        // The target declaration runs from its `name:` to the next target
-        // declaration (or the manifest's end). Textual, but the shape is
-        // ours to keep simple; if the declaration is not found at all,
-        // fail loudly rather than vacuously pass.
+        // Anchor on `.target(` plus its name so the same-named product cannot
+        // satisfy this search. The declaration then runs to the next target
+        // (or the manifest's end), so inserting `dependencies:` into the real
+        // target necessarily makes the expectation below fail.
         let markerRange = try #require(
-            manifest.range(of: "name: \"BurlySyncMachine\""),
+            manifest.range(of: ".target(\n            name: \"BurlySyncMachine\""),
             "Package.swift no longer declares a BurlySyncMachine target"
         )
         let tail = manifest[markerRange.upperBound...]

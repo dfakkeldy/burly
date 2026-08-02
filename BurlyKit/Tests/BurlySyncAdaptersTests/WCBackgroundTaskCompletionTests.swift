@@ -86,4 +86,36 @@ struct WCBackgroundTaskCompletionTests {
         coordinator.activationChanged(to: .activated)
         #expect(tasks.allSatisfy { $0.snapshots == [false] })
     }
+
+    @Test("two wrappers around one system task retain and complete only once")
+    @MainActor
+    func duplicateWrapperIdentity() {
+        let coordinator = WCBackgroundTaskCoordinator(
+            activationState: .notActivated,
+            hasContentPending: true
+        )
+        let systemTask = FakeSystemRefreshBackgroundTask()
+        let firstWrapper = FakeRefreshBackgroundTask(wrapping: systemTask)
+        let secondWrapper = FakeRefreshBackgroundTask(wrapping: systemTask)
+
+        #expect(firstWrapper !== secondWrapper)
+        #expect(firstWrapper.completionID == secondWrapper.completionID)
+
+        coordinator.retain(firstWrapper)
+        coordinator.retain(secondWrapper)
+        #expect(coordinator.retainedTaskCount == 1)
+
+        coordinator.sessionStateChanged(
+            activationState: .activated,
+            hasContentPending: false
+        )
+        #expect(systemTask.snapshots == [false])
+        #expect(coordinator.retainedTaskCount == 0)
+
+        coordinator.sessionStateChanged(
+            activationState: .activated,
+            hasContentPending: false
+        )
+        #expect(systemTask.snapshots == [false])
+    }
 }
