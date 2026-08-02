@@ -54,9 +54,13 @@ public enum WatchSyncMachine<
 > {
     /// One completed session awaiting the phone's ack: its stable identity,
     /// and the payload to (re)transmit verbatim until the ack arrives.
+    /// `payload` is `let` on purpose — once a session enters the outbox
+    /// its serialization is pinned, so transport reordering between a
+    /// transmit and a replay cannot change which bytes win (m4-02 review
+    /// 1, #1; see `handle`'s `.sessionCompleted`).
     public struct OutboxEntry: Sendable, Equatable {
         public let id: UUID
-        public var payload: SessionPayload
+        public let payload: SessionPayload
 
         public init(id: UUID, payload: SessionPayload) {
             self.id = id
@@ -145,17 +149,33 @@ public enum WatchSyncMachine<
     public static func handle(_ event: Event, _ state: inout State) -> [Command] {
         switch event {
         case let .sessionCompleted(id, payload):
-            // Upsert by id: a replayed completion (crash after Finish,
-            // before the persisted state caught up) must not enqueue the
-            // session twice. The payload is refreshed because same id
-            // means same session, and the newer serialization wins.
-            if let index = state.outbox.firstIndex(where: { $0.id == id }) {
-                state.outbox[index].payload = payload
+            // Dedupe by id, **pinning the first payload** (m4-02 review 1,
+            // #1). A replayed completion (crash after Finish, before the
+            // persisted state caught up) must not enqueue the session
+            // twice — and it must not *replace* the payload either. An
+            // earlier version replaced ("the newer serialization wins"),
+            // which was only latest-wins in this in-memory list: the
+            // superseded payload was already on the wire, un-cancelled,
+            // and both serializations carry the same revision, so §5's
+            // revision rule cannot break the tie — the phone kept
+            // whichever happened to arrive first, and transport
+            // reordering picked the winner. Pinning makes the winner a
+            // protocol fact: only the pinned serialization is ever
+            // transmitted, so every ordering converges on it. (§2 Finish
+            // freezes the graph and revision stays at 1 on the watch, so
+            // a same-id completion with genuinely different bytes is an
+            // upstream bug — pinned here to a deterministic outcome
+            // rather than a race.)
+            let pinned: SessionPayload
+            if let existing = state.outbox.first(where: { $0.id == id }) {
+                pinned = existing.payload
             } else {
+                pinned = payload
                 state.outbox.append(OutboxEntry(id: id, payload: payload))
             }
-            // §5: "transfer attempted immediately".
-            return [.transmitSession(id: id, payload: payload)]
+            // §5: "transfer attempted immediately" — always of the pinned
+            // serialization.
+            return [.transmitSession(id: id, payload: pinned)]
 
         case let .activated(alreadyQueuedSessionIDs):
             // §5: retry everything still unacked, in completion order.

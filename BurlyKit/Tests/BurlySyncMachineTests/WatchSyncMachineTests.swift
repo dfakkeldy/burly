@@ -26,16 +26,21 @@ struct WatchOutboxTests {
         #expect(state.outbox == [.init(id: id, payload: "s1")])
     }
 
-    @Test("a replayed completion upserts by id — one entry, refreshed payload, retransmitted")
-    func replayedCompletionDoesNotDuplicate() {
+    @Test("a replayed completion pins the first payload — one entry, one serialization, ever")
+    func replayedCompletionPinsFirstPayload() {
+        // m4-02 review 1, #1: replacing the outbox payload on replay made
+        // the winner transport-order-dependent — the superseded bytes
+        // were already on the wire at the same revision, so whichever
+        // delivery arrived first stuck. Pinning the first serialization
+        // makes it the only one that ever transmits.
         var state = TestWatchMachine.State()
         let id = UUID()
         _ = TestWatchMachine.handle(.sessionCompleted(id: id, payload: "s1"), &state)
 
         let commands = TestWatchMachine.handle(.sessionCompleted(id: id, payload: "s1'"), &state)
 
-        #expect(state.outbox == [.init(id: id, payload: "s1'")])
-        #expect(commands == [.transmitSession(id: id, payload: "s1'")])
+        #expect(state.outbox == [.init(id: id, payload: "s1")])
+        #expect(commands == [.transmitSession(id: id, payload: "s1")])
     }
 
     @Test("activation retransmits every outbox entry in completion order")

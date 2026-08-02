@@ -203,6 +203,119 @@ struct SyncConvergenceTests {
         #expect(h.watchAppliedDigestCount == 2)
     }
 
+    @Test("conflicting same-id completions converge on the pinned payload in every delivery order")
+    func sameIDCompletionsConvergeRegardlessOfOrder() {
+        // m4-02 review 1, #1: with payload replacement, delivering A first
+        // stored A forever and delivering B first stored B — the transport
+        // picked the winner. Pinning means only one serialization ever
+        // reaches the wire, so both orders converge on it.
+        let s = UUID()
+
+        for reversed in [false, true] {
+            var h = SyncHarness()
+            h.watchCompletes(s, payload: "payload-A")
+            h.watchCompletes(s, payload: "payload-B") // replay with different bytes
+            #expect(h.sessionChannel.map(\.payload) == ["payload-A", "payload-A"])
+
+            let deliveries = reversed ? [1, 0] : [0, 1]
+            for index in deliveries {
+                h.deliverSessionToPhone(h.sessionChannel[index])
+            }
+
+            #expect(h.phoneStoredPayloads[s] == "payload-A")
+            #expect(h.phoneUpsertCount == 1)
+            #expect(h.latestDigest?.ackedSessionIDs == [s])
+        }
+    }
+
+    @Test("a stale drop decision racing a delete cannot ack an unstored session — the verify re-drives instead")
+    func staleDropRaceCannotLeakAck() {
+        // m4-02 review 1, #4's data-loss trace, verbatim: the runtime
+        // read storedRevision 1, a concurrent phone delete removed the
+        // row, and the machine's arrival-time ack then let the watch
+        // prune its only durable copy. Now the drop path's ack rides an
+        // atomic store verification; when the row is gone, the payload
+        // re-drives as a fresh arrival and the ack is only earned once
+        // the store durably holds the session again.
+        var h = SyncHarness()
+        let s = UUID()
+        h.watchCompletes(s)
+        let queued = h.sessionChannel[0]
+        h.deliverNextSessionToPhone()
+        #expect(h.phoneStoredRevisions[s] == 1)
+
+        // The race: a redelivery is processed against a lookup that said
+        // "stored at revision 1" — but the row was deleted in between.
+        h.phoneDeletesSession(s)
+        h.deliverSessionToPhone(queued, staleStoredRevision: .some(1))
+
+        // No ack without a stored row: the re-drive recreated the session,
+        // and only then did the digest name it. The invariant the old
+        // behavior violated: an acked id is a stored id.
+        #expect(h.phoneStoredRevisions[s] == 1)
+        #expect(h.phoneStoredPayloads[s] == queued.payload)
+        #expect(h.latestDigest?.ackedSessionIDs == [s])
+        for acked in h.latestDigest?.ackedSessionIDs ?? [] {
+            #expect(h.phoneStoredRevisions[acked] != nil)
+        }
+    }
+
+    @Test("a stale-low lookup racing a phone edit cannot overwrite the newer row — the write rechecks")
+    func staleLowRaceCannotOverwriteNewerRow() {
+        // The inverse race from review #4: the lookup said revision 1, a
+        // §6 edit raised the store to 3 before the machine decided, and
+        // the resulting upsert command would have clobbered the edit. The
+        // binding contract's conditional write drops it at the store and
+        // still confirms (an equal/newer row exists), so the watch gets
+        // its ack without the edit being lost.
+        var h = SyncHarness()
+        let s = UUID()
+        h.watchCompletes(s)
+        h.deliverNextSessionToPhone()
+        let editedPayloadBefore = h.phoneStoredPayloads[s]
+        h.phoneEditsSession(s) // stored revision 2
+        h.phoneEditsSession(s) // stored revision 3
+
+        // A revision-2 ghost decided against a stale "stored revision 1".
+        h.deliverSessionToPhone(
+            .init(id: s, revision: 2, payload: "stale-overwrite"),
+            staleStoredRevision: .some(1)
+        )
+
+        #expect(h.phoneStoredRevisions[s] == 3)
+        #expect(h.phoneStoredPayloads[s] == editedPayloadBefore)
+        #expect(h.latestDigest?.ackedSessionIDs == [s])
+    }
+
+    @Test("a failed upsert commit confirms nothing — no ack escapes, and the retry completes the exchange")
+    func failedCommitLeaksNoAck() {
+        // Binding contract item 3 (review #4's durability edge): the old
+        // machine mutated its ack state before the upsert command was
+        // known to have committed, so a failed transaction could still
+        // publish an ack for data the phone never stored.
+        var h = SyncHarness()
+        let s = UUID()
+        h.failNextUpsertCommit = true
+        h.watchCompletes(s)
+        h.deliverNextSessionToPhone()
+
+        // Nothing stored, nothing acked, nothing published.
+        #expect(h.phoneStoredRevisions[s] == nil)
+        #expect(h.phoneState.ackAge.isEmpty)
+        #expect(h.latestDigest == nil)
+        #expect(h.watchState.outbox.count == 1)
+
+        // The watch's normal retry re-drives the whole exchange to
+        // convergence.
+        h.watchActivates()
+        h.deliverNextSessionToPhone()
+        h.deliverDigestToWatch()
+        #expect(h.phoneStoredRevisions[s] == 1)
+        #expect(h.latestDigest?.ackedSessionIDs == [s])
+        #expect(h.watchState.outbox.isEmpty)
+        #expect(h.watchAwaitingAck.isEmpty)
+    }
+
     @Test("a two-session backlog drains in order and partial acks keep the rest retrying")
     func partialAcksKeepRemainderRetrying() {
         var h = SyncHarness()

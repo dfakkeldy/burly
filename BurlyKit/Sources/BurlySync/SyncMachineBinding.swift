@@ -25,25 +25,76 @@
 //                               transaction, both halves.
 //
 // Phone machine:
-// - `.applySessionUpsert`     → `BurlyStore.createSession(_:)` (which takes
-//                               the payload's revision at face value), plus
-//                               the §5 placeholder merge of
+// - `.applySessionUpsert`     → one store transaction: recheck the stored
+//                               revision at the write (the event's
+//                               `storedRevision` was advisory), commit iff
+//                               still newer/absent — `BurlyStore
+//                               .createSession(_:)` for the absent case,
+//                               which takes the payload's revision at face
+//                               value, plus the §5 placeholder merge of
 //                               `needsNamingExercises`. On today's protocol
 //                               the winning payload is always unstored —
 //                               watch sessions arrive at revision 1 and only
 //                               phone edits raise a stored revision — so the
-//                               upsert's replace arm has no single store
-//                               call yet; if a future author can win over a
-//                               stored row, m4-05 owns making that replace
-//                               one transaction.
+//                               replace arm has no single store call yet; if
+//                               a future author can win over a stored row,
+//                               m4-05 owns making that replace one
+//                               transaction too.
+// - `.confirmSessionStored`   → atomic read: `BurlyStore.session(id:)`
+//                               still holds revision ≥ the command's, on
+//                               the same serialized executor as every
+//                               store mutation (below).
 // - `.publishDigest`          → derive complete `lastPerformance` from full
-//                               history (the `SessionDigestReceipt`
-//                               generator contract — owed a property test
-//                               with the generator, m4-05), build the DTO
-//                               via the initializer below, push latest-wins.
+//                               history **at execution time** (the
+//                               `SessionDigestReceipt` generator contract —
+//                               owed a property test with the generator,
+//                               m4-05), build the DTO via the initializer
+//                               below, push latest-wins.
 // - `.transmitSnapshot`       → build the full catalog+routine payload at
 //                               that version from store truth, transfer it.
 // - `.cancelSnapshotTransfer` → cancel the transport's outstanding transfer.
+//
+// ## BINDING CONTRACT — phone session ingest (m4-05 implements and tests)
+//
+// This is a contract, not guidance (m4-02 review 1, #4 — which produced a
+// concrete data-loss trace from a runtime that would violate it). The
+// machine is restructured so an ack cannot exist except downstream of
+// `.sessionStoreConfirmed`; these rules are what make that confirmation
+// mean something:
+//
+// 1. **One serialized executor.** The revision lookup, the machine's
+//    `.sessionReceived` decision, the conditional store write/verify, the
+//    persistence of machine state, and the digest derivation+publication
+//    for one delivery run on the same executor as every other store
+//    mutation (§6 edits, deletes, imports). No store mutation interleaves
+//    between a delivery's lookup and its write.
+// 2. **The write is conditional.** `.applySessionUpsert` rechecks the
+//    stored revision inside the store transaction and commits only if the
+//    incoming revision is still greater than what is stored (or nothing
+//    is). A lookup gone stale-low must not overwrite a newer row.
+// 3. **Confirmation only after durability.** `.sessionStoreConfirmed(id:)`
+//    is sent only once the store durably holds a row for `id` at
+//    revision ≥ the command's — a committed upsert, or a verify that
+//    found an equal/newer row. A failed or rolled-back transaction sends
+//    nothing: no confirmation, no ack, no publish; the watch's
+//    retry-until-ack re-drives the exchange.
+// 4. **Failed verification re-drives.** When `.confirmSessionStored`
+//    finds no such row (the advisory lookup lost a race with a delete),
+//    the runtime feeds the payload back through `.sessionReceived` with
+//    the *current* stored revision. It must never confirm from the stale
+//    decision.
+// 5. **Machine state persists with the ack.** The state carrying a new
+//    ack is persisted before (or atomically with) executing the
+//    `publishDigest` it produced, so a crash between them re-publishes on
+//    the next event instead of acking from a state that no longer exists.
+// 6. **Digest publications coalesce** (m4-02 review 1, #5). Publications
+//    are latest-wins and individually disposable; the runtime coalesces a
+//    burst (ghost-redelivery storms, rapid confirmations) into one
+//    derivation and one `updateApplicationContext` per quiet period,
+//    mirroring the §5 5 s catalog-edit debounce documented on
+//    `PhoneSyncMachine.Event.catalogChanged`. Correctness never depends
+//    on intermediate publications — only on the newest eventually
+//    landing.
 //
 // Imports Foundation for `UUID` only.
 

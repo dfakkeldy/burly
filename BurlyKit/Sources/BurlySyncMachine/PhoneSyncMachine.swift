@@ -6,17 +6,24 @@
 // `WatchSyncMachine` (see that file and Package.swift): opaque payloads,
 // UUID identity, Int revisions, nothing of Burly's domain.
 //
-// ## Time is an input
+// ## An ack is earned by the store, not by arrival (m4-02 review 1, #4)
 //
-// The one time-based rule here — acked ids are retained ~30 days, bounded
-// (§5) — reads the `now` handed to `handle`, never `Date()`. Expiry is
-// *evaluated, not scheduled* (the same posture as BurlyCore's
-// `GuardedWeightEditMachine`): every `handle` call first drops acks whose
-// retention has lapsed, so no timer needs to fire for the bound to hold,
-// and a suspended app cannot publish a digest carrying acks it should have
-// forgotten.
+// Session ingest is two-phase. `.sessionReceived` only *decides* — apply
+// or drop by §5's revision rule — and emits the matching store command.
+// The ack mutation and the digest publish happen exclusively in
+// `.sessionStoreConfirmed`, which the runtime may send only after the
+// store has durably committed (or atomically verified it already holds)
+// an equal-or-newer row for that id. The first round of this machine
+// acked on arrival, trusting the event's `storedRevision`; the review
+// produced a concrete data-loss trace from that trust — a stale lookup
+// racing a phone-side delete let an ack escape for a row the store no
+// longer held, and the watch pruned its only durable copy on that ack.
+// Structurally, an ack can now exist only downstream of a store
+// confirmation; a runtime cannot leak one early without simply lying in
+// `.sessionStoreConfirmed`, and the binding contract (BurlySync's
+// `SyncMachineBinding.swift`) forbids exactly that.
 //
-// ## The stored revision rides the event
+// ## The stored revision rides the event — as advice, rechecked at the write
 //
 // §5's idempotency rule — incoming revision ≤ stored revision → drop
 // silently; otherwise upsert by UUID — compares against the *store's*
@@ -26,21 +33,35 @@
 // either chase every store mutation or drift, and a complete one is
 // unbounded state — the exact thing the 30-day ack bound exists to avoid.
 // So the runtime looks the stored revision up when a session payload
-// arrives and hands it in on the event; the machine stays a pure decision
-// over facts it was given.
+// arrives and hands it in on the event. That lookup can be stale by the
+// time anything is written, which is why both store commands carry the
+// incoming `revision` and require the runtime to recheck it inside the
+// store transaction — the machine's decision routes the work; the write
+// itself is conditional at the store, where the race cannot reach.
 //
-// ## Acks and the ghost window
+// ## Time is an input, and rollback can never extend retention
 //
-// Every received session is acked — including one the revision rule just
-// dropped. A duplicate delivery means the watch has not seen the ack (that
-// is why it retried), so the ack must be (re)published; each arrival also
-// restamps the retention window. After the ~30 days, the id drops from the
-// digest and a "ghost" redelivery of that session is still safe by the
-// upsert rule: stored (revision ≥ incoming) → dropped and re-acked; deleted
-// meanwhile → recreated whole, deterministically, no duplicate row either
-// way. That recreation is §5's accepted trade — bounded ack state in
-// exchange for a vanishingly rare resurrect — and it is pinned by test, not
-// smoothed over.
+// The one time-based rule here — acked ids are retained ~30 days, bounded
+// (§5) — reads the `now` handed to `handle`, never `Date()`. Expiry is
+// *evaluated, not scheduled*: every `handle` call first ages the acks, so
+// no timer needs to fire for the bound to hold.
+//
+// Age is **accumulated forward-only wall time**, not a stamp comparison
+// (m4-02 review 1, #2). Each `handle` adds `max(0, now − lastObservedNow)`
+// to every ack's age and expires ages ≥ retention. A wall clock that runs
+// backwards (NTP, a manual date change) therefore adds nothing — it can
+// never restart or stretch a retention window, however often it
+// oscillates, which the stamp-plus-re-anchor design this replaces allowed
+// indefinitely. The trade is explicit and chosen: a rollback followed by
+// a correction is indistinguishable from genuinely elapsed time, so it
+// ages acks *early* at worst. Early expiry is the safe direction in this
+// protocol — an ack that expires before the watch saw it just means the
+// watch retries and the redelivery re-earns the ack through the store —
+// while late expiry is unbounded state with no repair path. No pure
+// machine reading an injectable clock can bound true elapsed time against
+// an adversarial clock (a wall clock frozen forever defers expiry
+// forever, along with everything else); this is the honest contract, not
+// a claimed absolute.
 //
 // Commands are obligations, not suggestions — `handle` is deliberately not
 // `@discardableResult`, for the same reason as the watch machine's.
@@ -55,8 +76,8 @@ import Foundation
 public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
     public struct Configuration: Sendable, Equatable {
         /// §5: "Phone keeps acked IDs 30 days (bounded), then drops them."
-        /// An ack is retained while strictly less than this old; each
-        /// re-delivery of the session restamps it.
+        /// An ack is retained while its accumulated age is strictly less
+        /// than this; each store-confirmed re-delivery resets the age.
         public var ackRetention: TimeInterval
 
         public init(ackRetention: TimeInterval = 30 * 24 * 60 * 60) {
@@ -66,15 +87,22 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
     }
 
     /// Everything the phone side of the protocol remembers. A plain value;
-    /// the runtime persists it (m4-05) — in particular `ackedAt` must
-    /// survive relaunch or every unpruned watch session redelivers as a
-    /// fresh arrival, and `latestSnapshotVersion` must survive or the
-    /// monotonic version line resets under the watch.
+    /// the runtime persists it (m4-05) — in particular `ackAge` and
+    /// `lastObservedNow` must survive relaunch together (they are one
+    /// fact: "how old each ack was, as of when") or every unpruned watch
+    /// session redelivers as a fresh arrival, and `latestSnapshotVersion`
+    /// must survive or the monotonic version line resets under the watch.
     public struct State: Sendable, Equatable {
-        /// When each session id was last received — the retention clock
-        /// §5's 30-day bound runs against. The publishable ack set is this
-        /// dictionary's keys.
-        public fileprivate(set) var ackedAt: [UUID: Date]
+        /// Accumulated forward-only age of each acked session id — the
+        /// retention clock §5's 30-day bound runs against (see the file
+        /// doc for why it is an age, not a stamp). The publishable ack
+        /// set is this dictionary's keys.
+        public fileprivate(set) var ackAge: [UUID: TimeInterval]
+
+        /// The `now` of the last handled event — the base the next event's
+        /// forward delta is measured from. A gap while the app was
+        /// suspended is counted in full by the first event after resume.
+        public fileprivate(set) var lastObservedNow: Date?
 
         /// The monotonic §5 snapshot version of the phone's current
         /// catalog+routine working set. Bumped only by `.catalogChanged`;
@@ -83,16 +111,23 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
 
         /// The version whose transfer is currently outstanding, if any —
         /// what §5's supersession rule ("a newer snapshot cancels any
-        /// outstanding snapshot transfer") cancels against.
+        /// outstanding snapshot transfer") cancels against. Advisory, not
+        /// load-bearing for liveness: a push moment re-sends the current
+        /// version regardless, so a lost finished-callback can only cost
+        /// one redundant cancel, never wedge the pipeline (m4-02 review 1,
+        /// #3).
         public fileprivate(set) var outstandingSnapshotVersion: Int?
 
         public init(
-            ackedAt: [UUID: Date] = [:],
+            ackAge: [UUID: TimeInterval] = [:],
+            lastObservedNow: Date? = nil,
             latestSnapshotVersion: Int = 0,
             outstandingSnapshotVersion: Int? = nil
         ) {
             precondition(latestSnapshotVersion >= 0, "Snapshot version must be non-negative.")
-            self.ackedAt = ackedAt
+            precondition(ackAge.values.allSatisfy { $0 >= 0 }, "Ack ages must be non-negative.")
+            self.ackAge = ackAge
+            self.lastObservedNow = lastObservedNow
             self.latestSnapshotVersion = latestSnapshotVersion
             self.outstandingSnapshotVersion = outstandingSnapshotVersion
         }
@@ -102,8 +137,19 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
         /// A §5 `session` payload arrived from the watch. `revision` is the
         /// payload's own; `storedRevision` is the store's current revision
         /// for that id (`nil` when not stored), looked up by the runtime —
-        /// see the file doc for why it rides the event.
+        /// see the file doc for why it rides the event and why it is
+        /// advisory.
         case sessionReceived(id: UUID, revision: Int, storedRevision: Int?, payload: SessionPayload)
+
+        /// The runtime's confirmation that the store **durably** holds a
+        /// row for `id` at a revision ≥ the one the triggering command
+        /// carried — either the conditional upsert committed, or the
+        /// atomic verification found an equal-or-newer row. This is the
+        /// only event that records an ack. Sending it without that store
+        /// guarantee is a binding-contract violation (see
+        /// `SyncMachineBinding.swift`), not a state the machine can
+        /// detect.
+        case sessionStoreConfirmed(id: UUID)
 
         /// Stored history changed locally — a §6 edit, a delete, an import.
         /// §5: the digest is refreshed whenever history changes.
@@ -117,7 +163,9 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
 
         /// A non-edit §5 push moment: app launch, `isWatchAppInstalled`
         /// flipping true, the daily push. Re-sends the current version —
-        /// content did not change, so the version does not.
+        /// content did not change, so the version does not — cancelling
+        /// any outstanding transfer first, so a lost finished-callback can
+        /// never wedge these pushes (m4-02 review 1, #3).
         case snapshotPushTriggered
 
         /// The transport finished (or failed) the transfer of `version`.
@@ -128,17 +176,35 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
     }
 
     public enum Command: Sendable, Equatable {
-        /// Upsert this session into the store by UUID, taking the payload's
-        /// revision at face value. Emitted only when the revision rule
-        /// says the payload wins; a drop emits no command at all — §5's
-        /// "drop silently" is the absence of this.
-        case applySessionUpsert(id: UUID, payload: SessionPayload)
+        /// Upsert this session into the store **conditionally**: one
+        /// transaction that rechecks the stored revision at the write and
+        /// commits the payload iff `revision` is still greater than what
+        /// is stored (or nothing is). Either way the transaction ends
+        /// with the store holding a row at ≥ `revision`; on durable
+        /// commit the runtime feeds `.sessionStoreConfirmed(id:)` back.
+        /// On failure it feeds nothing — no confirmation, no ack, and the
+        /// watch's retry re-drives the whole exchange.
+        case applySessionUpsert(id: UUID, revision: Int, payload: SessionPayload)
+
+        /// The §5 "drop silently" path's store handshake: atomically
+        /// verify the store still holds `id` at a revision ≥ `revision`.
+        /// Held → feed `.sessionStoreConfirmed(id:)` (the re-ack the
+        /// retrying watch is owed). Gone — the advisory `storedRevision`
+        /// lost a race with a delete — feed the payload back through
+        /// `.sessionReceived` with the current stored revision instead;
+        /// no ack may escape from the stale decision (m4-02 review 1, #4).
+        case confirmSessionStored(id: UUID, revision: Int)
 
         /// Publish a fresh §5 digest: the runtime derives the complete
-        /// last-performance set from full history (the
-        /// `SessionDigestReceipt` generator contract, owned with the
+        /// last-performance set from full history **at execution time**
+        /// (the `SessionDigestReceipt` generator contract, owned with the
         /// generator in m4-05) and combines it with these machine-owned
-        /// facts.
+        /// facts. Publications are latest-wins and individually
+        /// disposable: only the final digest of a burst matters, and the
+        /// runtime is obligated to coalesce bursts (a ghost-redelivery
+        /// storm becomes one derivation and one publication, exactly as
+        /// the §5 5 s debounce coalesces catalog edits — see the binding
+        /// contract, m4-02 review 1, #5).
         case publishDigest(snapshotVersion: Int, ackedSessionIDs: Set<UUID>)
 
         /// Build the full catalog+routine payload at `version` from store
@@ -147,8 +213,8 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
 
         /// §5 supersession: cancel the outstanding transfer of `version`.
         /// Always emitted before the `transmitSnapshot` that replaces it;
-        /// cancelling a transfer the transport already finished is a
-        /// harmless no-op there.
+        /// cancelling a transfer the transport already finished or lost
+        /// is a harmless no-op there.
         case cancelSnapshotTransfer(version: Int)
     }
 
@@ -164,26 +230,29 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
     public func handle(_ event: Event, _ state: inout State, now: Date) -> [Command] {
         // §5's 30-day bound, evaluated before the event can read or
         // publish the ack set — see the file doc.
-        expireAcks(&state, now: now)
+        ageAcks(&state, now: now)
 
         switch event {
         case let .sessionReceived(id, revision, storedRevision, payload):
-            // §5 idempotency: incoming ≤ stored → drop silently.
+            // §5 idempotency: incoming ≤ stored → drop silently. Either
+            // branch is only a routing decision; the ack waits for the
+            // store's confirmation, and the write/verify rechecks the
+            // revision where the advisory lookup cannot be stale.
             let applies = storedRevision.map { revision > $0 } ?? true
-            // Ack unconditionally, restamping the retention window — a
-            // duplicate arrived precisely because the watch lacks the ack.
-            state.ackedAt[id] = now
-
-            var commands: [Command] = []
             if applies {
-                commands.append(.applySessionUpsert(id: id, payload: payload))
+                return [.applySessionUpsert(id: id, revision: revision, payload: payload)]
             }
-            // History (maybe) changed and the ack set certainly did; both
-            // halves ride the same digest (§5, latest-wins). Ordered after
-            // the upsert: the digest must be derived from history that
-            // already contains the session it acks.
-            commands.append(publishDigest(state))
-            return commands
+            return [.confirmSessionStored(id: id, revision: revision)]
+
+        case let .sessionStoreConfirmed(id):
+            // The store durably holds the session (or an equal/newer row):
+            // the ack is earned, its retention restarts, and the digest —
+            // derived from history that now contains what it acks — goes
+            // out. A confirmation for an id the machine never routed is
+            // trusted the same way: it is the runtime's assertion about
+            // its own store.
+            state.ackAge[id] = 0
+            return [publishDigest(state)]
 
         case .historyChanged:
             return [publishDigest(state)]
@@ -201,19 +270,18 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
             return commands
 
         case .snapshotPushTriggered:
-            if state.outstandingSnapshotVersion == state.latestSnapshotVersion,
-               state.outstandingSnapshotVersion != nil {
-                // The current version is already on its way; a second
-                // transfer of identical content helps nobody.
-                return []
-            }
+            // Unconditionally cancel-and-resend the current version. The
+            // machine cannot distinguish "genuinely in flight" from "the
+            // finished callback was lost", and an earlier skip-if-in-flight
+            // optimization wedged this path forever in the second case
+            // (m4-02 review 1, #3): every push moment returned nothing,
+            // and only a catalog edit could revive the pipeline. A
+            // redundant cancel of a live transfer costs one requeue on a
+            // launch/daily cadence; a silent wedge costs the watch every
+            // future snapshot. Liveness wins.
             var commands: [Command] = []
-            if let stale = state.outstandingSnapshotVersion {
-                // Only reachable when an older version is still in flight
-                // (its `.snapshotTransferFinished` never arrived — e.g. a
-                // relaunch lost the callback). Supersede it exactly as
-                // `.catalogChanged` would have.
-                commands.append(.cancelSnapshotTransfer(version: stale))
+            if let outstanding = state.outstandingSnapshotVersion {
+                commands.append(.cancelSnapshotTransfer(version: outstanding))
             }
             state.outstandingSnapshotVersion = state.latestSnapshotVersion
             commands.append(.transmitSnapshot(version: state.latestSnapshotVersion))
@@ -232,21 +300,33 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
     private func publishDigest(_ state: State) -> Command {
         .publishDigest(
             snapshotVersion: state.latestSnapshotVersion,
-            ackedSessionIDs: Set(state.ackedAt.keys)
+            ackedSessionIDs: Set(state.ackAge.keys)
         )
     }
 
-    /// Drops every ack whose retention lapsed. A wall clock can run
-    /// backwards (NTP, a manual date change), leaving an ack stamped in
-    /// the future — re-anchored to `now` on sight, same as
-    /// `GuardedWeightEditMachine`'s idle anchor, so a backwards jump cannot
-    /// extend retention past the bound measured from here.
-    private func expireAcks(_ state: inout State, now: Date) {
-        for (id, stampedAt) in state.ackedAt {
-            if stampedAt > now {
-                state.ackedAt[id] = now
-            } else if now.timeIntervalSince(stampedAt) >= configuration.ackRetention {
-                state.ackedAt.removeValue(forKey: id)
+    /// Adds the forward-only delta since the last handled event to every
+    /// ack's age and drops the ones at or past retention. A backwards
+    /// `now` contributes zero — rollback can shorten nothing and extend
+    /// nothing; only observed forward wall time ages an ack. See the file
+    /// doc for why the correction after a rollback deliberately counts.
+    private func ageAcks(_ state: inout State, now: Date) {
+        let delta: TimeInterval
+        if let last = state.lastObservedNow {
+            delta = Swift.max(0, now.timeIntervalSince(last))
+        } else {
+            delta = 0
+        }
+        state.lastObservedNow = now
+
+        // The sweep runs even at delta 0: a rehydrated state may already
+        // carry an over-age ack, and it must not survive into a publish
+        // just because the clock has not moved since relaunch.
+        for (id, age) in state.ackAge {
+            let aged = age + delta
+            if aged >= configuration.ackRetention {
+                state.ackAge.removeValue(forKey: id)
+            } else if delta > 0 {
+                state.ackAge[id] = aged
             }
         }
     }
