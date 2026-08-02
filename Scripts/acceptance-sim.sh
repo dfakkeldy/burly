@@ -21,11 +21,14 @@
 #      if either named device is missing or ambiguous.
 #   2. Boots the named pair.
 #   3. Builds the BurlyPhone and BurlyWatch app targets.
-#   4. Runs the BurlyPhoneUITests XCUITest suite via `xcodebuild test`.
-#   5. Exports screenshots/attachments from the resulting .xcresult into
-#      a fresh Scripts/output/runs/<UTC-timestamp>/ directory (previous
-#      runs are never overwritten in place -- each run gets its own
-#      directory, so there is no result-bundle path collision), updates
+#   4. Runs the BurlyPhoneUITests XCUITest suite via `xcodebuild test`, then
+#      the BurlyWatchUITests suite the same way (watch app UI testing runs
+#      standalone on the "Burly Watch S11 46mm" sim, no iPhone pairing
+#      needed) -- spec §2 routine list and §5 waiting-for-iPhone shell.
+#   5. Exports screenshots/attachments from both resulting .xcresult
+#      bundles into a fresh Scripts/output/runs/<UTC-timestamp>/ directory
+#      (previous runs are never overwritten in place -- each run gets its
+#      own directory, so there is no result-bundle path collision), updates
 #      the Scripts/output/latest symlink to point at it, and prunes
 #      run directories beyond the newest 5.
 #
@@ -366,6 +369,7 @@ RUN_TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$RUNS_DIR/$RUN_TS"
 SCREENSHOTS_DIR="$RUN_DIR/screenshots"
 RESULT_BUNDLE="$RUN_DIR/BurlyPhoneUITests.xcresult"
+WATCH_RESULT_BUNDLE="$RUN_DIR/BurlyWatchUITests.xcresult"
 mkdir -p "$SCREENSHOTS_DIR"
 log "run directory: $RUN_DIR"
 
@@ -500,7 +504,10 @@ xcodebuild build \
   "${COMMON_XCODEBUILD_FLAGS[@]}"
 
 # ---------------------------------------------------------------------------
-# Run the UI test suite.
+# Run the UI test suites -- phone (BurlyPhoneUITests) and watch
+# (BurlyWatchUITests, spec §2 routine list / §5 waiting-for-iPhone shell).
+# Both run through this one script/lock so a change to either device's
+# acceptance coverage never needs a second, parallel script.
 # ---------------------------------------------------------------------------
 log "running BurlyPhoneUITests on $IPHONE_NAME"
 xcodebuild test \
@@ -511,13 +518,37 @@ xcodebuild test \
   -only-testing:BurlyPhoneUITests \
   "${COMMON_XCODEBUILD_FLAGS[@]}"
 
+log "running BurlyWatchUITests on $WATCH_NAME"
+xcodebuild test \
+  -project "$PROJECT" \
+  -scheme BurlyWatch \
+  -destination "platform=watchOS Simulator,id=$WATCH_UDID" \
+  -resultBundlePath "$WATCH_RESULT_BUNDLE" \
+  -only-testing:BurlyWatchUITests \
+  "${COMMON_XCODEBUILD_FLAGS[@]}"
+
 # ---------------------------------------------------------------------------
 # Export screenshots/attachments for digest reports.
+#
+# One subdirectory per suite, not a shared one: `xcresulttool export
+# attachments` writes its own manifest.json into --output-path, and a
+# second invocation against the same directory fails outright ("file
+# already exists") without exporting anything of its own -- discovered the
+# hard way when BurlyWatchUITests was added here (both suites' PNGs used to
+# land, but only the first suite's manifest.json survived). Separate
+# directories give each suite its own manifest and both PNG sets survive.
 # ---------------------------------------------------------------------------
+PHONE_SCREENSHOTS_DIR="$SCREENSHOTS_DIR/phone"
+WATCH_SCREENSHOTS_DIR="$SCREENSHOTS_DIR/watch"
+mkdir -p "$PHONE_SCREENSHOTS_DIR" "$WATCH_SCREENSHOTS_DIR"
+
 log "exporting screenshots to $SCREENSHOTS_DIR"
 xcrun xcresulttool export attachments \
   --path "$RESULT_BUNDLE" \
-  --output-path "$SCREENSHOTS_DIR"
+  --output-path "$PHONE_SCREENSHOTS_DIR"
+xcrun xcresulttool export attachments \
+  --path "$WATCH_RESULT_BUNDLE" \
+  --output-path "$WATCH_SCREENSHOTS_DIR"
 
 log "screenshots exported:"
 find "$SCREENSHOTS_DIR" -type f -print >&2
