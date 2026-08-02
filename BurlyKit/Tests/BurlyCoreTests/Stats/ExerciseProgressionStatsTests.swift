@@ -125,4 +125,133 @@ struct ExerciseProgressionStatsTests {
         #expect(records.filter { $0.sessionID == s1 }.count == 2)
         #expect(records.filter { $0.sessionID == s2 }.isEmpty)
     }
+
+    // MARK: - Major #2 fix: mathematically-tied Epley estimates are not a false PR
+
+    @Test("mathematically-identical Epley estimates that differ at the binary64 ULP level do not produce a false PR (major #2 fix)")
+    func floatTiedEpleyEstimatesDoNotProduceFalsePR() {
+        // 87.5 kg × 10 and 100 kg × 5 are both exactly 3500/30 — the same
+        // Epley estimate — but binary64 evaluates the two multiplications
+        // to values that differ by ~1.4e-14.
+        let s1 = UUID()
+        let s2 = UUID()
+        let slices = [
+            Self.slice(session: s1, date: Self.day0, weightKg: 87.5, reps: 10),
+            Self.slice(session: s2, date: Self.day1, weightKg: 100, reps: 5)
+        ]
+        let points = ExerciseProgressionStats.sessionPoints(from: slices)
+
+        // Sanity: the two raw estimates really do differ at the `Double`
+        // level — otherwise this fixture would not exercise the float-tie
+        // bug at all, it would just be an ordinary exact tie.
+        #expect(points[0].estimatedOneRepMax != points[1].estimatedOneRepMax)
+
+        let records = ExerciseProgressionStats.personalRecords(from: points)
+        // Only session 1 sets the e1RM record; session 2's estimate
+        // quantizes to the same value, so it is a tie, not a new PR.
+        #expect(records.filter { $0.kind == .estimatedOneRepMax }.count == 1)
+        #expect(records.first { $0.kind == .estimatedOneRepMax }?.sessionID == s1)
+    }
+
+    // MARK: - Major #3 fix: PRs are computed over all-time history, then filtered to the display range
+
+    @Test("an out-of-range session's all-time record suppresses a false PR inside the displayed range (major #3 fix)")
+    func rangeRelativeFalsePRsAreFilteredAfterComputingOverAllTimeHistory() {
+        let oldSession = UUID()
+        let recentSession = UUID()
+        // Well outside any plausible displayed range.
+        let oldDate = Self.day0.addingTimeInterval(-500 * 86_400)
+        let recentDate = Self.day0
+
+        let allTimeSlices = [
+            // All-time best on both series: e1RM 120×(1+5/30) = 140.
+            Self.slice(session: oldSession, date: oldDate, weightKg: 120, reps: 5),
+            // Beats neither all-time record (100 < 120; e1RM 116.67 < 140).
+            Self.slice(session: recentSession, date: recentDate, weightKg: 100, reps: 5)
+        ]
+        let allTimePoints = ExerciseProgressionStats.sessionPoints(from: allTimeSlices)
+
+        let displayRange = recentDate.addingTimeInterval(-1)...recentDate.addingTimeInterval(1)
+        let records = ExerciseProgressionStats.personalRecords(from: allTimePoints, displayRange: displayRange)
+
+        // The recent session is the only one inside the displayed range,
+        // but it is not an all-time PR on either series, so nothing
+        // should be reported for it — even though a caller who had
+        // (wrongly) pre-filtered to the display range before calling this
+        // function would have started both running maxima at -infinity
+        // at the range's edge and reported it as both kinds of PR.
+        #expect(records.isEmpty)
+    }
+
+    @Test("a record from before the display range is not included in the filtered output, even though it is still real")
+    func recordsOutsideDisplayRangeAreExcludedFromOutput() {
+        let oldSession = UUID()
+        let recentSession = UUID()
+        let oldDate = Self.day0.addingTimeInterval(-500 * 86_400)
+        let recentDate = Self.day0
+
+        let allTimeSlices = [
+            Self.slice(session: oldSession, date: oldDate, weightKg: 120, reps: 5),
+            // Beats both all-time records.
+            Self.slice(session: recentSession, date: recentDate, weightKg: 130, reps: 5)
+        ]
+        let allTimePoints = ExerciseProgressionStats.sessionPoints(from: allTimeSlices)
+
+        let displayRange = recentDate.addingTimeInterval(-1)...recentDate.addingTimeInterval(1)
+        let records = ExerciseProgressionStats.personalRecords(from: allTimePoints, displayRange: displayRange)
+
+        // The old session's own initial records are real but predate the
+        // displayed range and must not appear in it.
+        #expect(records.allSatisfy { $0.sessionID != oldSession })
+        // The recent session genuinely broke both all-time records and is
+        // inside the range, so both of its records are present.
+        #expect(records.filter { $0.sessionID == recentSession }.count == 2)
+    }
+
+    // MARK: - Minor fix: personalRecords sorts internally
+
+    @Test("personalRecords sorts internally rather than trusting caller order (minor fix)")
+    func personalRecordsSortsInternallyRegardlessOfInputOrder() {
+        let points = ExerciseProgressionStats.sessionPoints(from: Self.slices)
+        let reversed = Array(points.reversed())
+
+        // Sanity: this really is out of chronological order.
+        #expect(reversed.first?.date != points.first?.date || reversed.count <= 1)
+
+        let recordsFromSorted = ExerciseProgressionStats.personalRecords(from: points)
+        let recordsFromReversed = ExerciseProgressionStats.personalRecords(from: reversed)
+
+        #expect(recordsFromReversed == recordsFromSorted)
+    }
+
+    // MARK: - Nit: one-series-only PR fixtures
+
+    @Test("a session can break only the top-weight series, and another only the e1RM series (nit fixture)")
+    func oneSeriesOnlyPersonalRecords() {
+        let s1 = UUID()
+        let s2 = UUID()
+        let s3 = UUID()
+        let slices = [
+            // Initial PRs on both series: top weight 100, e1RM 133.33.
+            Self.slice(session: s1, date: Self.day0, weightKg: 100, reps: 10),
+            // Breaks ONLY top weight: 110 > 100, but e1RM 110×(1+1/30) =
+            // 113.67 < 133.33.
+            Self.slice(session: s2, date: Self.day1, weightKg: 110, reps: 1),
+            // Breaks ONLY e1RM: 105 < 110 (no top-weight PR), but
+            // 105×(1+10/30) = 140 > 133.33.
+            Self.slice(session: s3, date: Self.day2, weightKg: 105, reps: 10)
+        ]
+        let points = ExerciseProgressionStats.sessionPoints(from: slices)
+        let records = ExerciseProgressionStats.personalRecords(from: points)
+
+        #expect(records.filter { $0.sessionID == s1 }.count == 2)
+
+        let s2Records = records.filter { $0.sessionID == s2 }
+        #expect(s2Records.count == 1)
+        #expect(s2Records.first?.kind == .topWeight)
+
+        let s3Records = records.filter { $0.sessionID == s3 }
+        #expect(s3Records.count == 1)
+        #expect(s3Records.first?.kind == .estimatedOneRepMax)
+    }
 }

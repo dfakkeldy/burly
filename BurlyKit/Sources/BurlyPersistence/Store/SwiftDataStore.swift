@@ -626,6 +626,13 @@ public final class SwiftDataStore: BurlyStore {
         since: Date?,
         through: Date?
     ) throws -> [SetRecordSlice] {
+        // m6-01 fix round 1, major #7: an all-nil call has no legitimate
+        // §7 caller and would otherwise fall through to a `nil` predicate
+        // below — the full, unfiltered SetRecord table. See
+        // `BurlyStoreError.unboundedStatsQuery`'s doc.
+        guard exerciseID != nil || since != nil else {
+            throw BurlyStoreError.unboundedStatsQuery(function: "loggedSetSlices")
+        }
         var descriptor = FetchDescriptor<SetRecord>(
             predicate: Self.setRecordFilterPredicate(exerciseID: exerciseID, since: since, through: through)
         )
@@ -671,6 +678,12 @@ public final class SwiftDataStore: BurlyStore {
     }
 
     public func loggedSessionDates(since: Date?, through: Date?) throws -> [Date] {
+        // m6-01 fix round 1, major #7: unlike `loggedSetSlices`, there is
+        // no exercise dimension to bound this the other way, so `since`
+        // alone must be present. See `BurlyStoreError.unboundedStatsQuery`.
+        guard since != nil else {
+            throw BurlyStoreError.unboundedStatsQuery(function: "loggedSessionDates")
+        }
         // No relationship prefetching: this query never touches `.items`,
         // so there is nothing beyond the row itself to fault.
         let descriptor = FetchDescriptor<Session>(

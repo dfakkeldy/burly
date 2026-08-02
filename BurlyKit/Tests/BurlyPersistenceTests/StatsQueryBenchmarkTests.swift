@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // m6-01 — the 50k-SetRecord benchmark the task brief requires: wall time
-// and peak memory for the §7 stats queries (`loggedSetSlices`,
-// `loggedSessionDates`) against a store at roughly the top of the
-// architecture doc's stated realistic scale ("~40-50k rows for a decade of
-// lifting").
+// and process high-water RSS around the §7 stats queries
+// (`loggedSetSlices`, `loggedSessionDates`) against a store at roughly the
+// top of the architecture doc's stated realistic scale ("~40-50k rows for
+// a decade of lifting"). "Process high-water RSS," not "this query's own
+// peak," is the honest description (m6-01 fix round 1, minor: see
+// `measure`'s doc below) — Darwin's counter is a running maximum since
+// process start, not an interval measurement.
 //
 // Gated behind an environment variable, mirroring `MigrationSpikeTests`
 // (see that file's header for why an opt-in gate rather than always-on):
@@ -39,7 +42,7 @@ let statsBenchmarkIsEnabled =
 )
 struct StatsQueryBenchmarkTests {
 
-    @Test("loggedSetSlices / loggedSessionDates: wall time + peak RSS at ~50k SetRecords")
+    @Test("loggedSetSlices / loggedSessionDates: wall time + process high-water RSS at ~50k SetRecords")
     func benchmarkStatsQueriesAtScale() throws {
         let url = try makeTemporaryStoreURL()
         defer { removeStoreFiles(at: url) }
@@ -49,7 +52,7 @@ struct StatsQueryBenchmarkTests {
 
         [m6-01 stats benchmark] seeded \(seed.sessionCount) sessions / \(seed.setCount) SetRecords \
         across \(seed.exerciseCount) exercises in \(String(format: "%.2f", seed.seedDuration))s \
-        (peak RSS after seeding: \(formatBytes(seed.peakResidentBytesAfterSeeding)))
+        (process high-water RSS after seeding: \(formatBytes(seed.peakResidentBytesAfterSeeding)))
         """)
 
         // A fresh store on the same file — a new `ModelContext`, so the
@@ -67,29 +70,33 @@ struct StatsQueryBenchmarkTests {
         let (trailingSlices, trailingTime, trailingPeak) = try measure {
             try store.loggedSetSlices(exerciseID: nil, since: trailingWindowStart, through: nil)
         }
-        print("[m6-01 stats benchmark] loggedSetSlices(all exercises, trailing 90d): \(trailingSlices.count) slices in \(String(format: "%.4f", trailingTime))s, peak RSS \(formatBytes(trailingPeak))")
+        print("[m6-01 stats benchmark] loggedSetSlices(all exercises, trailing 90d): \(trailingSlices.count) slices in \(String(format: "%.4f", trailingTime))s, process high-water RSS \(formatBytes(trailingPeak))")
         #expect(trailingSlices.isEmpty == false)
 
-        // (b) The worst case this API allows: one exercise, `since: nil` —
-        // the PR chart's "all" range. `since`/`through` are both nil, so
-        // this fetches every SetRecord row once (bounded by the store's
-        // total size, not multiplied by relationship fault amplification —
-        // see BurlyStore's stats-query doc) and filters to one exercise in
-        // Swift afterward.
+        // (b) The worst case this API still allows: one exercise,
+        // `since: nil` — the PR chart's "all" range (m6-01 fix round 1,
+        // major #7 closed off the OTHER worst case, `exerciseID: nil,
+        // since: nil`, which now throws `.unboundedStatsQuery` rather than
+        // running at all). `setRecordFilterPredicate` pushes `exerciseID`
+        // into the SwiftData fetch predicate itself
+        // (`sessionItem?.exercise?.id == exerciseID`), so this is bounded
+        // by *that exercise's* row count, not the store's total size —
+        // there is no Swift-side filter step left doing the narrowing.
         let (allTimeSlices, allTimeQueryTime, allTimePeak) = try measure {
             try store.loggedSetSlices(exerciseID: seed.benchExerciseID, since: nil, through: nil)
         }
-        print("[m6-01 stats benchmark] loggedSetSlices(one exercise, all-time): \(allTimeSlices.count) slices in \(String(format: "%.4f", allTimeQueryTime))s, peak RSS \(formatBytes(allTimePeak))")
+        print("[m6-01 stats benchmark] loggedSetSlices(one exercise, all-time, predicate-pushed-down): \(allTimeSlices.count) slices in \(String(format: "%.4f", allTimeQueryTime))s, process high-water RSS \(formatBytes(allTimePeak))")
         #expect(allTimeSlices.isEmpty == false)
         #expect(allTimeSlices.allSatisfy { $0.exerciseID == seed.benchExerciseID })
 
         // (c) Session-level dates only, all-time — bounded by session
         // count (~3k), not set count (~50k), since this never touches
-        // `.items`.
+        // `.items`. `since: .distantPast` is the explicit "all-time" bound
+        // major #7 now requires (`since: nil` throws `.unboundedStatsQuery`).
         let (dates, datesTime, datesPeak) = try measure {
-            try store.loggedSessionDates(since: nil, through: nil)
+            try store.loggedSessionDates(since: .distantPast, through: nil)
         }
-        print("[m6-01 stats benchmark] loggedSessionDates(all-time): \(dates.count) dates in \(String(format: "%.4f", datesTime))s, peak RSS \(formatBytes(datesPeak))")
+        print("[m6-01 stats benchmark] loggedSessionDates(all-time): \(dates.count) dates in \(String(format: "%.4f", datesTime))s, process high-water RSS \(formatBytes(datesPeak))")
         #expect(dates.count == seed.sessionCount)
 
         print("[m6-01 stats benchmark] done\n")
@@ -98,11 +105,19 @@ struct StatsQueryBenchmarkTests {
 
 // MARK: - Measurement helpers
 
-/// Wall time and the process's peak resident set size *as of right after*
-/// `body` returns. `resident_size_max` (below) is a running high-water mark
-/// since process start, not a per-call delta, so this is "the peak so far",
-/// not "the peak this call alone caused" — reported alongside the running
-/// baseline each call site prints so the delta is still readable.
+/// Wall time for `body`, plus the process's peak resident set size *as of
+/// right after* `body` returns.
+///
+/// **This is not, and cannot be, this call's own peak RSS** (m6-01 fix
+/// round 1, minor: honest RSS reporting). `resident_size_max` (below) is a
+/// running high-water mark since process start — Darwin exposes no
+/// interval/per-call peak counter — so if seeding reached (say) 172 MB and
+/// a later query itself only peaks at 40 MB, this still reports 172 MB for
+/// that query, because the process never gave the memory back. The
+/// `peakResidentBytes` field name and every print call site below say
+/// "process high-water RSS", not "this query's peak," and must keep saying
+/// so — the meaningful comparison is the *change* in this number between
+/// consecutive calls, not any single call's absolute value in isolation.
 private func measure<T>(_ body: () throws -> T) rethrows -> (result: T, seconds: Double, peakResidentBytes: UInt64) {
     let start = Date()
     let result = try body()

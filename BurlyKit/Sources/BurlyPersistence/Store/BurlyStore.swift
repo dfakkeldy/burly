@@ -490,12 +490,20 @@ public protocol BurlyStore: AnyObject {
     ///     shape); `nil` returns every exercise's (volume and
     ///     muscle-split's shape).
     ///   - since: lower bound on the set's `completedAt`, inclusive; `nil`
-    ///     is unbounded below — the PR chart's "all" range is the only §7
-    ///     range that ever passes this, since every other range names a
-    ///     trailing window.
+    ///     is unbounded below — legal only when `exerciseID` is non-nil
+    ///     (the PR chart's "all" range for one exercise is the only §7
+    ///     range that ever passes `since: nil`; every other range names a
+    ///     trailing window).
     ///   - through: upper bound, inclusive; `nil` is unbounded above — the
     ///     common case, since every §7 range reads "since X, through now"
     ///     and callers do not have to compute "now" just to bound it.
+    ///
+    /// **`exerciseID` and `since` cannot both be `nil`** (m6-01 fix round
+    /// 1, major #7): that combination has no legitimate §7 caller and
+    /// silently degenerates into an unfiltered full-table fetch — see
+    /// `BurlyStoreError.unboundedStatsQuery`'s doc for why this is
+    /// refused rather than served. Throws `.unboundedStatsQuery` before
+    /// touching the store when both are `nil`.
     ///
     /// No ordering is promised; every current caller sorts what it gets
     /// back (see `ExerciseProgressionStats.sessionPoints`).
@@ -503,7 +511,16 @@ public protocol BurlyStore: AnyObject {
 
     /// `startedAt` for every `.logged` session in the window — no item or
     /// set graph — for §7's consistency chart (sessions/week, calendar
-    /// dots), which never looks inside a session. Bounded the same way as
-    /// `loggedSetSlices`; no ordering promised.
+    /// dots), which never looks inside a session. `through` is bounded the
+    /// same way as `loggedSetSlices`'s (`nil` is unbounded above).
+    ///
+    /// **`since` is mandatory** (m6-01 fix round 1, major #7): unlike
+    /// `loggedSetSlices`, there is no exercise dimension here to bound an
+    /// all-nil call the other way, so `since: nil` has no legitimate §7
+    /// caller at all — every consistency-chart range names a trailing
+    /// window. Throws `.unboundedStatsQuery` before touching the store
+    /// when `since` is `nil`.
+    ///
+    /// No ordering promised.
     func loggedSessionDates(since: Date?, through: Date?) throws -> [Date]
 }

@@ -105,4 +105,23 @@ public enum BurlyStoreError: Error, Equatable {
     /// failure rather than handing a poisoned `Weight` back into equality,
     /// sorting, volume, PR, or chart math.
     case corruptedWeight(id: UUID, underlying: WeightValidationError)
+    /// `loggedSetSlices`/`loggedSessionDates` were called with no bound at
+    /// all — `loggedSetSlices` with both `exerciseID` and `since` `nil`,
+    /// or `loggedSessionDates` with `since` `nil` (m6-01 fix round 1,
+    /// major #7).
+    ///
+    /// Both queries exist specifically so a §7 chart never has to choose
+    /// between "hydrate the whole session graph" (`sessions()`) and
+    /// "fetch every SetRecord ever logged" — see `BurlyStore`'s
+    /// stats-queries doc. An all-nil call defeated that on purpose-built
+    /// infrastructure: the fetch predicate falls through to `nil`, i.e.
+    /// the unfiltered table, silently, with no signal that the caller got
+    /// a full-history scan instead of the bounded query the surface
+    /// promises. There is legitimately no unbounded §7 range — even the
+    /// PR chart's "all" range is bounded to one exercise
+    /// (`loggedSetSlices(exerciseID: id, since: nil, through: nil)` is
+    /// still allowed and is the one query this API lets run over full
+    /// history, because it is bounded the other way). A caller with no
+    /// legitimate use case has to be refused rather than silently obliged.
+    case unboundedStatsQuery(function: String)
 }

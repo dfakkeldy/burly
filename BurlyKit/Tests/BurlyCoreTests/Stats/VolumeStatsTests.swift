@@ -13,6 +13,20 @@ struct VolumeStatsTests {
     private static let weekZeroStart = Date(timeIntervalSince1970: 0)
     private static let weekLength: TimeInterval = 7 * 24 * 60 * 60
 
+    /// See `ConsistencyStatsTests.utcThursdayCalendar`'s doc: a
+    /// Thursday-start UTC calendar's week boundaries coincide with this
+    /// fixture's epoch-based constants, since 1970-01-01 is itself a
+    /// Thursday — so these tests keep their hand-computed numbers while
+    /// genuinely exercising `CalendarBucketing`'s calendar-aware bucketing
+    /// (m6-01 fix round 1, major #3) via an explicit, deterministic
+    /// `Calendar` rather than a hardcoded UTC/epoch anchor.
+    private static var utcThursdayCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.firstWeekday = 5
+        return calendar
+    }
+
     private static func slice(offsetSeconds: TimeInterval, weightKg: Double, reps: Int, isWarmup: Bool = false) -> SetRecordSlice {
         let date = weekZeroStart.addingTimeInterval(offsetSeconds)
         return SetRecordSlice(
@@ -36,7 +50,7 @@ struct VolumeStatsTests {
             Self.slice(offsetSeconds: Self.weekLength, weightKg: 80, reps: 8)
         ]
 
-        let volume = VolumeStats.weeklyVolume(from: slices)
+        let volume = VolumeStats.weeklyVolume(from: slices, calendar: Self.utcThursdayCalendar)
         #expect(volume.count == 2)
 
         #expect(volume[0].weekStart == Self.weekZeroStart)
@@ -51,22 +65,89 @@ struct VolumeStatsTests {
         let slices = [
             Self.slice(offsetSeconds: Self.weekLength - 1, weightKg: 10, reps: 1)
         ]
-        let volume = VolumeStats.weeklyVolume(from: slices)
+        let volume = VolumeStats.weeklyVolume(from: slices, calendar: Self.utcThursdayCalendar)
         #expect(volume.count == 1)
         #expect(volume[0].weekStart == Self.weekZeroStart)
     }
 
     @Test("kg → lb display conversion uses Weight's exact avoirdupois constant")
     func displayUnitConversion() {
-        let volume = VolumeStats.weeklyVolume(from: [
-            Self.slice(offsetSeconds: 0, weightKg: 1_000, reps: 1)
-        ])
+        let volume = VolumeStats.weeklyVolume(
+            from: [Self.slice(offsetSeconds: 0, weightKg: 1_000, reps: 1)],
+            calendar: Self.utcThursdayCalendar
+        )
         // 1000 kg / 0.45359237 = 2204.622621848... lb.
         #expect(abs(volume[0].totalVolumeLb - 2_204.622_621_85) < 0.000_1)
     }
 
     @Test("no working sets in the window produces no buckets at all")
     func emptyInputProducesNoBuckets() {
-        #expect(VolumeStats.weeklyVolume(from: []).isEmpty)
+        #expect(VolumeStats.weeklyVolume(from: [], calendar: Self.utcThursdayCalendar).isEmpty)
+    }
+
+    // MARK: - Minor fix: deterministic (Kahan) summation
+
+    @Test("the same SetRecords sum to the identical total regardless of fetch order (minor fix: deterministic summation)")
+    func summationIsOrderIndependent() {
+        // The review's exact reproduction: 25,000 contributions of 1000 kg
+        // (a 1000×1 set) and 25,000 of 0.1 kg (a 0.1×1 set), all in week 0.
+        // Naive `+=` accumulation measurably produced 25,002,500.000037253
+        // in one order and exactly 25,002,500 in the reverse order — two
+        // different numbers for the same underlying history, because
+        // `BurlyStore.loggedSetSlices` promises no fetch ordering.
+        var forwardOrder: [SetRecordSlice] = []
+        for _ in 0..<25_000 {
+            forwardOrder.append(Self.slice(offsetSeconds: 0, weightKg: 1_000, reps: 1))
+        }
+        for _ in 0..<25_000 {
+            forwardOrder.append(Self.slice(offsetSeconds: 0, weightKg: 0.1, reps: 1))
+        }
+        let reverseOrder = Array(forwardOrder.reversed())
+
+        let forwardVolume = VolumeStats.weeklyVolume(from: forwardOrder, calendar: Self.utcThursdayCalendar)
+        let reverseVolume = VolumeStats.weeklyVolume(from: reverseOrder, calendar: Self.utcThursdayCalendar)
+
+        #expect(forwardVolume.count == 1)
+        #expect(reverseVolume.count == 1)
+        // Bit-identical, not just "close enough" — and correct: exactly
+        // 25,000×1000 + 25,000×0.1 = 25,002,500.
+        #expect(forwardVolume[0].totalVolumeKg == reverseVolume[0].totalVolumeKg)
+        #expect(forwardVolume[0].totalVolumeKg == 25_002_500)
+    }
+
+    // MARK: - Major #5 fix: named 8-week range produces exactly 8 buckets
+
+    @Test("an 8-week named range produces exactly 8 volume buckets, not 9 (major #5 fix)")
+    func namedEightWeekRangeProducesExactlyEightBuckets() {
+        // The review's exact failing shape: `asOf` sits three days into
+        // its own week (the 8th week of the range), so the naive
+        // `since = asOf - 8×7 days` lands mid-week rather than on a
+        // boundary, and an inclusive `[since, through]` filter spans 9
+        // week-start buckets instead of 8.
+        let asOf = Self.weekZeroStart
+            .addingTimeInterval(8 * Self.weekLength)
+            .addingTimeInterval(3 * 86_400)
+
+        let (since, through) = CalendarBucketing.trailingWeekWindow(
+            weekCount: 8,
+            asOf: asOf,
+            calendar: Self.utcThursdayCalendar
+        )
+
+        // One working set at the start of each of the 8 weeks the window
+        // is supposed to cover.
+        var slices: [SetRecordSlice] = []
+        var cursor = since
+        for _ in 0..<8 {
+            let offset = cursor.timeIntervalSince(Self.weekZeroStart)
+            slices.append(Self.slice(offsetSeconds: offset, weightKg: 10, reps: 1))
+            cursor = Self.utcThursdayCalendar.date(byAdding: .weekOfYear, value: 1, to: cursor)!
+        }
+
+        let filtered = slices.filter { $0.set.completedAt >= since && $0.set.completedAt <= through }
+        #expect(filtered.count == 8) // nothing in the fixture fell outside the window
+
+        let volume = VolumeStats.weeklyVolume(from: filtered, calendar: Self.utcThursdayCalendar)
+        #expect(volume.count == 8)
     }
 }
