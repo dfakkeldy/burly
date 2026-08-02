@@ -370,6 +370,63 @@ public protocol BurlyStore: AnyObject {
     @discardableResult
     func applyPhoneEdit(_ session: SessionData) throws -> Int
 
+    /// **Replicated apply**, the session counterpart to
+    /// `applyRoutineSnapshot(_:)` — the split m1-06 fix round A drew for
+    /// routines, extended to sessions here because this is precisely the
+    /// task it exists for (m4-04): a §5 `session` payload landing on the
+    /// phone was authored on the *watch*, so applying it is mirroring
+    /// someone else's fact, not authoring a new one. `createSession` (the
+    /// strict create, throws on a duplicate id) and `applyPhoneEdit` (the
+    /// *only* incrementer) are both the wrong tool — see this task's
+    /// carried note: "do not reuse strict createSession or a generic
+    /// update for replica apply."
+    ///
+    /// **Conditional, with the revision recheck inside the transaction**
+    /// (`SyncMachineBinding.swift`'s binding contract, item 2): reads the
+    /// stored revision fresh, right here, and commits iff `session.revision`
+    /// is still strictly greater than it — or nothing is stored at all. A
+    /// caller's own revision lookup, taken before this call, can be
+    /// arbitrarily stale; this recheck is what makes the write race-proof
+    /// regardless.
+    ///
+    /// - Incoming revision **≤** stored revision → **no-op**: nothing is
+    ///   read further, nothing is mutated, nothing is saved. Returns the
+    ///   unchanged stored revision. This is the §5 "drop silently" rule,
+    ///   realized as a store guarantee rather than a caller convention.
+    /// - Nothing stored, or incoming revision **>** stored revision →
+    ///   creates or replaces the graph wholesale (same reconciliation
+    ///   `applyPhoneEdit` uses) and **overwrites the stored revision with
+    ///   the incoming value verbatim** — never incremented, never
+    ///   computed from the old value. `applyPhoneEdit(_:)` remains the
+    ///   only method in this protocol that *increments* a revision; this
+    ///   one only ever carries someone else's number forward, exactly as
+    ///   `createSession` already does for the absent case.
+    ///
+    /// Refuses `state == .active` on the **incoming** payload with
+    /// `.activeSessionRequiresSaveActiveSession`, same rule as
+    /// `applyPhoneEdit` and for the same reason: an `.active` row is only
+    /// half of an in-flight session, and only `saveActiveSession` writes
+    /// the other half. If the *stored* row happens to be `.active` and a
+    /// higher-revision, non-`.active` replica wins over it, its journal is
+    /// retired in the same save — `applyPhoneEdit`'s "editing a session
+    /// *out* of `.active` is fine" rule, applied here too, so a replicated
+    /// session can never leave a Resume pointer at a row that is no longer
+    /// in flight.
+    ///
+    /// On the current §5 protocol only the create branch is reachable — a
+    /// watch-authored session always arrives at revision 1, and only
+    /// `applyPhoneEdit` can ever raise a stored session's revision above
+    /// that — so the replace branch is exercised by tests directly rather
+    /// than by anything the sync runtime can trigger today; it exists so a
+    /// future protocol change that lets a replica legitimately win over a
+    /// stored row does not have to touch the store at all.
+    ///
+    /// Throws `.missingExercise` / `.duplicateID` exactly as `createSession`
+    /// does when the row is being created, or `applyPhoneEdit` does when an
+    /// item/set id in the payload is already owned by a *different* session.
+    @discardableResult
+    func applyReplicatedSession(_ session: SessionData) throws -> Int
+
     // MARK: - Last-performance digests (watch store; §1, §5 `digest`)
 
     func lastPerformance(exerciseID: UUID) throws -> ExerciseLastPerformanceData?
@@ -606,6 +663,37 @@ public protocol BurlyStore: AnyObject {
     /// prevent. Bounding this with a manufactured window would buy no
     /// safety and would just be a window for its own sake.
     func allLoggedSessionDates() throws -> [Date]
+
+    // MARK: - Digest generation (m4-04; bounded)
+
+    /// Flat set-level projections across **every** exercise, unbounded by
+    /// date — the one fetch spec §5's digest generator needs to derive
+    /// "latest performance per exercise over full CURRENT phone history"
+    /// (`SessionDigestGenerator` in `BurlyPhoneSync`).
+    ///
+    /// This is not a new relaxation of the "every §7 stats query is
+    /// window-bounded" rule the section above states — it is the digest
+    /// generator's one genuinely all-time, all-exercise need, and it pays
+    /// for that honestly rather than by looping. A generator built on
+    /// `loggedSetSlices(exerciseID:since: nil, through: nil)` would have to
+    /// call it once per exercise in the catalog to find each one's latest
+    /// performance — and that call already fetches the *entire* `SetRecord`
+    /// table internally before filtering by `exerciseID` in Swift (see that
+    /// method's doc), so a per-exercise loop would pay for one full-table
+    /// fetch as many times as the catalog has exercises. This method is
+    /// that one fetch, done once: the same flat, non-relationship-hydrating
+    /// `SetRecordSlice` shape as every other §7 query — never the nested
+    /// `sessions()` graph — restricted to `.logged` sessions exactly like
+    /// `loggedSetSlices` is, with cost proportional to the total number of
+    /// logged `SetRecord`s exactly once, independent of catalog size.
+    ///
+    /// No ordering is promised; the digest generator groups by `exerciseID`
+    /// and sorts each group by `completedAt` then set `id`, the same
+    /// deterministic-visitation rule §7's own accumulators apply via
+    /// `Array<SetRecordSlice>.sortedForDeterministicSummation()` (an
+    /// internal BurlyCore helper the generator cannot call directly, so it
+    /// re-derives the identical ordering — see `SessionDigestGenerator`).
+    func allLoggedSetSlices() throws -> [SetRecordSlice]
 
     // MARK: - Phone-shell existence/count (m5-01; bounded)
     //

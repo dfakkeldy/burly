@@ -551,6 +551,68 @@ public final class SwiftDataStore: BurlyStore {
         return stored.revision
     }
 
+    @discardableResult
+    public func applyReplicatedSession(_ session: SessionData) throws -> Int {
+        // Same incoming-state guard as `applyPhoneEdit` — a replica can
+        // never mint an `.active` row (m1-06 review round D); only
+        // `saveActiveSession` writes the journal that makes one resumable.
+        guard session.state != .active else {
+            throw BurlyStoreError.activeSessionRequiresSaveActiveSession(sessionID: session.id)
+        }
+
+        let stored = try model(Session.self, id: session.id)
+        if let stored, session.revision <= stored.revision {
+            // The in-transaction recheck (binding contract item 2): a
+            // caller's own lookup can be stale, so this is the one read
+            // that actually decides. Nothing is mutated, nothing is saved
+            // — the §5 "drop silently" rule, realized as a store guarantee.
+            return stored.revision
+        }
+
+        let resolved = try preflightSessionGraph(session, ownedBy: stored)
+        let journal = try journalModel(sessionID: session.id)
+
+        let target: Session
+        if let stored {
+            target = stored
+        } else {
+            let created = Session(
+                id: session.id,
+                routineID: session.routineID,
+                routineName: session.routineName,
+                startedAt: session.startedAt,
+                endedAt: session.endedAt,
+                state: session.state,
+                // Verbatim, like `createSession` — a replica's revision is
+                // the author's, not this store's to compute.
+                revision: session.revision,
+                healthKitWorkoutID: session.healthKitWorkoutID,
+                origin: session.origin,
+                notes: session.notes
+            )
+            context.insert(created)
+            target = created
+        }
+        reconcileSessionGraph(target, to: session, resolved: resolved)
+        // Overwritten, never incremented (m1-06 fix round A / m4-04):
+        // `applyPhoneEdit` stays the only incrementer in this protocol —
+        // this carries someone else's number forward, exactly like
+        // `applyRoutineSnapshot` carries forward an author's `updatedAt`.
+        target.revision = session.revision
+
+        if let journal {
+            // The guard above proves the incoming session is not `.active`,
+            // so a journal still beside the row it is about to replace is a
+            // Resume pointer at a session that is about to stop being in
+            // flight — `applyPhoneEdit`'s "editing a session out of
+            // `.active` is fine" rule, applied to the replicated path too.
+            context.delete(journal)
+        }
+
+        try commit()
+        return target.revision
+    }
+
     // MARK: - Last-performance digests
 
     public func lastPerformance(exerciseID: UUID) throws -> ExerciseLastPerformanceData? {
@@ -718,6 +780,17 @@ public final class SwiftDataStore: BurlyStore {
         return try context.fetch(descriptor)
             .filter { $0.state == .logged }
             .map(\.startedAt)
+    }
+
+    // MARK: - Digest generation (m4-04; bounded)
+
+    public func allLoggedSetSlices() throws -> [SetRecordSlice] {
+        // No predicate, no exercise filter: one full pass over `SetRecord`,
+        // exactly the shape `loggedSetSlices(exerciseID:since: nil,
+        // through: nil)` already produces internally for a single exercise
+        // (see that method's and the protocol doc's cost note) — this is
+        // that same fetch, paid for once instead of once per exercise.
+        try fetchSetSlices(predicate: nil, exerciseID: nil)
     }
 
     // MARK: - Phone-shell existence/count (m5-01; bounded)
