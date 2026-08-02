@@ -259,6 +259,26 @@ public protocol PhoneSyncStatePersisting: Sendable {
     /// path is where the ceiling actually binds, since the coordinator
     /// persists before it transmits.
     func save(_ state: PhoneSyncRuntimeState) throws
+
+    /// Round 4, §2 — the domain-reset write, distinct from `save(_:)` on
+    /// purpose. `save` may keep durable redundancy in whatever incremental
+    /// form it likes (the file-backed conformer's append-only high-water
+    /// log), because ordinary saves only ever move identities UPWARD — a
+    /// partial write there is at worst an orphaned record naming an
+    /// identity at-or-above everything transmitted, which recovery treats
+    /// safely. A reset writes a **lower** identity (a fresh zero domain),
+    /// where a partial write is precisely the hazard: an orphaned zero
+    /// record from a reset that then failed could be "recovered" on the
+    /// next launch, silently clearing quiescence and reusing generations
+    /// from the lost domain.
+    ///
+    /// Contract: **all durable records commit, or none do.** On any thrown
+    /// error, the durable state must be indistinguishable from "this call
+    /// never happened" — in particular, no partial fresh-domain record may
+    /// ever become recoverable by `load()`. Conformances must also
+    /// validate the state via `validatePhoneSyncIdentityBounds(_:)` before
+    /// writing, like `save`.
+    func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws
 }
 
 /// The production conformer: one small JSON file for the full state,
@@ -385,6 +405,47 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         try data.write(to: url, options: .atomic)
+    }
+
+    /// Round 4, §2 — see the protocol requirement's doc. Write order is the
+    /// REVERSE of `save(_:)`, deliberately:
+    ///
+    /// - **Primary first, atomically.** Until that rename lands, nothing on
+    ///   disk has changed at all; if it throws, the old (corrupt) files
+    ///   remain exactly as they were — durably indistinguishable from
+    ///   "reset never happened", which keeps the next launch unrecoverable
+    ///   and quiescent rather than operational at a zero that was never
+    ///   committed. (`save`'s log-append-first order exists so a crash
+    ///   between its two writes leaves the log naming the *higher*
+    ///   identity about to be used — the safe direction for ordinary,
+    ///   upward saves. For a reset, that same order is exactly the
+    ///   laundering hazard: an orphaned LOWER record that a failed reset
+    ///   leaves behind for recovery to trust.)
+    /// - **Then the high-water log, atomically REPLACED, not appended.**
+    ///   The old log is the record of the old identity domain (or of its
+    ///   corruption); the fresh domain starts its own log with a single
+    ///   record. A crash between the two writes leaves a fully-valid
+    ///   primary beside the old unreadable log — `load()` treats a
+    ///   decodable primary as authoritative when the log yields nothing
+    ///   usable, so the reset is *committed* in that window, never
+    ///   half-recovered. (From the only state the coordinator calls this
+    ///   in — unrecoverable — the old log by definition holds zero valid
+    ///   records, so the defensive max-merge in `load()` has nothing to
+    ///   resurrect either.)
+    public func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws {
+        try validatePhoneSyncIdentityBounds(state)
+
+        let data = try JSONEncoder().encode(Snapshot(state))
+        let directory = url.deletingLastPathComponent()
+        if fileManager.fileExists(atPath: directory.path) == false {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try data.write(to: url, options: .atomic)
+
+        try highWaterLog.replace(
+            version: state.machineState.latestSnapshotVersion,
+            generation: state.machineState.lastTransferGeneration
+        )
     }
 
     private static func stateRestoringHighWater(
@@ -652,6 +713,23 @@ private struct HighWaterMarkLog {
         guard let data = try? Data(contentsOf: url) else { return 0 }
         return data.count(where: { $0 == UInt8(ascii: "\n") })
     }
+
+    /// Round 4, §2: atomically REPLACES the entire log with a single
+    /// record — the domain-reset write. Append-only is the right shape for
+    /// ordinary saves (identities only move upward, so a torn append is
+    /// harmlessly high), but a reset writes a LOWER identity, where any
+    /// partial record is the laundering hazard §2 names — so the whole
+    /// file changes in one rename or not at all, using the same atomic
+    /// write the compaction path already relies on.
+    func replace(version: Int, generation: Int) throws {
+        let directory = url.deletingLastPathComponent()
+        if fileManager.fileExists(atPath: directory.path) == false {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        var line = try JSONEncoder().encode(Record(version: version, generation: generation))
+        line.append(UInt8(ascii: "\n"))
+        try line.write(to: url, options: .atomic)
+    }
 }
 
 /// An in-memory conformer for tests and previews — "persists" only for the
@@ -672,6 +750,14 @@ public final class InMemoryPhoneSyncStatePersisting: PhoneSyncStatePersisting, @
         // Round 3, §2: same write-path ceiling as the file-backed
         // conformer — tests driving a coordinator through this in-memory
         // double must exercise the same refusal production would.
+        try validatePhoneSyncIdentityBounds(state)
+        stored = state
+    }
+
+    public func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws {
+        // A single in-memory assignment is inherently all-or-nothing —
+        // the two-file atomicity concern (round 4, §2) has no analogue
+        // here beyond the shared bound check.
         try validatePhoneSyncIdentityBounds(state)
         stored = state
     }

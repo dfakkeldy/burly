@@ -464,6 +464,7 @@ struct PhoneSyncStatePersistingTests {
         struct AlwaysUnrecoverableStatePersisting: PhoneSyncStatePersisting {
             func load() throws -> PhoneSyncLoadResult? { throw PhoneSyncStateUnrecoverableError() }
             func save(_ state: PhoneSyncRuntimeState) throws {}
+            func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws {}
         }
 
         let store = try makePhoneStore()

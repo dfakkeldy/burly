@@ -163,6 +163,7 @@ struct SyncUnrecoverableQuiescenceTests {
             struct SaveFailure: Error, Equatable {}
             func load() throws -> PhoneSyncLoadResult? { throw PhoneSyncStateUnrecoverableError() }
             func save(_ state: PhoneSyncRuntimeState) throws { throw SaveFailure() }
+            func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws { throw SaveFailure() }
         }
 
         let transport = FakeTransport()
@@ -180,6 +181,69 @@ struct SyncUnrecoverableQuiescenceTests {
 
         try await coordinator.applicationDidLaunch()
         #expect(await transport.transmissions.isEmpty, "still quiescent after the failed reset")
+    }
+
+    @Test("round 4, §2 — a reset whose PRIMARY write fails leaves durable state indistinguishable from 'reset never happened': the relaunch is STILL unrecoverable, never operational at a laundered zero")
+    func partiallyFailedResetDoesNotLaunderAZeroAcrossRelaunch() async throws {
+        // The reviewer's exact setup: primary present-but-unreadable,
+        // high-water log ABSENT. The two files are deliberately placed in
+        // DIFFERENT directories so the primary write can be made to fail
+        // (its directory turned read-only) while the log's directory stays
+        // fully writable — the exact two-phase interleaving that used to
+        // orphan a trustworthy (0, 0) log record: pre-fix, the reset went
+        // through `save`, which appended (0, 0) to the (writable) log
+        // FIRST and only then failed the primary write, so the relaunch
+        // recovered (0, 0) and went operational.
+        let base = FileManager.default.temporaryDirectory
+            .appending(path: "burly-reset-atomicity-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let primaryDirectory = base.appending(path: "primary", directoryHint: .isDirectory)
+        let highWaterDirectory = base.appending(path: "highwater", directoryHint: .isDirectory)
+        let url = primaryDirectory.appending(path: "state.json", directoryHint: .notDirectory)
+        let hwURL = highWaterDirectory.appending(path: "state.highwater.jsonl", directoryHint: .notDirectory)
+        try FileManager.default.createDirectory(at: primaryDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: highWaterDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: primaryDirectory.path)
+            try? FileManager.default.removeItem(at: base)
+        }
+        try Data("unreadable primary {{{".utf8).write(to: url)
+
+        let store = try makePhoneStore()
+        let coordinator = PhoneSyncCoordinator(
+            store: store, transport: FakeTransport(), digestPublisher: FakeDigestPublisher(),
+            statePersisting: FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL),
+            clock: TestClock(), scheduler: ManualTriggerScheduler()
+        )
+        #expect(coordinator.syncStateUnrecoverable, "unreadable primary + absent log is the unrecoverable state")
+
+        // Make the primary's directory read-only: the reset's atomic
+        // primary write fails with a real I/O error. The log directory
+        // remains writable throughout.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: primaryDirectory.path)
+        #expect(throws: (any Error).self) {
+            try coordinator.resetSyncStateForRePair()
+        }
+        #expect(coordinator.syncStateUnrecoverable, "the failed reset keeps THIS coordinator quiescent")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: primaryDirectory.path)
+
+        #expect(
+            FileManager.default.fileExists(atPath: hwURL.path) == false,
+            "no partial zero-identity record may exist ANYWHERE after a failed reset — both records commit or neither"
+        )
+
+        // The laundering step the review pinned: relaunch over the same
+        // files. Durable state must be indistinguishable from 'reset never
+        // happened' — still unrecoverable, still quiescent, transmitting
+        // nothing; never operational at a (0, 0) the reset never committed.
+        let relaunchTransport = FakeTransport()
+        let relaunched = PhoneSyncCoordinator(
+            store: store, transport: relaunchTransport, digestPublisher: FakeDigestPublisher(),
+            statePersisting: FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL),
+            clock: TestClock(), scheduler: ManualTriggerScheduler()
+        )
+        #expect(relaunched.syncStateUnrecoverable, "the relaunch must NOT recover a laundered (0, 0) from the failed reset")
+        try await relaunched.applicationDidLaunch()
+        #expect(await relaunchTransport.transmissions.isEmpty, "no generation-1 reuse from a zero domain that never committed")
     }
 
     @Test("reset is a no-op on a healthy coordinator — it can never be misused to regress a live identity line")

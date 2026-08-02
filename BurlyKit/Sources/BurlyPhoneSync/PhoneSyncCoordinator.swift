@@ -359,8 +359,13 @@ public final class PhoneSyncCoordinator {
             return
         }
         try await runEvent(.snapshotPushTriggered)
-        lastDailyPushAt = now
-        try persistRuntimeState()
+        // Round 4: the "day consumed" mark advances through the same
+        // persist-then-commit point as everything else — never in memory
+        // first. (Major 3 kept a FAILED push from consuming the day; this
+        // keeps an unpersisted success mark from diverging memory and
+        // disk: if this save fails, the next check retries, exactly as a
+        // relaunch would have.)
+        try persistThenCommit(PhoneSyncRuntimeState(machineState: state, lastDailyPushAt: now))
     }
 
     /// §5: "on any routine/catalog edit (debounced 5 s)". Call this once
@@ -428,13 +433,19 @@ public final class PhoneSyncCoordinator {
     /// - **No-op unless unrecoverable.** On a healthy coordinator this
     ///   returns immediately — it can never be used to regress a live
     ///   identity line.
-    /// - **Durability before liveness.** The fresh state is persisted
-    ///   *first*; if that save throws, the error propagates and the
-    ///   coordinator stays fully quiescent (the flag remains set) — the
-    ///   gates never lift on an identity domain that is not durably on
-    ///   disk, because an unpersisted reset would repeat the exact
-    ///   "transmitted identity with no durable record" hazard this whole
-    ///   fix closes.
+    /// - **Durability before liveness, atomically.** The fresh state is
+    ///   persisted *first*, through
+    ///   `PhoneSyncStatePersisting.replaceWithFreshIdentityDomain(_:)` —
+    ///   an all-or-nothing domain replacement, NOT an ordinary `save`
+    ///   (round 4, §2): `save`'s incremental append-the-log-then-write-
+    ///   the-primary shape is safe for ordinary upward identities but,
+    ///   for a reset's zero, a partial write would orphan a trustworthy-
+    ///   looking `(0, 0)` log record that the NEXT launch recovers
+    ///   operationally — laundering a reset that never committed across
+    ///   the process boundary. On any persistence failure here, the error
+    ///   propagates, this coordinator stays fully quiescent, and the
+    ///   durable state is indistinguishable from "reset never happened" —
+    ///   so the relaunch is still unrecoverable and still quiescent.
     /// - Does not invent or recover identities: the pre-corruption
     ///   `(version, generation)` line is gone, and this deliberately does
     ///   not guess at it (round 3, §1 — no invented identities). It starts
@@ -442,7 +453,7 @@ public final class PhoneSyncCoordinator {
     public func resetSyncStateForRePair() throws {
         guard syncStateUnrecoverable else { return }
         let fresh = PhoneSyncRuntimeState(machineState: BurlyPhoneSyncMachine.State(), lastDailyPushAt: nil)
-        try statePersisting.save(fresh)
+        try statePersisting.replaceWithFreshIdentityDomain(fresh)
         state = fresh.machineState
         lastDailyPushAt = nil
         pendingInstallPushRetry = false
@@ -497,20 +508,18 @@ public final class PhoneSyncCoordinator {
     /// naturally retries it — nothing else ever re-delivers "the catalog
     /// changed" for an edit that already happened. So a failure here is
     /// both **surfaced** (`lastCatalogPushFailure`, for a host app to
-    /// observe) and **retried**: the exact commands `.catalogChanged`
-    /// already produced are re-attempted, spaced by the configured
-    /// debounce, up to `catalogPushRetryCount` extra times — never by
-    /// re-delivering `.catalogChanged` to the machine again, which would
-    /// bump `latestSnapshotVersion` a second time for one edit.
+    /// observe) and **retried**, spaced by the configured debounce, up to
+    /// `catalogPushRetryCount` extra times (round 2, finding 4: a persist
+    /// failure gets the same treatment as a transport failure).
     ///
-    /// The machine call itself (`machine.handle`) cannot throw; only
-    /// persisting its result can. m4-04 review round 2, finding 4: that
-    /// persistence step used to run through the generic `deliver(_:)`
-    /// helper, whose `try?` swallowed a persistence failure outright — no
-    /// surfaced failure, no retry, unlike every other trigger's failure.
-    /// It is inlined here instead so a persistence failure gets the exact
-    /// same retry treatment as a transport failure, through
-    /// `persistThenExecuteCatalogCommands` below.
+    /// How a retry retries depends on which half failed — round 4's
+    /// commit-after-persist makes the two cases cleanly distinct (see
+    /// `runCatalogBatch`'s doc): a PERSIST failure means nothing was
+    /// committed, so the retry re-delivers `.catalogChanged` — still
+    /// exactly one version bump for the edit, because the failed
+    /// attempt's bump never existed; a TRANSPORT failure means the state
+    /// IS committed, so the retry replays the committed commands,
+    /// freshness-guarded against supersession.
     private func deliverCatalogChanged() async {
         // Round 3, §1: defense in depth — `catalogDidChange()` is already
         // gated (and the flag is only ever set in `init`, before any
@@ -519,27 +528,36 @@ public final class PhoneSyncCoordinator {
         guard syncStateUnrecoverable == false else { return }
         catalogBatchEpoch += 1
         let epoch = catalogBatchEpoch
-        let commands = machine.handle(.catalogChanged, &state, now: clock.now)
-        await persistThenExecuteCatalogCommands(commands, epoch: epoch, retriesRemaining: configuration.catalogPushRetryCount)
+        await runCatalogBatch(epoch: epoch, retriesRemaining: configuration.catalogPushRetryCount)
     }
 
-    /// Persists the state `.catalogChanged` already mutated, then executes
-    /// the commands it produced — retrying either half's failure through
-    /// the same loop (finding 4). Every entry point into this loop — the
-    /// first attempt and every subsequent retry — re-checks `epoch`
-    /// against `catalogBatchEpoch` first (finding 5): once a newer edit's
-    /// own batch has run, this older one backs off unconditionally,
-    /// whether it was about to retry a failed persist or a failed
-    /// transport call, rather than replaying stale commands after
-    /// something newer already superseded them.
-    private func persistThenExecuteCatalogCommands(
-        _ commands: [BurlyPhoneSyncMachine.Command],
-        epoch: Int,
-        retriesRemaining: Int
-    ) async {
+    /// Delivers `.catalogChanged` (state advances only through
+    /// `persistThenCommit` — round 4's root cause) and executes the
+    /// resulting commands, surfacing and retrying either half's failure
+    /// (round 2, finding 4).
+    ///
+    /// Round 4: a **persist** failure retry RE-DELIVERS the event rather
+    /// than replaying a captured candidate. Under commit-after-persist, a
+    /// failed persist means the event never happened — nothing was
+    /// committed in memory or on disk — so re-delivering derives a fresh
+    /// candidate from whatever the CURRENT committed truth is by retry
+    /// time (an interleaved launch push, an ingest's ack — all included),
+    /// and still bumps the version exactly once per edit, because the
+    /// failed attempt's bump never existed anywhere. Replaying a stale
+    /// candidate instead would clobber every commit that landed in
+    /// between and re-mint identities the interleaved events already
+    /// used. (A **transport** failure retry, below, is the opposite case:
+    /// its state IS committed, so it replays the committed commands.)
+    ///
+    /// Every entry — first attempt and every retry — re-checks `epoch`
+    /// (round 2, finding 5): once a newer edit's batch has run, this one
+    /// backs off; the newer batch's snapshot is built from store truth and
+    /// already carries this edit's content.
+    private func runCatalogBatch(epoch: Int, retriesRemaining: Int) async {
         guard epoch == catalogBatchEpoch else { return }
+        let commands: [BurlyPhoneSyncMachine.Command]
         do {
-            try persistRuntimeState()
+            commands = try deliver(.catalogChanged)
         } catch {
             lastCatalogPushFailure = error
             guard retriesRemaining > 0 else { return }
@@ -547,7 +565,7 @@ public final class PhoneSyncCoordinator {
             let quietPeriod = configuration.catalogEditDebounce
             mostRecentCatalogRetryTaskForTesting = Task { [weak self] in
                 try? await scheduler.sleep(for: quietPeriod)
-                await self?.persistThenExecuteCatalogCommands(commands, epoch: epoch, retriesRemaining: retriesRemaining - 1)
+                await self?.runCatalogBatch(epoch: epoch, retriesRemaining: retriesRemaining - 1)
             }
             return
         }
@@ -560,6 +578,19 @@ public final class PhoneSyncCoordinator {
         retriesRemaining: Int
     ) async {
         guard epoch == catalogBatchEpoch else { return }
+        // Round 4 audit: the epoch only tracks catalog-edit supersession —
+        // a NON-catalog push (launch, install flip, daily) can also mint a
+        // newer transfer between this batch's transport failure and its
+        // retry, and replaying then would resurrect a transfer that newer
+        // push's own cancel already retired (the same resurrection round
+        // 2's finding 5 closed for catalog-after-catalog, via a trigger
+        // the epoch cannot see). Generations are strictly monotonic and
+        // minted only through `deliver`'s commit, so "this batch's
+        // transmit still names the newest generation" is an exact
+        // freshness check: on a mismatch, something newer is already the
+        // live transfer and this batch has nothing left to contribute.
+        guard let batchGeneration = transmitGeneration(in: commands),
+              batchGeneration == state.lastTransferGeneration else { return }
         do {
             try await execute(commands, originalPayload: nil)
             lastCatalogPushFailure = nil
@@ -575,6 +606,19 @@ public final class PhoneSyncCoordinator {
         }
     }
 
+    /// The generation of the batch's `transmitSnapshot`, if any — the
+    /// identity `executeCatalogCommands`' freshness guard compares against
+    /// the committed `lastTransferGeneration`. Every `.catalogChanged`
+    /// batch carries exactly one.
+    private func transmitGeneration(in commands: [BurlyPhoneSyncMachine.Command]) -> Int? {
+        for command in commands {
+            if case let .transmitSnapshot(_, generation) = command {
+                return generation
+            }
+        }
+        return nil
+    }
+
     // MARK: - Command execution
 
     @discardableResult
@@ -586,21 +630,40 @@ public final class PhoneSyncCoordinator {
 
     /// Runs one event through the machine and persists the resulting state
     /// before handing commands back — binding contract item 5, applied
-    /// uniformly to every event rather than only the ack-bearing one: the
-    /// state this method persists is always current the instant it
-    /// changes, which is a strictly stronger guarantee than "persisted
-    /// before the specific publish it produced" and needs no per-event-type
-    /// bookkeeping to get right.
+    /// uniformly to every event rather than only the ack-bearing one.
+    ///
+    /// Round 4 (§2/§3 root cause): the machine runs on a **local copy** of
+    /// the state, and `self.state` advances only after `save` has both
+    /// validated and durably written that copy — persistence is the source
+    /// of truth, and in-memory state never advances past validly-persisted
+    /// state. Before this, `machine.handle` mutated `self.state` in place
+    /// and only THEN persisted: a rejected save (the identity ceiling) or a
+    /// failed save (I/O) left the runtime holding — and separately-scheduled
+    /// work like a pending digest fire *observing* — a value that was never
+    /// valid or never durable. That is the round-4 review's exact
+    /// ceiling+1-to-the-digest-publisher trace. A failed persist now means
+    /// the event never happened, in memory exactly as on disk; the thrown
+    /// error tells the caller precisely that, and re-attempting the event
+    /// later re-derives everything from committed truth.
     private func deliver(_ event: BurlyPhoneSyncMachine.Event) throws -> [BurlyPhoneSyncMachine.Command] {
-        let commands = machine.handle(event, &state, now: clock.now)
-        try persistRuntimeState()
+        var candidate = state
+        let commands = machine.handle(event, &candidate, now: clock.now)
+        try persistThenCommit(PhoneSyncRuntimeState(machineState: candidate, lastDailyPushAt: lastDailyPushAt))
         return commands
     }
 
-    private func persistRuntimeState() throws {
-        try statePersisting.save(
-            PhoneSyncRuntimeState(machineState: state, lastDailyPushAt: lastDailyPushAt)
-        )
+    /// Round 4: THE single point where the coordinator's persisted runtime
+    /// state (`state` + `lastDailyPushAt`) is allowed to advance. `save`
+    /// validates the identity bounds and durably writes first; only then
+    /// is the candidate adopted in memory. Every mutation of those two
+    /// properties outside `init` and the (equally persist-first)
+    /// `resetSyncStateForRePair` goes through here, so no reader — a
+    /// pending digest fire, `currentMachineState`, a later relaunch — can
+    /// ever observe a value persistence did not confirm.
+    private func persistThenCommit(_ candidate: PhoneSyncRuntimeState) throws {
+        try statePersisting.save(candidate)
+        state = candidate.machineState
+        lastDailyPushAt = candidate.lastDailyPushAt
     }
 
     /// Internal, not `private` — a deliberate test seam (`@testable import`)
@@ -739,6 +802,13 @@ public final class PhoneSyncCoordinator {
         // too (it carries `snapshotVersion`) — gated like the transport.
         guard syncStateUnrecoverable == false else { return }
         let snapshotVersion = state.latestSnapshotVersion
+        // Round 4, §3 belt-and-suspenders: with commit-after-persist
+        // (`deliver`/`persistThenCommit`), `state` can never hold an
+        // out-of-domain version — but this is the LAST boundary before an
+        // identity reaches the watch through the digest channel, so it
+        // refuses independently, exactly as `execute` and the transport
+        // path are covered by `save`'s validation.
+        guard snapshotVersion >= 0, snapshotVersion <= maximumPhoneSyncIdentity else { return }
         let ackedSessionIDs = Set(state.ackAge.keys)
         guard let payload = try? SessionDigestGenerator.generate(
             from: store,

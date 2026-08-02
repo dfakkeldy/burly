@@ -332,6 +332,111 @@ struct PushTriggerTests {
         #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 2, "B's transfer remains outstanding, untouched by the stale retry")
     }
 
+    @Test("round 4, §3 — a rejected catalog persist never leaves ceiling+1 in memory: a digest queued BEFORE the failed edit publishes the last VALID version, and nothing above the ceiling ever reaches the publisher")
+    func rejectedOverflowPersistNeverLeaksCeilingPlusOneToTheDigestPublisher() async throws {
+        let persisting = InMemoryPhoneSyncStatePersisting(PhoneSyncRuntimeState(
+            machineState: .init(latestSnapshotVersion: maximumPhoneSyncIdentity, lastTransferGeneration: 1)
+        ))
+        let transport = FakeTransport()
+        let digestPublisher = FakeDigestPublisher()
+        let scheduler = ManualTriggerScheduler()
+        let coordinator = PhoneSyncCoordinator(
+            store: try makePhoneStore(), transport: transport, digestPublisher: digestPublisher,
+            statePersisting: persisting, clock: TestClock(), scheduler: scheduler,
+            // Short catalog debounce, long digest debounce: the failing
+            // catalog edit fires INSIDE the digest's quiet period. Zero
+            // retries: an overflow is deterministic, and no untracked
+            // retry task should exist in this pin.
+            configuration: .init(catalogEditDebounce: .seconds(1), digestPublishDebounce: .seconds(5), catalogPushRetryCount: 0)
+        )
+
+        // Queue a digest while the version sits at the (valid) ceiling —
+        // it fires only at t=5, reading state at FIRE time (major 5).
+        try await coordinator.historyDidChange()
+        await scheduler.waitUntilWaiting(count: 1)
+
+        // A catalog edit whose delivery is REJECTED at persist time (the
+        // version increment would pass the ceiling). Pre-fix,
+        // machine.handle had already committed ceiling+1 to the shared
+        // in-memory state before persistence could refuse it — and the
+        // already-queued digest then read and published that value
+        // (BurlyDigestPayloadDTO only requires a nonnegative version).
+        await coordinator.catalogDidChange()
+        await scheduler.waitUntilWaiting(count: 2)
+        scheduler.advance(by: .seconds(1)) // catalog fires; persist rejects
+        // Deterministic completion signal: the surfaced failure is set
+        // synchronously at the end of the failed delivery — a positive
+        // condition polled to arrival, not a wall-clock "prove absence"
+        // wait (the negative assertions below run strictly after it).
+        while coordinator.lastCatalogPushFailure == nil {
+            await Task.yield()
+        }
+
+        #expect(
+            coordinator.currentMachineState.latestSnapshotVersion == maximumPhoneSyncIdentity,
+            "ceiling+1 must never exist in memory — a rejected persist means the event never happened"
+        )
+
+        // NOW the queued digest fires, inside the failed edit's aftermath.
+        scheduler.advance(by: .seconds(4)) // t=5: the digest's own deadline
+        await coordinator.drainPendingDebounces()
+
+        let published = await digestPublisher.published
+        #expect(published.count == 1, "the digest itself still publishes — history genuinely changed")
+        #expect(
+            published.first?.snapshotVersion == maximumPhoneSyncIdentity,
+            "it must carry the last validly-persisted version, not the rejected increment"
+        )
+        #expect(
+            published.allSatisfy { $0.snapshotVersion <= maximumPhoneSyncIdentity },
+            "nothing above the ceiling may EVER reach the digest publisher"
+        )
+        #expect(await transport.transmissions.isEmpty, "and the snapshot transport stays untouched, as in round 3")
+    }
+
+    @Test("round 4 audit — a catalog transport retry backs off when a NON-catalog push superseded its transfer: generation freshness, not just the catalog epoch")
+    func staleCatalogRetryBacksOffAfterANonCatalogSupersession() async throws {
+        let store = try makePhoneStore()
+        let transport = FakeTransport()
+        let scheduler = ManualTriggerScheduler()
+        let coordinator = makeCoordinator(
+            store: store, transport: transport, scheduler: scheduler,
+            configuration: .init(catalogEditDebounce: .seconds(1), digestPublishDebounce: .seconds(1), catalogPushRetryCount: 1)
+        )
+
+        // Catalog edit A: state commits (version 1, generation 1), but the
+        // transport attempt fails — a retry of A's committed commands is
+        // scheduled.
+        await transport.setFailNextTransmitCount(1)
+        await coordinator.catalogDidChange()
+        let editWaiterID = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(1))
+        await coordinator.drainPendingDebounces()
+        #expect(await transport.transmissions.isEmpty, "A's only transport attempt failed")
+        #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 1)
+        let retryWaiterID = await scheduler.waitForFreshWaiter(excluding: [editWaiterID])
+        let staleRetryTask = try #require(coordinator.mostRecentCatalogRetryTaskForTesting)
+
+        // A NON-catalog push supersedes A's transfer: launch cancels
+        // (1, 1) and transmits (1, 2). Crucially, `catalogBatchEpoch` does
+        // NOT change here — pre-fix, that epoch was the retry's ONLY
+        // freshness signal, so the retry replayed transmit(1, 1) and
+        // resurrected the transfer this launch push just retired.
+        try await coordinator.applicationDidLaunch()
+        #expect(await transport.cancellations.map(\.generation) == [1])
+        #expect(await transport.transmissions.map(\.generation) == [2])
+        #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 2)
+
+        // Release A's retry and await its completion (deterministic, round
+        // 3 §6 discipline) — post-fix it must be a complete no-op.
+        scheduler.resumeWaiter(id: retryWaiterID)
+        await staleRetryTask.value
+
+        #expect(await transport.transmissions.map(\.generation) == [2], "the retry must NOT resurrect generation 1 after the launch push superseded it")
+        #expect(await transport.cancellations.map(\.generation) == [1], "and must issue no new cancel either")
+        #expect(coordinator.currentMachineState.outstandingSnapshot?.generation == 2, "the launch push's transfer remains the live one")
+    }
+
     // MARK: - Digest-publish coalescing (binding contract item 6)
 
     @Test("a burst of history-changed signals coalesces into one digest publish carrying the latest acked set")

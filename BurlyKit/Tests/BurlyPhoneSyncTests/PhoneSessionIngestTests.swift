@@ -365,6 +365,10 @@ final class OrderRecordingStatePersisting: PhoneSyncStatePersisting, @unchecked 
         stored = state
         log.record(.persisted(state))
     }
+
+    func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws {
+        try save(state)
+    }
 }
 
 struct OrderRecordingDigestPublisher: PhoneDigestPublishing {

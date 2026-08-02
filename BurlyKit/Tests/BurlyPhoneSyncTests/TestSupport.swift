@@ -231,4 +231,12 @@ final class FailableStatePersisting: PhoneSyncStatePersisting, @unchecked Sendab
         stored = state
         lock.unlock()
     }
+
+    /// Shares `failNextSaveCount` with `save` — an in-memory replacement
+    /// is inherently atomic, so this double has nothing two-phase to
+    /// model; tests pinning the file-backed reset atomicity (round 4, §2)
+    /// use the real `FileBackedPhoneSyncStatePersisting` instead.
+    func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws {
+        try save(state)
+    }
 }

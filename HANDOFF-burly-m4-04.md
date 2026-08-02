@@ -547,3 +547,93 @@ Status: 3 round-3 fixes done + pinned + revert-verified, 703 tests green,
 release build clean. Committed (not pushed).
 Next action: hand off for dispatcher re-review; no local work pending.
 ```
+
+## 2026-08-02 — review round 4 fix pass (root cause: persistence is the source of truth), FINAL round
+
+Round 4 (`.scratch/m4-04-review-4.md`) on `94630dd`: quiescence + pins
+CONFIRMED closed; two new criticals (§2 reset laundering, §3 ceiling+1 to
+digest publisher) sharing one root cause — in-memory state advancing
+before persistence confirms it. Fixed the root cause, not the symptoms:
+
+- **Root cause — commit-after-persist.** `deliver(_:)` now runs
+  `machine.handle` on a LOCAL COPY; new `persistThenCommit(_:)` is the
+  single point where `state`/`lastDailyPushAt` advance, and only after
+  `save` validated + durably wrote. A failed/rejected persist means the
+  event never happened, in memory as on disk — no reader (pending digest
+  fire, `currentMachineState`, relaunch) can ever observe an unpersisted
+  or invalid value. `dailyPushIfDue`'s bookkeeping goes through the same
+  point. Catalog persist-failure retries now RE-DELIVER `.catalogChanged`
+  (nothing was committed, so re-delivery is still exactly one bump per
+  edit and derives from current committed truth) instead of replaying a
+  stale candidate; transport-failure retries still replay committed
+  commands. §3 pin: `rejectedOverflowPersistNeverLeaksCeilingPlusOne...`
+  in PushTriggerTests — digest queued at the ceiling, catalog edit's
+  persist rejects, queued digest fires: publisher gets the ceiling, never
+  ceiling+1; in-memory never exceeds ceiling. Belt-and-suspenders bound
+  check added in `publishDigestNow` (last boundary before the watch).
+- **§2 — atomic reset persistence.** New protocol requirement
+  `replaceWithFreshIdentityDomain(_:)`: all records commit or none; on
+  error, durable state is indistinguishable from "reset never happened."
+  File-backed impl reverses the write order (primary FIRST, atomically —
+  nothing on disk changes until it lands; then the high-water log
+  atomically REPLACED with a single record, not appended — the old log
+  belongs to the old domain). Crash between the two writes = valid
+  primary + old corrupt log = reset committed (primary is authoritative),
+  never half-recovered. Reset now uses it instead of `save`. Pin:
+  `partiallyFailedResetDoesNotLaunderAZeroAcrossRelaunch` — the
+  reviewer's exact scenario (unreadable primary + absent log; primary dir
+  made read-only so the primary write genuinely fails while the log dir
+  stays writable): relaunch is STILL unrecoverable, no orphaned (0,0)
+  record exists, nothing transmitted.
+- **Audit (same principle).** Found one more stale-replay hole: the
+  catalog TRANSPORT retry's freshness was only `catalogBatchEpoch`, which
+  a NON-catalog push (launch/install/daily) never bumps — a retry could
+  resurrect a transfer the launch push's cancel had retired (round-2
+  finding 5's bug class via a trigger the epoch can't see). Fixed with an
+  exact generation-freshness guard in `executeCatalogCommands` (batch's
+  transmit generation must still equal committed `lastTransferGeneration`).
+  Pin: `staleCatalogRetryBacksOffAfterANonCatalogSupersession`. Remaining
+  in-memory-only fields (pendingInstallPushRetry, lastCatalogPushFailure,
+  catalogBatchEpoch, isWatchAppInstalled, the flags) are deliberately
+  unpersisted bookkeeping — no divergence class. Store writes are
+  SwiftData transactions (rounds 1–2).
+
+Test doubles gained the new protocol method (FailableStatePersisting,
+OrderRecordingStatePersisting, the two local unrecoverable doubles).
+
+Verification: `swift test` 706/73 green (+3 pins); migration spike 2/2;
+`swift build -c release` clean; QuietPeriodCoalescerTests /
+PushTriggerTests / SyncUnrecoverableQuiescenceTests each 5x green, no
+wall-clock waits. Revert-verified all three (cp-backup, revert, rerun 3x,
+restore): §3 revert → publisher receives 1000000001, in-memory holds it;
+§2 revert (reset via old `save`) → orphaned (0,0) log record, relaunch
+operational, generation-1 transmitted; audit revert → transmissions
+[2, 1] resurrection. All deterministic 3/3.
+
+Escalation input (requested): yes — the two-file sidecar+log scheme is
+the recurring defect source; a single append-only journal would eliminate
+the class. Sketch in the fix-round report (dispatcher has it); short
+form: ONE file, one line per save `{seq, fullState, checksum}`, atomic
+appends + atomic-replace compaction and reset; load = newest valid line,
+identities = max over all valid lines; unrecoverable = file exists with
+zero valid lines. Kills the two-file ordering, orphan records, the
+defensive merge, and the reset two-phase problem. Commit-after-persist
+(this round) is independent of the storage primitive and stays either way.
+
+Commit: see the commit following this HANDOFF update.
+
+Next:
+- Hand off for dispatcher re-review (final round). Out-of-scope
+  follow-ups unchanged: app wiring + real WCSession conformers
+  (m4-03/m4-06); host app surfaces `syncStateUnrecoverable` and offers
+  the re-pair flow calling `resetSyncStateForRePair()`.
+
+Resume:
+```
+Worktree: /Users/dfakkeldy/Developer/worktrees/burly-m4-04
+Branch: task/burly-m4-04 (… → 387549b → 94630dd → this round 4 fix)
+Status: round-4 root cause fixed + 3 pins + revert-verified, 706 tests
+green, release build clean. Committed (not pushed).
+Next action: dispatcher re-review; if new criticals in persistence
+machinery, escalate to Dan with the single-journal sketch in this entry.
+```
