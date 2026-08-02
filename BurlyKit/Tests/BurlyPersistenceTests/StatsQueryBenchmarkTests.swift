@@ -32,6 +32,7 @@ import BurlyFixtures
 let statsBenchmarkIsEnabled =
     ProcessInfo.processInfo.environment["BURLY_RUN_STATS_BENCHMARK"] == "1"
 
+@MainActor
 @Suite(
     "m6-01 — 50k-SetRecord stats query benchmark",
     .enabled(
@@ -169,6 +170,7 @@ private func formatBytes(_ bytes: UInt64) -> String {
 
 // MARK: - Seeding
 
+@MainActor
 private enum BenchmarkFixture {
     struct SeedResult {
         let sessionCount: Int

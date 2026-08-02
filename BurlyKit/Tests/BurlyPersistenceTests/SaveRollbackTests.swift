@@ -43,6 +43,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m1-06 round E — a failed save rolls back")
 struct SaveRollbackTests {
 

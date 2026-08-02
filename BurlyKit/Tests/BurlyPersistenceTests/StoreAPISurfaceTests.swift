@@ -15,6 +15,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§1 #3 — archive, never delete; store API surface")
 struct StoreAPISurfaceTests {
 

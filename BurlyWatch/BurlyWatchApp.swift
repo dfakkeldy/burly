@@ -40,6 +40,7 @@ private struct RootView: View {
         }
     }
 
+    @MainActor
     private static func resolveStore() -> Result<BurlyStore, Error> {
         #if DEBUG
         // Once a scenario is recognized, WatchDemoSeed fails closed: its

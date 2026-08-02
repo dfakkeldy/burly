@@ -6,7 +6,12 @@ import BurlyCore
 public enum SeedLoader {
     /// Applies a validated seed and returns the number of newly inserted
     /// exercises. Existing UUIDs are deliberately left completely untouched.
+    ///
+    /// `@MainActor` (m4-04 review round 1, blocker 2 ripple): `store` is
+    /// now compiler-enforced main-actor-isolated, so anything calling into
+    /// it must be too.
     @discardableResult
+    @MainActor
     public static func apply(
         _ seed: CatalogSeed,
         to store: SwiftDataStore
@@ -18,6 +23,7 @@ public enum SeedLoader {
     /// its exercises. Returning the seed gives the caller the co-versioned
     /// alias table for import matching without a second resource read.
     @discardableResult
+    @MainActor
     public static func applyBundled(to store: SwiftDataStore) throws -> CatalogSeed {
         let seed = try CatalogSeed.loadBundled()
         try apply(seed, to: store)

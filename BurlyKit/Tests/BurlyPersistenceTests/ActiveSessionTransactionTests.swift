@@ -26,6 +26,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m1-06 B1 — active-session transaction")
 struct ActiveSessionTransactionTests {
 

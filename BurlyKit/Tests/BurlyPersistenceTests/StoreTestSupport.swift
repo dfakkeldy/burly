@@ -158,6 +158,7 @@ final class TestClock: WallClock, @unchecked Sendable {
 /// review, m2), so without a fixed clock every `RoutineData` equality
 /// assertion in this target would compare a fixture timestamp against
 /// wall-clock now. Pass a clock explicitly when the test is *about* time.
+@MainActor
 func makeStore(
     _ kind: BurlyStoreKind = .phone,
     clock: any WallClock = TestClock()

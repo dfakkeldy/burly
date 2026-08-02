@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Navigation stubs for the watch home shell (spec §2). Session flow screens
-// (start, logging) are later tasks -- these routes exist only so Start and
-// the list-end "Empty session" action push to something real instead of
-// being dead taps.
+// Navigation routes for the watch home shell (spec §2). Start and the
+// list-end "Empty session" action push these values; ContentView resolves
+// them to a real session (SessionEntryView, m2-03).
 
 import Foundation
 

@@ -25,6 +25,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§1 #5 — versioned schema and migration plan wiring")
 struct MigrationPlanTests {
 

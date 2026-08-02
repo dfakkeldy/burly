@@ -15,11 +15,31 @@ import BurlyCore
 import BurlyPersistence
 
 #if DEBUG
+@MainActor
 enum WatchDemoSeed {
     /// Matched literally (not shared code) by BurlyWatchUITests.swift -- the
     /// UI test target runs out-of-process and can only reach this app
     /// through `XCUIApplication.launchEnvironment`.
     static let environmentKey = "BURLY_WATCH_UI_TEST_SCENARIO"
+
+    /// Optional companion key (m2-03 review findings 6-9): names a
+    /// `FaultInjectingStore.Fault` to wrap the scenario's store with, so
+    /// BurlyWatchUITests can exercise the save-failure recovery paths --
+    /// blocking retry UI, no success haptic on failure, Finish/Discard/
+    /// placeholder-creation failure handling -- deterministically, without
+    /// a real storage fault (which cannot be induced reliably in a UI
+    /// test). Ignored unless `environmentKey` is also present and
+    /// recognized.
+    static let faultEnvironmentKey = "BURLY_WATCH_UI_TEST_FAULT"
+    /// How many of the faulting method's calls succeed before failures
+    /// start (e.g. 1 lets Start's own `saveActiveSession` through so the
+    /// logging screen can be reached before a later save fails).
+    /// Default 1 when unset.
+    static let faultSuccessesEnvironmentKey = "BURLY_WATCH_UI_TEST_FAULT_SUCCESSES"
+    /// How many consecutive failures the fault produces before calls start
+    /// succeeding again, so a test can prove Retry recovers. Default 1
+    /// when unset.
+    static let faultCountEnvironmentKey = "BURLY_WATCH_UI_TEST_FAULT_COUNT"
 
     enum Scenario: String {
         /// Two routines built from the shipped catalog seed (§9); one has a
@@ -35,6 +55,12 @@ enum WatchDemoSeed {
         /// must surface as an error state, not fall through to the
         /// on-device store and not render a silently empty/sparse fixture.
         case brokenSeed
+        /// `.routines`, plus a *second*, already-`.active` session left in
+        /// flight for Push/Pull (m2-03 review finding 1, blocker). Exists
+        /// so BurlyWatchUITests can drive a second `Start` into the §4
+        /// finish-or-discard recovery choice instead of an unsaved logging
+        /// screen -- see `SessionConflictView`.
+        case activeConflict
     }
 
     /// Thrown by a recognized scenario's seed construction. Never converted
@@ -49,29 +75,72 @@ enum WatchDemoSeed {
         /// contract violation, not "no routines yet" -- it must not render
         /// as the ordinary empty-store waiting state.
         case catalogMissingExercise(name: String)
+        /// The launch-environment key was present but its raw value didn't
+        /// match any `Scenario` case -- a typo on either side of the
+        /// app/test boundary (m2-03 review finding 12, mirroring
+        /// BurlyPhone's PhoneDemoSeed fix, m5-01 review round 2 finding 2).
+        /// This is distinct from the key being absent: an absent key
+        /// legitimately falls through to the on-device store, but a
+        /// present-and-wrong value must not -- the same fail-closed
+        /// posture as `.intentionallyBroken` and
+        /// `.catalogMissingExercise`, just for a mistake one step earlier.
+        case unrecognizedScenario(String)
     }
 
-    /// `nil` for any launch that isn't one of these scenarios, so the
-    /// caller falls through to the real on-device store.
+    /// `nil` **only** when the launch-environment key is absent entirely,
+    /// so the caller falls through to the real on-device store.
     ///
-    /// Once a scenario IS recognized, this fails **closed**: seed
-    /// construction or seeding errors come back as `.failure`, never as
-    /// `nil` (m2-01 review finding 2.1). The old `try?` here turned a
-    /// broken fixture into "no scenario requested," which the caller then
-    /// silently resolved against the real on-device store -- exactly the
-    /// leak this type exists to prevent.
+    /// Once the key is present, this fails **closed**, in two separate ways
+    /// (m2-03 review finding 12; mirrors BurlyPhone's PhoneDemoSeed fix):
+    ///
+    /// - the raw value doesn't match any `Scenario` case (a typo) -- comes
+    ///   back as `.failure(.unrecognizedScenario(raw))`;
+    /// - a recognized scenario's seed construction throws (m2-01 review
+    ///   finding 2.1) -- comes back as `.failure(error)`.
+    ///
+    /// The original bug collapsed both of those into the same `nil` the
+    /// absent-key case returns, via `guard let raw = ..., let scenario =
+    /// Scenario(rawValue: raw) else { return nil }` -- a typo'd scenario
+    /// name silently fell through to the real on-device store exactly like
+    /// the pre-fix `try?` shape did for a broken fixture. Splitting the two
+    /// `guard`s is what keeps "the key was set to *something*" from ever
+    /// resolving to "the key wasn't set."
     static func requestedStore() -> Result<BurlyStore, Error>? {
-        guard
-            let raw = ProcessInfo.processInfo.environment[environmentKey],
-            let scenario = Scenario(rawValue: raw)
-        else {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey] else {
             return nil
         }
+        guard let scenario = Scenario(rawValue: raw) else {
+            return .failure(SeedError.unrecognizedScenario(raw))
+        }
         do {
-            return .success(try makeStore(for: scenario))
+            let store = try makeStore(for: scenario)
+            return .success(applyingFaultIfRequested(to: store))
         } catch {
             return .failure(error)
         }
+    }
+
+    /// Wraps `store` in a `FaultInjectingStore` when `faultEnvironmentKey`
+    /// names a recognized fault -- otherwise returns `store` untouched. An
+    /// unrecognized or absent fault name is simply ignored: the fault axis
+    /// is a test-only addition to a scenario, not a scenario of its own, so
+    /// it does not get the same fail-closed treatment `Scenario` does.
+    private static func applyingFaultIfRequested(to store: SwiftDataStore) -> BurlyStore {
+        let env = ProcessInfo.processInfo.environment
+        guard
+            let faultRaw = env[faultEnvironmentKey],
+            let fault = FaultInjectingStore.Fault(rawValue: faultRaw)
+        else {
+            return store
+        }
+        let successes = env[faultSuccessesEnvironmentKey].flatMap(Int.init) ?? 1
+        let count = env[faultCountEnvironmentKey].flatMap(Int.init) ?? 1
+        return FaultInjectingStore(
+            wrapping: store,
+            fault: fault,
+            successesBeforeFailing: successes,
+            failuresToProduce: count
+        )
     }
 
     private static func makeStore(for scenario: Scenario) throws -> SwiftDataStore {
@@ -79,8 +148,14 @@ enum WatchDemoSeed {
             throw SeedError.intentionallyBroken
         }
         let store = try SwiftDataStore(kind: .watch, at: .inMemory)
-        if scenario == .routines {
+        switch scenario {
+        case .routines:
             try seedRoutines(into: store)
+        case .activeConflict:
+            try seedRoutines(into: store)
+            try seedActiveConflict(into: store)
+        case .empty, .brokenSeed:
+            break
         }
         return store
     }
@@ -130,6 +205,181 @@ enum WatchDemoSeed {
             origin: .live,
             items: [SessionItemData(exerciseID: squatID, order: 0)]
         ))
+
+        // m2-03: a seeded ExerciseLastPerformance digest for Back Squat, so
+        // BurlyWatchUITests can assert the §2 ghost row / prefill ladder
+        // against known numbers, set index by set index. Bench Press and
+        // Pull-Up deliberately get NO digest -- §2 acceptance #5's other
+        // half ("absent digest renders empty ghosts, no crash, no stale
+        // data") needs an exercise that has never had one.
+        try store.applyDigest(
+            lastPerformance: [
+                ExerciseLastPerformanceData(
+                    exerciseID: squatID,
+                    performedAt: threeDaysAgo,
+                    sets: [
+                        SetSnapshot(weight: Weight(kg: 100), reps: 8),
+                        SetSnapshot(weight: Weight(kg: 102.5), reps: 7),
+                        SetSnapshot(weight: Weight(kg: 105), reps: 6)
+                    ]
+                )
+            ],
+            ackedSessionIDs: []
+        )
     }
+
+    /// m2-03 review finding 1 (blocker): leaves Push/Pull `.active` and
+    /// in flight, exactly the state a killed/backgrounded-mid-workout watch
+    /// would leave behind, so a UI test can attempt a *second* Start (on
+    /// Leg Day) and assert it lands on `SessionConflictView` -- never an
+    /// unsaved logging screen -- and that Finish/Discard there resolve the
+    /// conflict and let the originally-requested Start through.
+    private static func seedActiveConflict(into store: SwiftDataStore) throws {
+        guard let pushPull = try store.routines(includingArchived: false)
+            .first(where: { $0.name == "Push/Pull" })
+        else {
+            throw SeedError.catalogMissingExercise(name: "Push/Pull")
+        }
+        let active = SessionBuilder.session(from: pushPull, clock: SystemWallClock())
+        try store.saveActiveSession(active)
+    }
+}
+
+/// Wraps a real `SwiftDataStore` and deterministically fails a chosen
+/// method for a chosen number of calls, so BurlyWatchUITests can exercise
+/// m2-03 review findings 6-9's save-failure recovery paths -- a lifter
+/// mid-workout must never be lied to about whether their sets are saved,
+/// and that is very hard to prove from a UI test against a real storage
+/// layer, which essentially never fails on the simulator. DEBUG-only, like
+/// the rest of this file; every method not named by `fault` forwards to
+/// `wrapped` untouched.
+@MainActor
+final class FaultInjectingStore: BurlyStore {
+    enum Fault: String {
+        case saveActiveSession
+        case createExercise
+        case deleteSession
+    }
+
+    struct InjectedFailure: Error, Equatable, CustomStringConvertible {
+        let fault: Fault
+        var description: String { "Injected failure for testing: \(fault.rawValue)" }
+    }
+
+    private let wrapped: SwiftDataStore
+    private let fault: Fault
+    private var successesBeforeFailing: Int
+    private var failuresToProduce: Int
+
+    init(
+        wrapping store: SwiftDataStore,
+        fault: Fault,
+        successesBeforeFailing: Int,
+        failuresToProduce: Int
+    ) {
+        self.wrapped = store
+        self.fault = fault
+        self.successesBeforeFailing = successesBeforeFailing
+        self.failuresToProduce = failuresToProduce
+    }
+
+    /// Call this first from every method named by a `Fault` case. Throws
+    /// once `successesBeforeFailing` calls to *that* method have gone by,
+    /// for up to `failuresToProduce` calls -- then reverts to forwarding,
+    /// so a UI test's Retry can prove recovery.
+    private func maybeFail(_ which: Fault) throws {
+        guard which == fault else { return }
+        guard successesBeforeFailing <= 0 else {
+            successesBeforeFailing -= 1
+            return
+        }
+        guard failuresToProduce > 0 else { return }
+        failuresToProduce -= 1
+        throw InjectedFailure(fault: which)
+    }
+
+    // MARK: - Exercises
+
+    func createExercise(_ exercise: ExerciseData) throws {
+        try maybeFail(.createExercise)
+        try wrapped.createExercise(exercise)
+    }
+    func exercise(id: UUID) throws -> ExerciseData? { try wrapped.exercise(id: id) }
+    func exercises(includingArchived: Bool) throws -> [ExerciseData] {
+        try wrapped.exercises(includingArchived: includingArchived)
+    }
+    func archiveExercise(id: UUID, at date: Date) throws { try wrapped.archiveExercise(id: id, at: date) }
+
+    // MARK: - Routines
+
+    func createRoutine(_ routine: RoutineData) throws { try wrapped.createRoutine(routine) }
+    func routine(id: UUID) throws -> RoutineData? { try wrapped.routine(id: id) }
+    func routines(includingArchived: Bool) throws -> [RoutineData] {
+        try wrapped.routines(includingArchived: includingArchived)
+    }
+    func archiveRoutine(id: UUID, at date: Date) throws { try wrapped.archiveRoutine(id: id, at: date) }
+    func deleteRoutine(id: UUID) throws { try wrapped.deleteRoutine(id: id) }
+    func updateRoutine(_ routine: RoutineData) throws { try wrapped.updateRoutine(routine) }
+    func applyRoutineSnapshot(_ routine: RoutineData) throws { try wrapped.applyRoutineSnapshot(routine) }
+    func hasRoutines() throws -> Bool { try wrapped.hasRoutines() }
+    @discardableResult
+    func applyReplicatedSession(_ session: SessionData) throws -> Int {
+        try wrapped.applyReplicatedSession(session)
+    }
+    @discardableResult
+    func applyReplicatedSession(_ session: SessionData, upsertingPlaceholderExercises placeholders: [ExerciseData]) throws -> Int {
+        try wrapped.applyReplicatedSession(session, upsertingPlaceholderExercises: placeholders)
+    }
+    func allLoggedSetSlices() throws -> [SetRecordSlice] { try wrapped.allLoggedSetSlices() }
+
+    // MARK: - Sessions
+
+    func createSession(_ session: SessionData) throws { try wrapped.createSession(session) }
+    func session(id: UUID) throws -> SessionData? { try wrapped.session(id: id) }
+    func sessions() throws -> [SessionData] { try wrapped.sessions() }
+    func sessions(state: SessionState) throws -> [SessionData] { try wrapped.sessions(state: state) }
+    func loggedSessionCount() throws -> Int { try wrapped.loggedSessionCount() }
+    @discardableResult
+    func deleteSession(id: UUID) throws -> UUID? {
+        try maybeFail(.deleteSession)
+        return try wrapped.deleteSession(id: id)
+    }
+
+    // MARK: - Active session
+
+    func saveActiveSession(_ active: ActiveSession) throws {
+        try maybeFail(.saveActiveSession)
+        try wrapped.saveActiveSession(active)
+    }
+    func activeSession(id: UUID) throws -> ActiveSession? { try wrapped.activeSession(id: id) }
+    func resumableActiveSession() throws -> ActiveSession? { try wrapped.resumableActiveSession() }
+    @discardableResult
+    func applyPhoneEdit(_ session: SessionData) throws -> Int { try wrapped.applyPhoneEdit(session) }
+
+    // MARK: - Digests
+
+    func lastPerformance(exerciseID: UUID) throws -> ExerciseLastPerformanceData? {
+        try wrapped.lastPerformance(exerciseID: exerciseID)
+    }
+    func applyDigest(lastPerformance: [ExerciseLastPerformanceData], ackedSessionIDs: [UUID]) throws {
+        try wrapped.applyDigest(lastPerformance: lastPerformance, ackedSessionIDs: ackedSessionIDs)
+    }
+
+    // MARK: - Watch working set
+
+    func loggedSessionsAwaitingAck() throws -> [SessionData] { try wrapped.loggedSessionsAwaitingAck() }
+
+    // MARK: - Stats
+
+    func loggedSetSlices(exerciseID: UUID, since: Date?, through: Date?) throws -> [SetRecordSlice] {
+        try wrapped.loggedSetSlices(exerciseID: exerciseID, since: since, through: through)
+    }
+    func loggedSetSlices(window: TrailingWindow, through asOf: Date, calendar: Calendar) throws -> [SetRecordSlice] {
+        try wrapped.loggedSetSlices(window: window, through: asOf, calendar: calendar)
+    }
+    func loggedSessionDates(since: Date, through: Date?) throws -> [Date] {
+        try wrapped.loggedSessionDates(since: since, through: through)
+    }
+    func allLoggedSessionDates() throws -> [Date] { try wrapped.allLoggedSessionDates() }
 }
 #endif

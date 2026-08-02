@@ -18,6 +18,7 @@ import BurlyCore
 import BurlyPersistence
 
 #if DEBUG
+@MainActor
 enum PhoneDemoSeed {
     /// Matched literally (not shared code) by BurlyPhoneUITests.swift — the
     /// UI test target runs out-of-process and can only reach this app
@@ -156,17 +157,100 @@ enum PhoneDemoSeed {
         try store.createRoutine(legDay)
         try store.createRoutine(pushPull)
 
-        let threeDaysAgo = Calendar.current.date(byAdding: .day, value: -3, to: .now) ?? .now
-        try store.createSession(SessionData(
+        // Exercise history spans the longest chart range and deliberately
+        // includes recent multi-tag work plus an exercise-less working set.
+        // That gives UI tests data for all four charts and verifies the
+        // muscle card presents, rather than renormalizes away, unattributed
+        // work. The existing literal `loggedSession` remains the most recent
+        // row so m5-01's History assertion keeps its stable contract.
+        let calendar = Calendar.current
+        let weeksAgo = [50, 42, 34, 26, 18, 12, 8, 6, 4, 3, 2, 1]
+        for (index, weeks) in weeksAgo.enumerated() {
+            let startedAt = calendar.date(byAdding: .weekOfYear, value: -weeks, to: .now) ?? .now
+            try store.createSession(makeLoggedSession(
+                id: UUID(),
+                startedAt: startedAt,
+                squatID: squatID,
+                benchID: benchID,
+                pullUpID: pullUpID,
+                routine: legDay,
+                progressionIndex: index,
+                includesUnattributedWorkingSet: weeks <= 4
+            ))
+        }
+
+        let threeDaysAgo = calendar.date(byAdding: .day, value: -3, to: .now) ?? .now
+        try store.createSession(makeLoggedSession(
             id: SeededIDs.loggedSession,
-            routineID: legDay.id,
-            routineName: legDay.name,
             startedAt: threeDaysAgo,
-            endedAt: threeDaysAgo.addingTimeInterval(45 * 60),
+            squatID: squatID,
+            benchID: benchID,
+            pullUpID: pullUpID,
+            routine: legDay,
+            progressionIndex: weeksAgo.count,
+            includesUnattributedWorkingSet: true
+        ))
+    }
+
+    private static func makeLoggedSession(
+        id: UUID,
+        startedAt: Date,
+        squatID: UUID,
+        benchID: UUID,
+        pullUpID: UUID,
+        routine: RoutineData,
+        progressionIndex: Int,
+        includesUnattributedWorkingSet: Bool
+    ) -> SessionData {
+        let squatWeight = Weight(kg: 60 + Double(progressionIndex) * 2.5)
+        let benchWeight = Weight(kg: 40 + Double(progressionIndex) * 1.25)
+        let completedAt = startedAt.addingTimeInterval(20 * 60)
+        var items = [
+            SessionItemData(
+                exerciseID: squatID,
+                order: 0,
+                sets: [
+                    SetRecordData(order: 0, weight: Weight(kg: 30), reps: 8, isWarmup: true, completedAt: completedAt),
+                    SetRecordData(order: 1, weight: squatWeight, reps: 5, completedAt: completedAt.addingTimeInterval(90)),
+                    SetRecordData(order: 2, weight: squatWeight, reps: 8, completedAt: completedAt.addingTimeInterval(180))
+                ]
+            ),
+            SessionItemData(
+                exerciseID: benchID,
+                order: 1,
+                sets: [
+                    SetRecordData(order: 0, weight: benchWeight, reps: 8, completedAt: completedAt.addingTimeInterval(300)),
+                    SetRecordData(order: 1, weight: benchWeight, reps: 10, completedAt: completedAt.addingTimeInterval(390))
+                ]
+            ),
+            SessionItemData(
+                exerciseID: pullUpID,
+                order: 2,
+                sets: [
+                    SetRecordData(order: 0, weight: .bodyweight, reps: 8, completedAt: completedAt.addingTimeInterval(480))
+                ]
+            )
+        ]
+        if includesUnattributedWorkingSet {
+            // `SessionItem.exerciseID` is intentionally optional in the
+            // persisted model. This is valid logged work but has no muscle
+            // tags, so it exercises `unattributedFraction` honestly.
+            items.append(SessionItemData(
+                exerciseID: nil,
+                order: items.count,
+                sets: [SetRecordData(order: 0, weight: Weight(kg: 20), reps: 12, completedAt: completedAt.addingTimeInterval(570))]
+            ))
+        }
+        return SessionData(
+            id: id,
+            routineID: routine.id,
+            routineName: routine.name,
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(45 * 60),
             state: .logged,
             origin: .live,
-            items: [SessionItemData(exerciseID: squatID, order: 0)]
-        ))
+            items: items
+        )
     }
 }
 #endif
