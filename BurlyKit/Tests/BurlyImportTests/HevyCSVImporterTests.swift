@@ -376,12 +376,28 @@ struct HevyCSVImporterTests {
 
     // MARK: - Hostile input hardening
 
-    @Test("invalid UTF-8 bytes throw a typed encoding error instead of crashing or silently corrupting text")
-    func invalidEncodingThrowsTypedError() {
-        let brokenBytes = Data([0xFF, 0xFE, 0x80, 0x80, 0x00, 0x01])
-        #expect(throws: HevyImportError.invalidEncoding) {
-            _ = try HevyCSVImporter.parse(csvData: brokenBytes, catalog: try loadCatalog())
-        }
+    @Test("finding 1.1 — an invalid UTF-8 byte in one row does not abort the whole import; only that row is malformed")
+    func invalidUTF8InOneRowDoesNotAbortImport() throws {
+        // Pinning regression: the old importer decoded the whole file with
+        // `String(data:encoding:.utf8)`, which returns `nil` the moment
+        // ANY byte anywhere is invalid — aborting every otherwise-valid
+        // row with `.invalidEncoding` instead of accounting for just the
+        // one corrupted row.
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let goodRow = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5"
+        var bytes = Data((header + "\n" + goodRow + "\n").utf8)
+        // Append a second, otherwise well-formed row but with one invalid
+        // UTF-8 byte spliced into the exercise title field.
+        var brokenRow = Data("\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bad".utf8)
+        brokenRow.append(0xFF) // invalid standalone UTF-8 byte
+        brokenRow.append(Data("Row\",2,\"normal\",80,5\n".utf8))
+        bytes.append(brokenRow)
+
+        let result = try HevyCSVImporter.parse(csvData: bytes, catalog: try loadCatalog())
+
+        #expect(result.summary.setsImported == 1)
+        #expect(result.summary.malformedRowCount == 1)
+        #expect(result.summary.malformedRows.first?.reason == .invalidUTF8)
     }
 
     @Test("a header missing a required column aborts the whole import with a typed error")
@@ -460,6 +476,270 @@ struct HevyCSVImporterTests {
         #expect(result.summary.sessionsImported == result.sessions.count)
         #expect(result.summary.setsImported == result.sessions.flatMap(\.items).flatMap(\.sets).count)
         #expect(result.summary.exercisesCreatedAsCustom == result.newExercises.count)
+    }
+
+    // MARK: - m7-01 adversarial review round 1 — blockers and majors
+
+    @Test("finding 1.2 — a leading UTF-8 BOM is stripped before header resolution")
+    func bomIsStrippedBeforeHeaderResolution() throws {
+        // Pinning regression: without stripping, the first header key
+        // retains the BOM scalar ("\u{FEFF}title"), so a validly-named
+        // "title" column is rejected as missing and the whole import
+        // throws `unrecognizedHeader`.
+        let csv = "\u{FEFF}title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps\n" +
+            "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5\n"
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+        #expect(result.summary.setsImported == 1)
+    }
+
+    @Test("tokenizer-level malformed records (e.g. a blank interior line) surface as accounted malformed rows, not a thrown error")
+    func tokenizerLevelMalformedRecordsSurfaceAsMalformedRows() throws {
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let good = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5"
+        let csv = header + "\n" + "\n" + good + "\n" // blank interior record before the good row
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.setsImported == 1)
+        #expect(result.summary.malformedRowCount == 1)
+        #expect(result.summary.malformedRows.first?.reason == .blankRow)
+    }
+
+    @Test("finding 2.1 — two different aliases of the same exercise in one session get distinct item/set IDs, not colliding ones")
+    func twoAliasesOfSameExerciseInOneSessionGetDistinctIDs() throws {
+        let catalog = try loadCatalog()
+        // "Bench Press (Barbell)" is a curated Hevy alias for the catalog
+        // exercise actually named "Barbell Bench Press" — both runs below
+        // resolve to the identical catalog exercise ID.
+        let session = FixtureSession(
+            title: "Full Body", start: start(), durationMinutes: 45,
+            exercises: [
+                FixtureExercise(title: "Bench Press (Barbell)", muscle: "Chest", sets: [FixtureSet(weightKg: 80, reps: 5)]),
+                FixtureExercise(title: "Squat (Barbell)", muscle: "Legs", sets: [FixtureSet(weightKg: 100, reps: 5)]),
+                FixtureExercise(title: "Barbell Bench Press", muscle: "Chest", sets: [FixtureSet(weightKg: 82.5, reps: 4)])
+            ]
+        )
+        let csv = HevyCSVGenerator.generate(sessions: [session])
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: catalog)
+
+        let items = try #require(result.sessions.first?.items)
+        #expect(items.count == 3)
+        #expect(items[0].exerciseID == items[2].exerciseID) // same resolved catalog exercise
+        // Pinning regression: occurrence counting keyed by the raw
+        // normalized title (two different strings) previously gave both
+        // runs occurrence 0 against the same resolved exercise ID,
+        // producing IDENTICAL item IDs (and colliding set IDs) here.
+        #expect(items[0].id != items[2].id)
+        let allSetIDs = items.flatMap(\.sets).map(\.id)
+        #expect(Set(allSetIDs).count == allSetIDs.count)
+    }
+
+    @Test("finding 2.2 — both accepted timestamp formats for the same instant produce the same session ID")
+    func bothTimestampFormatsForSameInstantProduceSameSessionID() throws {
+        let catalog = try loadCatalog()
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let isoRow = "\"Push Day\",\"2025-12-22 08:00:00\",\"2025-12-22 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5"
+        let hevyRow = "\"Push Day\",\"22 Dec 2025, 08:00\",\"22 Dec 2025, 08:30\",\"Bench Press (Barbell)\",1,\"normal\",80,5"
+
+        let resultISO = try HevyCSVImporter.parse(csv: header + "\n" + isoRow + "\n", catalog: catalog)
+        let resultHevy = try HevyCSVImporter.parse(csv: header + "\n" + hevyRow + "\n", catalog: catalog)
+
+        // Pinning regression: hashing the raw accepted lexeme (rather than
+        // a canonical parsed-instant representation) previously produced
+        // two different session IDs for the same logical workout re-
+        // exported in the other supported timestamp shape.
+        let idISO = try #require(resultISO.sessions.first?.id)
+        let idHevy = try #require(resultHevy.sessions.first?.id)
+        #expect(idISO == idHevy)
+    }
+
+    @Test("finding 4.1 — a cardio row's rpe/superset/set_type/notes values are still counted as dropped")
+    func cardioRowStillAccountsForOtherDroppedMetadata() throws {
+        let rows = [
+            Self.extendedHeader,
+            #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","","Running","grp-1","tough one",1,"dropset",,,5.0,1800,9"#
+        ]
+        let csv = rows.joined(separator: "\n") + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        // Pinning regression: the cardio early-return only incremented
+        // `cardioRowsSkipped`, leaving every other per-category counter at
+        // zero even though this row's rpe/superset_id/exercise_notes/
+        // set_type columns all had values.
+        #expect(result.summary.cardioRowsSkipped == 1)
+        #expect(result.summary.rpeValuesDropped == 1)
+        #expect(result.summary.supersetRowsDropped == 1)
+        #expect(result.summary.exerciseNotesDropped == 1)
+        #expect(result.summary.nonStandardSetTypeMarkersFlattened == 1)
+    }
+
+    @Test("finding 4.2 — a malformed row's rpe/superset/notes/set_type values are still counted as dropped")
+    func malformedRowStillAccountsForDroppedMetadata() throws {
+        let rows = [
+            Self.extendedHeader,
+            #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","","Bench Press (Barbell)","grp-1","tough one",1,"failure",80,not-a-number,,,9"#
+        ]
+        let csv = rows.joined(separator: "\n") + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        // Pinning regression: required-field/reps validation returning
+        // early left every metadata counter at zero even though the row's
+        // rpe/superset_id/exercise_notes/set_type columns all had values.
+        #expect(result.summary.malformedRowCount == 1)
+        #expect(result.summary.setsImported == 0)
+        #expect(result.summary.rpeValuesDropped == 1)
+        #expect(result.summary.supersetRowsDropped == 1)
+        #expect(result.summary.exerciseNotesDropped == 1)
+        #expect(result.summary.nonStandardSetTypeMarkersFlattened == 1)
+    }
+
+    @Test("finding 4.3 — a nonempty value in a header column Burly doesn't recognize is counted as dropped, not silently ignored")
+    func unknownColumnValueIsDroppedAndCounted() throws {
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps,tempo"
+        let row = "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:30:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5,\"3-1-1\""
+        let csv = header + "\n" + row + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.setsImported == 1)
+        #expect(result.summary.unknownColumnValuesDropped == 1)
+    }
+
+    @Test("finding 4.4 — a present set_index value is discarded but visibly counted, not silently ignored")
+    func setIndexValueIsDroppedAndCounted() throws {
+        let csv = HevyCSVGeneratorTestSupport.singleRowCSV()
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+        #expect(result.summary.setIndexValuesDropped == 1)
+    }
+
+    @Test("finding 4.5 — a later row's conflicting end_time/description is dropped and counted, not silently ignored")
+    func conflictingSessionMetadataIsDroppedAndCounted() throws {
+        let rows = [
+            Self.extendedHeader,
+            #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","Felt great","Bench Press (Barbell)",,"",0,"normal",80,5,,,"#,
+            #""Push Day","2025-06-15 08:00:00","2025-06-15 09:15:00","Felt awful","Bench Press (Barbell)",,"",1,"normal",82.5,5,,,"#
+        ]
+        let csv = rows.joined(separator: "\n") + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        // Both rows group into one session (same title + start_time). The
+        // second row's set is still imported; only its disagreeing
+        // end_time AND description are dropped and counted — pinning
+        // regression: the old accumulator silently ignored both.
+        #expect(result.summary.setsImported == 2)
+        #expect(result.summary.conflictingSessionMetadataDropped == 2)
+        #expect(result.sessions.first?.notes == "Felt great")
+    }
+
+    @Test("finding 5.1 — a nonempty distance_km/duration_seconds must be finite and non-negative or the row is malformed")
+    func invalidDistanceOrDurationIsMalformed() throws {
+        func row(distance: String, duration: String) -> String {
+            "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:45:00\",\"\",\"Running\",,\"\",1,\"normal\",,,\(distance),\(duration),"
+        }
+
+        let negativeDistance = ([Self.extendedHeader, row(distance: "-1", duration: "")]).joined(separator: "\n") + "\n"
+        let nanDistance = ([Self.extendedHeader, row(distance: "NaN", duration: "")]).joined(separator: "\n") + "\n"
+        let infiniteDistance = ([Self.extendedHeader, row(distance: "Infinity", duration: "")]).joined(separator: "\n") + "\n"
+        let garbageDuration = ([Self.extendedHeader, row(distance: "", duration: "not-a-number")]).joined(separator: "\n") + "\n"
+
+        let catalog = try loadCatalog()
+        for csv in [negativeDistance, nanDistance, infiniteDistance, garbageDuration] {
+            let result = try HevyCSVImporter.parse(csv: csv, catalog: catalog)
+            // Pinning regression: these values previously fell through to
+            // "0 => not cardio" (garbage/NaN/negative) or "positive value
+            // => an ordinary cardio row" (Infinity) instead of being
+            // reported as malformed.
+            #expect(result.summary.malformedRowCount == 1)
+            #expect(result.summary.cardioRowsSkipped == 0)
+        }
+    }
+
+    @Test("finding 6.1 — a caller-provided timezone is used to interpret timezone-less timestamps instead of a silent UTC assumption")
+    func explicitTimeZoneInterpretsWallClockTimestamps() throws {
+        let csv = HevyCSVGeneratorTestSupport.singleRowCSV(startTimeField: "2025-06-15 08:00:00")
+        let catalog = try loadCatalog()
+        let fourHoursBehindUTC = try #require(TimeZone(secondsFromGMT: -4 * 3600))
+
+        let utcResult = try HevyCSVImporter.parse(csv: csv, catalog: catalog, timeZone: HevyTimestamp.defaultTimeZone)
+        let shiftedResult = try HevyCSVImporter.parse(csv: csv, catalog: catalog, timeZone: fourHoursBehindUTC)
+
+        let utcStart = try #require(utcResult.sessions.first?.startedAt)
+        let shiftedStart = try #require(shiftedResult.sessions.first?.startedAt)
+
+        // Pinning regression: the old parser always interpreted the
+        // timezone-less "08:00:00" text as UTC regardless of any caller
+        // input, so these two instants would previously always be equal.
+        #expect(shiftedStart == utcStart.addingTimeInterval(4 * 3600))
+    }
+
+    @Test("finding 6.2 — end_time before start_time on the same row is malformed, not a negative-duration set")
+    func endBeforeStartIsMalformed() throws {
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
+        let row = "\"Push Day\",\"2025-06-15 10:00:00\",\"2025-06-15 09:00:00\",\"Bench Press (Barbell)\",1,\"normal\",80,5"
+        let csv = header + "\n" + row + "\n"
+
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: try loadCatalog())
+
+        #expect(result.summary.malformedRowCount == 1)
+        #expect(result.summary.setsImported == 0)
+        #expect(result.summary.malformedRows.first?.reason == .endBeforeStart)
+    }
+
+    @Test("finding 7.1 — NFC and NFD spellings of the same custom exercise name hash to the same identity across separate imports")
+    func nfcAndNfdCustomExerciseNamesHashIdentically() throws {
+        let catalog = try loadCatalog()
+        let nfcTitle = "Caf\u{E9} Curl" // é precomposed (NFC)
+        let nfdTitle = "Cafe\u{301} Curl" // e + combining acute (NFD) — canonically the same text
+
+        let sessionNFC = FixtureSession(
+            title: "Day A", start: start(), durationMinutes: 30,
+            exercises: [FixtureExercise(title: nfcTitle, muscle: "Arms", sets: [FixtureSet(weightKg: 10, reps: 12)])]
+        )
+        let sessionNFD = FixtureSession(
+            title: "Day A", start: start(), durationMinutes: 30,
+            exercises: [FixtureExercise(title: nfdTitle, muscle: "Arms", sets: [FixtureSet(weightKg: 10, reps: 12)])]
+        )
+
+        // Two SEPARATE parse calls, simulating two separate imports (e.g.
+        // a re-export on a different day) — the two names are `==` as
+        // Swift `String`s (Swift's default equality is already canonical-
+        // equivalence-based), so a bug here can only be seen by hashing
+        // independently, not via an in-process dictionary lookup.
+        let resultNFC = try HevyCSVImporter.parse(csv: HevyCSVGenerator.generate(sessions: [sessionNFC]), catalog: catalog)
+        let resultNFD = try HevyCSVImporter.parse(csv: HevyCSVGenerator.generate(sessions: [sessionNFD]), catalog: catalog)
+
+        // Pinning regression: hashing raw UTF-8 bytes (rather than an
+        // NFC-normalized name) previously produced two different
+        // persistent custom-exercise UUIDs across imports for a
+        // canonically identical name.
+        let idNFC = try #require(resultNFC.newExercises.first?.id)
+        let idNFD = try #require(resultNFD.newExercises.first?.id)
+        #expect(idNFC == idNFD)
+    }
+
+    @Test("finding 7.2 — case-fold-equivalent exercise names (German ß vs \"ss\") are treated as the same exercise for matching and dedup")
+    func caseFoldEquivalentNamesDedupe() throws {
+        let catalog = try loadCatalog()
+        let sessionA = FixtureSession(
+            title: "Day A", start: start(dayOffset: 0), durationMinutes: 30,
+            exercises: [FixtureExercise(title: "Straße Press", muscle: "Chest", sets: [FixtureSet(weightKg: 40, reps: 8)])]
+        )
+        let sessionB = FixtureSession(
+            title: "Day B", start: start(dayOffset: 2), durationMinutes: 30,
+            exercises: [FixtureExercise(title: "STRASSE PRESS", muscle: "Chest", sets: [FixtureSet(weightKg: 42, reps: 8)])]
+        )
+        let csv = HevyCSVGenerator.generate(sessions: [sessionA, sessionB])
+        let result = try HevyCSVImporter.parse(csv: csv, catalog: catalog)
+
+        // Pinning regression: plain `.lowercased()` leaves "straße press"
+        // and "strasse press" as two DIFFERENT strings (ß has no case to
+        // lower), so the old importer created two separate custom
+        // exercises instead of recognizing them as the same one.
+        #expect(result.newExercises.count == 1)
+        #expect(result.sessions[0].items[0].exerciseID == result.sessions[1].items[0].exerciseID)
     }
 }
 

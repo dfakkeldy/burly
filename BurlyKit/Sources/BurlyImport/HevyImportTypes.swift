@@ -10,9 +10,20 @@ import Foundation
 
 /// Whole-file failures. Anything short of these is handled per-row (see
 /// `MalformedRow`) — spec §8: "only an unrecognizable header aborts."
+///
+/// There used to be a second case here, `.invalidEncoding`, thrown when
+/// `parse(csvData:)`'s whole-file UTF-8 decode failed. Finding 1.1: a
+/// single invalid byte anywhere in the file — even in one otherwise
+/// unrelated row — made that whole-file decode return `nil` and abort
+/// *every* row, violating "only an unrecognizable header aborts."
+/// `parse(csvData:)` now falls back to a lossy decode (invalid byte
+/// sequences become U+FFFD) when the strict decode fails, so decoding
+/// itself can no longer fail; whichever row still carries a replacement
+/// character is instead reported per-row via `MalformedRowReason
+/// .invalidUTF8`, and a header that's corrupted enough to be
+/// unrecognizable still aborts via `.unrecognizedHeader` below (a
+/// replacement character breaks its exact column-name match).
 public enum HevyImportError: Error, Sendable, Equatable {
-    /// The file's bytes were not valid UTF-8 text.
-    case invalidEncoding
     /// The header row (or its absence) is missing one or more columns
     /// BurlyImport needs to build anything at all. Lists the missing
     /// column names so a caller can show a specific message rather than a
@@ -36,8 +47,34 @@ public enum MalformedRowReason: Sendable, Equatable {
     /// `reps` didn't parse as a non-negative integer.
     case invalidReps(String)
     /// `start_time` or `end_time` didn't match either known Hevy timestamp
-    /// shape (see `HevyTimestamp`).
+    /// shape (see `HevyTimestamp`), including a shape that doesn't follow
+    /// the exact supported grammar (finding 6.3).
     case invalidTimestamp(field: String, value: String)
+    /// `end_time` parsed to an instant before `start_time` (finding 6.2).
+    case endBeforeStart
+    /// A nonempty `distance_km` or `duration_seconds` value didn't parse
+    /// as a finite, non-negative number (finding 5.1) — garbage text,
+    /// `NaN`, a negative value, or positive infinity.
+    case invalidDistance(String)
+    case invalidDuration(String)
+    /// The row's bytes could not be decoded as UTF-8 even under a lossy
+    /// fallback decode of the whole file — this row still carries a
+    /// Unicode replacement character (finding 1.1).
+    case invalidUTF8
+    /// A genuinely blank physical record between two data rows (finding
+    /// 1.7) — visibly counted rather than silently vanishing and shifting
+    /// subsequent row numbers.
+    case blankRow
+    /// The record's last field was still inside an open quote when
+    /// scanning it ended (finding 1.3) — the record is discarded rather
+    /// than importing whatever partial value it absorbed.
+    case unterminatedQuote
+    /// A `"` appeared somewhere other than the true start of a field
+    /// (finding 1.4) — e.g. an unquoted `1"2"` value.
+    case strayQuoteInField
+    /// A field grew past `CSVTokenizer.maxFieldLength` scalars before its
+    /// record ended (finding 1.5).
+    case oversizedRecord(limitScalars: Int)
 }
 
 public struct MalformedRow: Sendable, Equatable {
@@ -68,22 +105,46 @@ public struct HevyImportSummary: Sendable, Equatable {
     /// Rows skipped in full because they were cardio (distance/duration
     /// only) — out of scope per spec §8, Apple Workout owns cardio.
     public let cardioRowsSkipped: Int
-    /// Rows whose `rpe` column had a value; the set was still imported,
-    /// only the RPE number itself was discarded (Burly's schema has no RPE
-    /// field).
+    /// Every row whose `rpe` column had a value, regardless of whether the
+    /// row went on to become an imported set, a skipped cardio row, or a
+    /// malformed row for an unrelated reason (m7-01 review findings
+    /// 4.1/4.2: a value present in the file is counted as dropped the
+    /// moment Burly's schema can't carry it, independent of that row's
+    /// other fate). Burly's schema has no RPE field.
     public let rpeValuesDropped: Int
-    /// Rows whose `superset_id` column had a value; the set was still
-    /// imported as an independent set, only the grouping was discarded
-    /// (Burly's schema has no superset concept).
+    /// Every row whose `superset_id` column had a value (same
+    /// fate-independent counting as `rpeValuesDropped` above). Burly's
+    /// schema has no superset concept.
     public let supersetRowsDropped: Int
-    /// Rows whose `set_type` was neither "normal" nor "warmup" (Hevy's
-    /// "failure"/"dropset" markers, or anything else non-standard) —
-    /// imported as a normal set per spec §8, counted here rather than
-    /// silently coerced.
+    /// Every row whose `set_type` was present and neither "normal" nor
+    /// "warmup" (Hevy's "failure"/"dropset" markers, or anything else
+    /// non-standard) — same fate-independent counting as
+    /// `rpeValuesDropped` above. An imported row with a non-standard
+    /// `set_type` still becomes a normal set per spec §8; this counts the
+    /// marker's presence in the file either way, not just the imported
+    /// case.
     public let nonStandardSetTypeMarkersFlattened: Int
-    /// Rows whose `exercise_notes` column had a value; discarded (Burly's
-    /// schema has no per-set/per-exercise-item note field).
+    /// Every row whose `exercise_notes` column had a value (same
+    /// fate-independent counting as `rpeValuesDropped` above). Burly's
+    /// schema has no per-set/per-exercise-item note field.
     public let exerciseNotesDropped: Int
+    /// Every row whose `set_index` column had a value (finding 4.4; same
+    /// fate-independent counting as `rpeValuesDropped` above). Read only
+    /// to report that it was discarded — see `HevyCSVImporter`'s doc
+    /// comment on why set order is taken from row order instead.
+    public let setIndexValuesDropped: Int
+    /// Total count of nonempty values found in header columns this
+    /// importer doesn't recognize at all (finding 4.3) — e.g. a `tempo` or
+    /// `failure_reason` column Hevy might add later. The header itself is
+    /// still accepted; only the unrecognized columns' values are dropped.
+    public let unknownColumnValuesDropped: Int
+    /// Count of individual `end_time`/description values dropped because
+    /// they disagreed with the value an earlier row in the same session
+    /// already established (finding 4.5) — the disagreeing row's *set* is
+    /// still imported; only the conflicting session-level value is
+    /// discarded, since Hevy's convention is that every row of a session
+    /// repeats the same session-level values.
+    public let conflictingSessionMetadataDropped: Int
     /// Every row that couldn't be turned into a set at all, with why.
     public let malformedRows: [MalformedRow]
 
@@ -99,6 +160,9 @@ public struct HevyImportSummary: Sendable, Equatable {
         supersetRowsDropped: Int,
         nonStandardSetTypeMarkersFlattened: Int,
         exerciseNotesDropped: Int,
+        setIndexValuesDropped: Int,
+        unknownColumnValuesDropped: Int,
+        conflictingSessionMetadataDropped: Int,
         malformedRows: [MalformedRow]
     ) {
         self.sessionsImported = sessionsImported
@@ -110,6 +174,9 @@ public struct HevyImportSummary: Sendable, Equatable {
         self.supersetRowsDropped = supersetRowsDropped
         self.nonStandardSetTypeMarkersFlattened = nonStandardSetTypeMarkersFlattened
         self.exerciseNotesDropped = exerciseNotesDropped
+        self.setIndexValuesDropped = setIndexValuesDropped
+        self.unknownColumnValuesDropped = unknownColumnValuesDropped
+        self.conflictingSessionMetadataDropped = conflictingSessionMetadataDropped
         self.malformedRows = malformedRows
     }
 }

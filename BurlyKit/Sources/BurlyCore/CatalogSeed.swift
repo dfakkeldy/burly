@@ -28,10 +28,26 @@
 // CASE SENSITIVITY (spec section 8): exerciseID(forHevyAlias:) and
 // exercise(forHevyAlias:) match case-insensitively - a Hevy export's exact
 // capitalization of an exercise title is not something Burly controls or
-// can rely on. `normalizedHevyAliases` below is a lowercased mirror of
-// `hevyAliases`, built once at construction, so every lookup normalizes
-// both sides without re-lowercasing the whole table per call.
-
+// can rely on. `normalizedHevyAliases` below is a `normalizedMatchKey`
+// mirror of `hevyAliases`, built once at construction, so every lookup
+// normalizes both sides without renormalizing the whole table per call.
+//
+// NORMALIZATION (m7-01 review findings 7.1/7.2/8.1): `normalizedMatchKey`
+// is the ONE normalization rule shared by every alias/name comparison in
+// this module (and by BurlyImport's catalog-name matching and
+// custom-exercise identity hashing) - trims surrounding whitespace,
+// canonically (NFC) normalizes, then applies locale-independent Unicode
+// case folding. Trimming symmetrically on both the seed-construction side
+// (here) and the CSV-lookup side closes a prior gap where an authored
+// alias with stray whitespace would fail to match an already-trimmed CSV
+// value. Case folding (not `.lowercased()`) is locale-independent - unlike
+// `.lowercased()`, it does not vary with the device's language setting -
+// and also collapses expansions like German "ß" -> "ss", the same way two
+// case variants of a name should match. NFC normalization ensures a name
+// typed as precomposed accents and the same name in decomposed form hash
+// identically. Deliberately NOT diacritic-insensitive: that would collapse
+// visually/semantically distinct names into the same key, which plain
+// case-insensitivity is not supposed to do.
 import Foundation
 
 public struct CatalogSeed: Sendable, Equatable, Decodable {
@@ -77,7 +93,7 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
         self.exercises = exercises
         self.hevyAliases = hevyAliases
         self.normalizedHevyAliases = Dictionary(
-            hevyAliases.map { (key, value) in (key.lowercased(), value) },
+            hevyAliases.map { (key, value) in (Self.normalizedMatchKey(key), value) },
             uniquingKeysWith: { first, _ in first }
         )
         try validate()
@@ -111,12 +127,23 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
     /// `normalizedHevyAliases` was built, so callers never need to worry
     /// about matching a Hevy export's exact capitalization.
     public func exerciseID(forHevyAlias alias: String) -> UUID? {
-        normalizedHevyAliases[alias.lowercased()]
+        normalizedHevyAliases[Self.normalizedMatchKey(alias)]
     }
 
     public func exercise(forHevyAlias alias: String) -> CatalogExercise? {
         guard let id = exerciseID(forHevyAlias: alias) else { return nil }
         return exercises.first { $0.id == id }
+    }
+
+    /// The one normalization rule shared by every alias/name comparison in
+    /// this module and by BurlyImport's catalog-name matching and
+    /// custom-exercise identity hashing (findings 7.1, 7.2, 8.1 — see file
+    /// doc "NORMALIZATION" above for why each step is needed).
+    public static func normalizedMatchKey(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+            .folding(options: .caseInsensitive, locale: nil)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -150,6 +177,16 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
             }
         }
 
+        // Finding 3.1: two distinct authored aliases that collide once
+        // normalized (e.g. "Foo" / "FOO") but map to different exercise
+        // IDs would otherwise make `normalizedHevyAliases`'s lookup result
+        // depend on `Dictionary`'s unspecified iteration order at
+        // construction time (whichever alias happened to be visited first
+        // would silently win). Reject that ambiguity outright instead of
+        // resolving it nondeterministically. Two aliases that collide but
+        // agree on the same exercise ID are harmless duplicates, not
+        // rejected.
+        var seenNormalizedAliases: [String: UUID] = [:]
         for (alias, exerciseID) in hevyAliases {
             guard alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 throw CatalogSeedError.emptyHevyAlias
@@ -157,6 +194,11 @@ public struct CatalogSeed: Sendable, Equatable, Decodable {
             guard ids.contains(exerciseID) else {
                 throw CatalogSeedError.unresolvedHevyAlias(alias: alias, exerciseID: exerciseID)
             }
+            let normalized = Self.normalizedMatchKey(alias)
+            if let existingID = seenNormalizedAliases[normalized], existingID != exerciseID {
+                throw CatalogSeedError.ambiguousHevyAliasNormalization(normalized: normalized)
+            }
+            seenNormalizedAliases[normalized] = exerciseID
         }
     }
 }
@@ -171,4 +213,7 @@ public enum CatalogSeedError: Error, Sendable, Equatable {
     case duplicateMuscleGroup(UUID)
     case emptyHevyAlias
     case unresolvedHevyAlias(alias: String, exerciseID: UUID)
+    /// Two distinct authored aliases normalize (see `normalizedMatchKey`)
+    /// to the same key but map to different exercise IDs (finding 3.1).
+    case ambiguousHevyAliasNormalization(normalized: String)
 }

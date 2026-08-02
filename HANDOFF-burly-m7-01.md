@@ -102,3 +102,30 @@ BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
 Branch `task/burly-m7-01` is clean and ready for review/PR; nothing
 outside `BurlyKit/` was touched, `.github/workflows` untouched, no new
 third-party dependencies (CryptoKit is a system framework).
+
+## 2026-08-02 — Round-1 adversarial review (NOT-SAFE, 4 blockers + 13 majors) fixed
+
+Done: all 4 blockers + 13 majors + 2 minors from
+`.scratch/m7-01-review-1.md` fixed, one discriminating test each (34 new
+tests, 445 total). Key changes: `CSVTokenizer` now emits a `Row` enum
+(`.fields`/`.blank`/`.unterminatedQuote`/`.strayQuote`/`.oversizedRecord`)
+instead of raw `[[String]]`; `HevyCSVImporter.parse` gained a
+`timeZone:` param (default UTC) and strict→lossy UTF-8 decode;
+`CatalogSeed.normalizedMatchKey` (trim+NFC+case-fold) is now the one
+shared normalization rule for aliases, catalog names, and custom-exercise
+identity hashing; `RowMetadataDrops` makes per-category accounting
+fate-independent (counted for malformed/cardio/imported rows alike).
+Verified 3 subtle fixes (2.1 occurrence keying, 1.1 lossy-decode, 7.1 NFC
+hashing) by reverting each and confirming its test fails on old behavior.
+Both verification commands green (445 tests / 2 spike tests). Nothing
+disagreed with — all findings accepted and fixed as described.
+
+Next: awaiting dispatcher re-review of round 2.
+
+Resume:
+```
+cd /Users/dfakkeldy/Developer/worktrees/burly-m7-01/BurlyKit
+swift test        # 445 tests, 43 suites
+BURLY_RUN_MIGRATION_SPIKE=1 swift test --filter MigrationSpikeTests
+```
+Branch `task/burly-m7-01` clean, one commit ahead of db54ab7, not pushed.

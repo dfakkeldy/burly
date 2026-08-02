@@ -65,4 +65,33 @@ struct HevyTimestampTests {
         #expect(HevyTimestamp.parse("5 JUN 2025, 10:00") != nil)
         #expect(HevyTimestamp.parse("5 jun 2025, 10:00") != nil)
     }
+
+    @Test("finding 6.3 — rejects a shape whose digit widths don't match the documented grammar, even though the numbers would otherwise parse")
+    func rejectsNonStandardDigitWidths() {
+        // Pinning regression: `Int.init` happily parses "6", "5", "8", "3",
+        // "0" regardless of width, so the old parser silently accepted
+        // this as if it were "2025-06-05 08:03:00".
+        #expect(HevyTimestamp.parse("2025-6-5 8:3:0") == nil)
+        #expect(HevyTimestamp.parse("25-06-05 08:03:00") == nil) // 2-digit year
+        #expect(HevyTimestamp.parse("2025-06-05 08:3:00") == nil) // 1-digit minute
+        #expect(HevyTimestamp.parse("2 Jan 2025, 6:05") == nil) // 1-digit hour in the real-export shape
+    }
+
+    @Test("finding 2.2 — canonicalKey produces the same value for both formats' representation of the same instant")
+    func canonicalKeyMatchesAcrossFormats() throws {
+        let a = try #require(HevyTimestamp.parse("2025-12-22 08:00:00"))
+        let b = try #require(HevyTimestamp.parse("22 Dec 2025, 08:00"))
+        #expect(HevyTimestamp.canonicalKey(for: a) == HevyTimestamp.canonicalKey(for: b))
+    }
+
+    @Test("finding 6.1 — an explicit non-UTC timezone shifts the parsed instant relative to the UTC default")
+    func explicitTimeZoneShiftsInstant() throws {
+        let utc = try #require(HevyTimestamp.parse("2025-06-15 08:00:00", timeZone: HevyTimestamp.defaultTimeZone))
+        let fourHoursBehindUTC = try #require(TimeZone(secondsFromGMT: -4 * 3600))
+        let shifted = try #require(HevyTimestamp.parse("2025-06-15 08:00:00", timeZone: fourHoursBehindUTC))
+        // Pinning regression: the old `parse` had no timezone parameter at
+        // all and always assumed UTC, so this would previously equal `utc`
+        // regardless of which timezone was intended.
+        #expect(shifted == utc.addingTimeInterval(4 * 3600))
+    }
 }

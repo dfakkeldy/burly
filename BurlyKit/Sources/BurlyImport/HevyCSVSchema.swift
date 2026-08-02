@@ -15,13 +15,27 @@ import Foundation
 
 enum HevyCSVSchema {
     /// Columns without which a row cannot be turned into anything at all.
-    /// `set_index` is deliberately not required (or even consulted for
-    /// ordering — see `HevyCSVImporter`): a real export's numbering scheme
-    /// is unverified (m7-03), so set order is taken from row order in the
-    /// file instead of trusting this column's value.
     static let requiredColumns = [
         "title", "start_time", "end_time", "exercise_title", "set_type", "weight_kg", "reps"
     ]
+
+    /// Optional columns this importer deliberately reads or explicitly
+    /// accounts for by name, beyond the required set above. `set_index` is
+    /// deliberately not used for set *ordering* — see `HevyCSVImporter`'s
+    /// doc comment on why row order is trusted instead, since a real
+    /// export's numbering scheme is unverified (m7-03) — but its presence
+    /// is still read here so a nonempty value is visibly reported as
+    /// discarded (finding 4.4) rather than silently ignored.
+    static let knownOptionalColumns = [
+        "description", "superset_id", "exercise_notes", "distance_km", "duration_seconds", "rpe", "set_index"
+    ]
+
+    /// Every column name this importer recognizes at all, required or
+    /// optional. Any header column NOT in this set is "unknown" to Burly's
+    /// schema (finding 4.3): a nonempty value in such a column is counted
+    /// as dropped rather than silently ignored, without aborting the
+    /// import.
+    static let knownColumns = Set(requiredColumns + knownOptionalColumns)
 }
 
 /// Resolves a parsed header row into named column indices, built once per
@@ -29,6 +43,9 @@ enum HevyCSVSchema {
 struct HevyCSVHeader {
     private let columnIndex: [String: Int]
     let columnCount: Int
+    /// Header column names (trimmed, lowercased) not recognized by
+    /// `HevyCSVSchema.knownColumns` — finding 4.3.
+    let unknownColumnNames: [String]
 
     /// A header name is matched case-insensitively and trimmed — Hevy's
     /// own header casing is not something Burly controls any more than an
@@ -39,12 +56,15 @@ struct HevyCSVHeader {
     init(fields: [String]) {
         columnCount = fields.count
         var map: [String: Int] = [:]
+        var seenOrder: [String] = []
         for (index, raw) in fields.enumerated() {
             let key = raw.trimmingCharacters(in: .whitespaces).lowercased()
             guard !key.isEmpty, map[key] == nil else { continue }
             map[key] = index
+            seenOrder.append(key)
         }
         columnIndex = map
+        unknownColumnNames = seenOrder.filter { !HevyCSVSchema.knownColumns.contains($0) }
     }
 
     var missingRequiredColumns: [String] {
