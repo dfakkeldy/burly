@@ -54,6 +54,15 @@ enum PhoneDemoSeed {
         /// "no routines yet" — it must not render as an ordinary empty
         /// state.
         case catalogMissingExercise(name: String)
+        /// The launch-environment key was present but its raw value didn't
+        /// match any `Scenario` case — a typo on either side of the
+        /// app/test boundary (m5-01 review round 2, finding 2). This is
+        /// distinct from the key being absent: an absent key legitimately
+        /// falls through to the on-device store, but a present-and-wrong
+        /// value must not — the same fail-closed posture as
+        /// `.intentionallyBroken` and `.catalogMissingExercise`, just for a
+        /// mistake one step earlier.
+        case unrecognizedScenario(String)
     }
 
     /// Fixed ids for the seeded rows, so BurlyPhoneUITests can assert the
@@ -67,21 +76,30 @@ enum PhoneDemoSeed {
         static let loggedSession = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000003")!
     }
 
-    /// `nil` for any launch that isn't one of these scenarios, so the
-    /// caller falls through to the real on-device store.
+    /// `nil` **only** when the launch-environment key is absent entirely,
+    /// so the caller falls through to the real on-device store.
     ///
-    /// Once a scenario IS recognized, this fails **closed**: seed
-    /// construction or seeding errors come back as `.failure`, never as
-    /// `nil` (m5-01 review finding 6). The old `try?`-style shape would
-    /// turn a broken fixture into "no scenario requested," which the caller
-    /// then silently resolved against the real on-device store — exactly
-    /// the leak this type exists to prevent.
+    /// Once the key is present, this fails **closed**, in two separate ways
+    /// (m5-01 review round 2, finding 2 — round 1 fixed only the first):
+    ///
+    /// - the raw value doesn't match any `Scenario` case (a typo) — comes
+    ///   back as `.failure(.unrecognizedScenario(raw))`;
+    /// - a recognized scenario's seed construction throws (m5-01 review
+    ///   finding 6) — comes back as `.failure(error)`.
+    ///
+    /// The original bug collapsed both of those into the same `nil` the
+    /// absent-key case returns, via `guard let raw = ..., let scenario =
+    /// Scenario(rawValue: raw) else { return nil }` — a typo'd scenario
+    /// name silently fell through to the real on-device store exactly like
+    /// the pre-fix `try?` shape did for a broken fixture. Splitting the two
+    /// `guard`s is what keeps "the key was set to *something*" from ever
+    /// resolving to "the key wasn't set."
     static func requestedStore() -> Result<BurlyStore, Error>? {
-        guard
-            let raw = ProcessInfo.processInfo.environment[environmentKey],
-            let scenario = Scenario(rawValue: raw)
-        else {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey] else {
             return nil
+        }
+        guard let scenario = Scenario(rawValue: raw) else {
+            return .failure(SeedError.unrecognizedScenario(raw))
         }
         do {
             return .success(try makeStore(for: scenario))

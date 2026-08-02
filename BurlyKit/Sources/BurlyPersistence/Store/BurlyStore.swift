@@ -613,25 +613,28 @@ public protocol BurlyStore: AnyObject {
     // from the existing `routines(includingArchived:)` /
     // `sessions(state:)` surfaces only when that tab is shown.
     //
-    // Both are deliberately **predicate-free**: the only natural
-    // predicates — `archivedAt == nil` over an optional `Date`, and enum
-    // equality on `state` — are documented SwiftData sharp edges (see
-    // `exercises(includingArchived:)` and `sessions(state:)`), and
-    // relationship optional-chaining in `#Predicate` is the exact shape
-    // that crashed the CI runner (the third runner divergence, pinned in
-    // `SwiftDataStore.setRecordFilterPredicate`'s doc). The filters happen
-    // in Swift over flat rows, exactly like `exercises(includingArchived:)`
-    // and `allLoggedSessionDates()`.
+    // Bounded by real `FetchDescriptor` shapes, not by fetching a table into
+    // Swift and counting/filtering there (m5-01 review round 2, finding 1 —
+    // round 1 called these "predicate-free on purpose" but still fetched
+    // every row). `hasRoutines()` predicates directly on `archivedAt`, its
+    // own stored, non-relationship column, with `fetchLimit = 1`.
+    // `loggedSessionCount()` still cannot predicate on `state` — enum
+    // equality on `SessionState` throws at runtime, pinned by
+    // `swiftDataCannotPredicateOnSessionState` (ActiveSessionTransactionTests)
+    // — so it computes total minus active via two `fetchCount`s instead; see
+    // `SwiftDataStore.loggedSessionCount()`'s doc for why that's exact, not
+    // approximate.
 
     /// `true` when at least one non-archived routine is stored — the phone
-    /// shell's Routines existence check (§9). Bounded: reads the routine
-    /// table only (user-authored, small by construction), never `.items`.
+    /// shell's Routines existence check (§9). Bounded: a `fetchLimit = 1`
+    /// predicate over the routine table only (user-authored, small by
+    /// construction), never `.items`.
     func hasRoutines() throws -> Bool
 
     /// How many `.logged` sessions are stored — the phone shell's History
-    /// existence check and Stats scalar (m5-01). Bounded: a flat projection
-    /// over the `Session` table (no `.items`/sets faulting), the same cost
-    /// class as `allLoggedSessionDates()`. An `.active` workout is not
-    /// history yet, exactly as `sessions(state:)` documents.
+    /// existence check and Stats scalar (m5-01). Bounded: two `fetchCount`
+    /// aggregates (`Session` total, `ActiveSessionJournal` rows) — no
+    /// `.items`/sets faulting and no row materialization. An `.active`
+    /// workout is not history yet, exactly as `sessions(state:)` documents.
     func loggedSessionCount() throws -> Int
 }

@@ -45,7 +45,7 @@ struct StatsTabView: View {
             } else {
                 List {
                     Section {
-                        LabeledContent("Workouts logged", value: "\\(viewModel.loggedSessionCount)")
+                        LabeledContent("Workouts logged", value: "\(viewModel.loggedSessionCount)")
                             .accessibilityIdentifier("statsTab.workoutCountRow")
                     } footer: {
                         Text("Detailed stats charts are coming in a later update.")

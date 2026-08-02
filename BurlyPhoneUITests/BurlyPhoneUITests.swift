@@ -11,7 +11,9 @@ import XCTest
 /// store, independent of simulator residue) and "populated" (routines plus
 /// a logged session, so real rows must render). A recognized-but-unbuildable
 /// scenario ("brokenSeed") must surface as the storage error state, never
-/// fall through to the on-device store.
+/// fall through to the on-device store — and so must a value that matches
+/// no known scenario at all (m5-01 review round 2, finding 2): only an
+/// absent key legitimately falls through.
 ///
 /// Welcome persistence uses the DEBUG-only launch arguments WelcomeState
 /// matches literally. "-burly-reset-welcome" removes ONLY the namespaced
@@ -32,6 +34,9 @@ final class BurlyPhoneUITests: XCTestCase {
     private static let scenarioEmpty = "empty"
     private static let scenarioPopulated = "populated"
     private static let scenarioBrokenSeed = "brokenSeed"
+    /// Deliberately not a `PhoneDemoSeed.Scenario` case — see
+    /// `testUnrecognizedScenarioFailsClosedToStorageError`.
+    private static let scenarioUnrecognized = "definitelyNotARealScenario"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -71,15 +76,15 @@ final class BurlyPhoneUITests: XCTestCase {
         ]
         for tab in tabs {
             let button = app.tabBars.buttons[tab.button]
-            XCTAssertTrue(button.waitForExistence(timeout: 5), "Expected tab bar button \\(tab.button)")
+            XCTAssertTrue(button.waitForExistence(timeout: 5), "Expected tab bar button \(tab.button)")
             button.tap()
             XCTAssertTrue(
                 anyElement(app, identifier: tab.content).waitForExistence(timeout: 5),
-                "Expected \\(tab.button) to reveal its tab's content"
+                "Expected \(tab.button) to reveal its tab's content"
             )
             XCTAssertFalse(
                 historyEmpty.exists,
-                "History content should not remain visible after switching to \\(tab.button)"
+                "History content should not remain visible after switching to \(tab.button)"
             )
         }
 
@@ -226,11 +231,23 @@ final class BurlyPhoneUITests: XCTestCase {
             "Expected the seeded logged session to render as a History row"
         )
 
-        // Stats shows the scalar workout count, not an empty state.
+        // Stats shows the scalar workout count, not an empty state — and
+        // the count itself must render as the seeded value "1" (m5-01
+        // review round 2, finding 3: a doubled-backslash interpolation bug
+        // once made this row render the literal text
+        // "\(viewModel.loggedSessionCount)" instead of the number, which a
+        // mere existence check on the row's identifier couldn't catch).
         app.tabBars.buttons["Stats"].tap()
+        let workoutCountRow = app.staticTexts["statsTab.workoutCountRow"]
         XCTAssertTrue(
-            app.staticTexts["statsTab.workoutCountRow"].waitForExistence(timeout: 5),
+            workoutCountRow.waitForExistence(timeout: 5),
             "Expected Stats to show the workout count on the populated store"
+        )
+        let renderedCount = ([workoutCountRow.label, workoutCountRow.value as? String ?? ""])
+            .joined(separator: " ")
+        XCTAssertTrue(
+            renderedCount.contains("1") && renderedCount.contains("\\(") == false,
+            "Expected the workout count row to render the seeded count (1) as text, got: \(renderedCount)"
         )
 
         // Routines shows the seeded routines, each keyed by its id.
@@ -268,6 +285,39 @@ final class BurlyPhoneUITests: XCTestCase {
         )
 
         attachScreenshot(from: app, name: "BurlyPhone-brokenSeedFailClosed")
+    }
+
+    /// m5-01 review round 2, finding 2: a launch-environment value that
+    /// doesn't match any `PhoneDemoSeed.Scenario` case (a typo, on either
+    /// side of the app/test boundary) must fail closed exactly like
+    /// `.brokenSeed` — never fall through to the real on-device store, the
+    /// fail-open trap `PhoneDemoSeed.requestedStore()` had before this fix
+    /// collapsed "key absent" and "key present but unrecognized" into the
+    /// same `nil`. The message identifier is asserted, not just the
+    /// heading, so this is provably the unrecognized-scenario error and not
+    /// some other failure that happens to share the same heading.
+    func testUnrecognizedScenarioFailsClosedToStorageError() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioUnrecognized
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["storeUnavailableView.heading"].waitForExistence(timeout: 15),
+            "Expected an unrecognized scenario value to surface as the storage error state"
+        )
+        let message = app.staticTexts["storeUnavailableView.message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            message.label.contains("unrecognizedScenario"),
+            "Expected a distinct message identifying an unrecognized scenario, got: \(message.label)"
+        )
+        XCTAssertFalse(
+            app.staticTexts["historyTab.emptyState.heading"].exists,
+            "Expected no tab-shell content behind a fail-closed unrecognized-scenario error"
+        )
+
+        attachScreenshot(from: app, name: "BurlyPhone-unrecognizedScenarioFailClosed")
     }
 
     /// Looks a stable identifier up regardless of the accessibility element

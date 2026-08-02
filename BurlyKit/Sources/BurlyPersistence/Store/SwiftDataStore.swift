@@ -716,33 +716,60 @@ public final class SwiftDataStore: BurlyStore {
 
     // MARK: - Phone-shell existence/count (m5-01; bounded)
     //
-    // See the protocol doc: predicate-free on purpose. The only natural
-    // predicates are documented SwiftData sharp edges (optional-Date
-    // equality, enum equality), and relationship optional-chaining in
-    // `#Predicate` is the shape that crashed the CI runner (third runner
-    // divergence — pinned in `setRecordFilterPredicate`'s doc above).
+    // m5-01 review round 2, finding 1: round 1 (401646f) called these
+    // "predicate-free on purpose" and cited relationship optional-chaining
+    // in `#Predicate` as a shape that "crashed the CI runner" — but that
+    // claim doesn't hold up against this file's own `setRecordFilterPredicate`,
+    // whose `sessionItem?.exercise?.id == exerciseID` (a two-hop
+    // relationship optional chain) is exercised at 50k rows by
+    // `StatsQueryBenchmarkTests`. What round 1 actually shipped was both
+    // methods fetching the *entire* table into a Swift array and
+    // counting/`contains`-ing there — the exact anti-pattern this pair
+    // exists to eliminate. The two genuinely pinned traps are narrower:
+    // `SessionState` cannot be captured in a `#Predicate` at all (throws at
+    // runtime — `swiftDataCannotPredicateOnSessionState`,
+    // ActiveSessionTransactionTests), and enum equality generally is
+    // avoided the same way `sessions(state:)` documents. Neither blocks a
+    // predicate on a model's own stored, non-relationship column, which is
+    // all `hasRoutines()` needs.
 
     public func hasRoutines() throws -> Bool {
-        // Existence, not a list: the routine table is user-authored and
-        // small by construction (§ arch), so a flat fetch plus the
-        // Swift-side archive filter — the same shape and rationale as
-        // `exercises(includingArchived:)` — never touches `.items` and is
-        // bounded by the routine table's size, not the store's.
-        try context.fetch(FetchDescriptor<Routine>())
-            .contains { $0.archivedAt == nil }
+        // A real predicate, pushed to SQL: `archivedAt` is `Routine`'s own
+        // stored column (no relationship hop), so this isn't the
+        // enum-in-`#Predicate` trap or a relationship-chain concern at all.
+        // `fetchLimit = 1` turns "is there one" into a fetch that stops at
+        // the first match instead of materializing the whole table into a
+        // Swift array first, the way round 1 did.
+        var descriptor = FetchDescriptor<Routine>(
+            predicate: #Predicate { $0.archivedAt == nil }
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).isEmpty == false
     }
 
     public func loggedSessionCount() throws -> Int {
-        // Count, not a graph: flat `Session` rows only — `.items`/sets are
-        // never faulted, so this costs like `allLoggedSessionDates()`
-        // (proportional to session count, ~3,600 at the arch doc's decade
-        // scale), not like the session → items → sets amplification
-        // `sessions(state:)` would. The state filter stays in Swift for
-        // the same enum-in-`#Predicate` reason `sessions(state:)`
-        // documents.
-        try context.fetch(FetchDescriptor<Session>())
-            .filter { $0.state == .logged }
-            .count
+        // There genuinely is no SQL-level `state == .logged` to write here
+        // — `swiftDataCannotPredicateOnSessionState` pins that `#Predicate`
+        // on `SessionState` throws at runtime, not merely that it's
+        // stylistically avoided. The honest bounded shape per the review's
+        // own suggested fallback: total `Session` count minus the
+        // `ActiveSessionJournal` row count, both real `fetchCount`
+        // aggregates (SQL `COUNT`, no row materialization) rather than a
+        // fetched-then-filtered array.
+        //
+        // This is exact, not approximate, because of `ActiveSessionJournal`'s
+        // own invariant (see that model's doc): a journal row exists *iff*
+        // its session is `.active`, and `createSession`/`saveActiveSession`
+        // together guarantee an `.active` row can only be born through
+        // `saveActiveSession`, which always writes the paired journal row
+        // in the same transaction. So `.active` session count ==
+        // `ActiveSessionJournal` row count exactly, `SessionState` has only
+        // two cases (`.active`, `.logged`), and "total minus active" is
+        // ".logged count," full stop — not "logged count, assuming no other
+        // states exist."
+        let total = try context.fetchCount(FetchDescriptor<Session>())
+        let active = try context.fetchCount(FetchDescriptor<ActiveSessionJournal>())
+        return total - active
     }
 
     /// **Internal** (m1-06 review round D), for the mirror-image reason
