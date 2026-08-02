@@ -181,7 +181,7 @@ jobs:
             -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
             MARKETING_VERSION="${{ steps.version.outputs.marketing_version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_number }}" \
-            | tee "$RUNNER_TEMP/archive.log"
+            2>&1 | tee "$RUNNER_TEMP/archive.log"
 
       # method "app-store-connect" + destination "upload" makes
       # -exportArchive do the export AND the upload in one step -- this
@@ -222,7 +222,7 @@ jobs:
             -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
             -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
-            | tee "$RUNNER_TEMP/export.log"
+            2>&1 | tee "$RUNNER_TEMP/export.log"
 
       # Belt-and-braces: runs even if archive/export failed above, and
       # even though $RUNNER_TEMP itself is wiped at the end of the job
