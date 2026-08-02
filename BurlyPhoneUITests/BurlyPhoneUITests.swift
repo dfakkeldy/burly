@@ -260,6 +260,112 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-populatedRows")
     }
 
+    /// Spec §9 acceptance #3 (routine + custom portion): this uses the
+    /// deterministic empty scenario, which now contains the real curated
+    /// catalog but no user-authored routines/history. It proves an actual
+    /// phone authoring sequence, rather than an existence-only mock:
+    /// custom creation with two selected tags, routine creation, catalog
+    /// insertion, count/rest edits, item reorder, save, and both archive
+    /// paths. Dynamic entities are selected through stable identifier
+    /// prefixes; the final assertions inspect rendered values and order.
+    func testRoutineBuilderCatalogCustomAndArchiveFlow() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        app.tabBars.buttons["Routines"].tap()
+        XCTAssertTrue(app.staticTexts["routinesTab.emptyState.heading"].waitForExistence(timeout: 15))
+
+        // Custom exercise creation exposes the frozen taxonomy as tappable,
+        // identifier-backed values. Assert both the custom name and its
+        // selected tags after the store-backed catalog reload.
+        app.buttons["routinesTab.catalogButton"].tap()
+        XCTAssertTrue(app.buttons["catalog.newCustomExerciseButton"].waitForExistence(timeout: 10))
+        app.buttons["catalog.newCustomExerciseButton"].tap()
+        let customName = "UI Test Cable Curl"
+        let customNameField = app.textFields["catalog.custom.nameField"]
+        XCTAssertTrue(customNameField.waitForExistence(timeout: 5))
+        customNameField.tap()
+        customNameField.typeText(customName)
+        app.buttons["catalog.custom.muscleTag.biceps"].tap()
+        app.buttons["catalog.custom.muscleTag.forearms"].tap()
+        XCTAssertEqual(app.buttons["catalog.custom.muscleTag.biceps"].value as? String, "Selected")
+        app.buttons["catalog.custom.createButton"].tap()
+        XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Biceps · Forearms"].exists)
+        app.buttons["catalog.doneButton"].tap()
+
+        // Create a routine and add two actual curated catalog exercises by
+        // their frozen catalog UUIDs. Searching keeps the second selection
+        // independent of the list's off-screen virtualization.
+        app.buttons["routinesTab.newRoutineButton"].tap()
+        let routineName = "UI Test Strength"
+        let routineNameField = app.textFields["routineCreator.nameField"]
+        XCTAssertTrue(routineNameField.waitForExistence(timeout: 5))
+        routineNameField.tap()
+        routineNameField.typeText(routineName)
+        app.buttons["routineCreator.createButton"].tap()
+        XCTAssertTrue(app.buttons["routineEditor.addExerciseButton"].waitForExistence(timeout: 10))
+
+        app.buttons["routineEditor.addExerciseButton"].tap()
+        XCTAssertTrue(app.buttons["catalog.addExercise.10000000-0000-4000-8000-000000000001"].waitForExistence(timeout: 10))
+        app.buttons["catalog.addExercise.10000000-0000-4000-8000-000000000001"].tap()
+
+        app.buttons["routineEditor.addExerciseButton"].tap()
+        let search = app.searchFields["Search exercises"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Back Squat")
+        XCTAssertTrue(app.buttons["catalog.addExercise.10000000-0000-4000-8000-000000000063"].waitForExistence(timeout: 10))
+        app.buttons["catalog.addExercise.10000000-0000-4000-8000-000000000063"].tap()
+
+        // The first inserted row is Bench Press. Change both independent
+        // item fields and assert their displayed values before saving.
+        let setCount = firstElement(app, identifierPrefix: "routineEditor.itemSetCount.")
+        XCTAssertTrue(setCount.waitForExistence(timeout: 5))
+        XCTAssertEqual(setCount.label, "3 sets")
+        let increment = firstElement(app, identifierPrefix: "routineEditor.increaseSetCount.")
+        increment.tap()
+        XCTAssertEqual(setCount.label, "4 sets")
+
+        let restMenu = firstElement(app, identifierPrefix: "routineEditor.restMenu.")
+        restMenu.tap()
+        app.buttons["90 sec"].tap()
+        XCTAssertTrue(firstElement(app, identifierPrefix: "routineEditor.restMenu.").label.contains("90 sec"))
+
+        // Explicit move controls are available alongside List edit-mode
+        // reordering for VoiceOver/Dynamic Type. The frame assertion proves
+        // the rendered order changed, not merely that the control existed.
+        firstElement(app, identifierPrefix: "routineEditor.moveDown.").tap()
+        let bench = app.staticTexts["Barbell Bench Press"]
+        let squat = app.staticTexts["Back Squat"]
+        XCTAssertTrue(bench.waitForExistence(timeout: 5))
+        XCTAssertTrue(squat.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(bench.frame.minY, squat.frame.minY)
+
+        app.buttons["routineEditor.saveButton"].tap()
+        XCTAssertTrue(firstElement(app, identifierPrefix: "routineEditor.itemSetCount.").label.contains("4"))
+        app.buttons["routineEditor.archiveButton"].tap()
+        app.buttons["Archive routine"].tap()
+        XCTAssertTrue(app.staticTexts["routinesTab.emptyState.heading"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts[routineName].exists)
+
+        // Archive the custom exercise through its catalog lifecycle too.
+        app.buttons["routinesTab.catalogButton"].tap()
+        let archiveSearch = app.searchFields["Search exercises"]
+        XCTAssertTrue(archiveSearch.waitForExistence(timeout: 5))
+        archiveSearch.tap()
+        archiveSearch.typeText(customName)
+        XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 5))
+        let archiveButton = firstElement(app, identifierPrefix: "catalog.archiveExercise.")
+        archiveButton.tap()
+        app.buttons["Archive exercise"].tap()
+        XCTAssertFalse(app.staticTexts[customName].exists)
+
+        attachScreenshot(from: app, name: "BurlyPhone-routineBuilderCatalog")
+    }
+
     /// Spec §7 acceptance #3, empty side: each independently meaningful
     /// chart has a genuine empty state on a deterministic empty history.
     /// This catches both crashes during chart construction and a misleading
@@ -349,6 +455,15 @@ final class BurlyPhoneUITests: XCTestCase {
     /// isn't part of the contract either.
     private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// Dynamic rows use UUID-qualified identifiers. UI tests do not know a
+    /// user-created UUID ahead of time, so select the one visible matching
+    /// element by its stable control prefix, then assert its concrete value.
+    private func firstElement(_ app: XCUIApplication, identifierPrefix: String) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", identifierPrefix))
+            .firstMatch
     }
 
     private func attachScreenshot(from app: XCUIApplication, name: String) {
