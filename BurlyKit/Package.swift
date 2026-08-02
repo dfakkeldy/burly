@@ -19,6 +19,7 @@ let package = Package(
         .library(name: "BurlyCore", targets: ["BurlyCore"]),
         .library(name: "BurlyPersistence", targets: ["BurlyPersistence"]),
         .library(name: "BurlySync", targets: ["BurlySync"]),
+        .library(name: "BurlySyncMachine", targets: ["BurlySyncMachine"]),
         .library(name: "BurlyHealth", targets: ["BurlyHealth"]),
         .library(name: "BurlyFixtures", targets: ["BurlyFixtures"])
     ],
@@ -39,7 +40,19 @@ let package = Package(
         ),
         .target(
             name: "BurlySync",
-            dependencies: ["BurlyCore"]
+            dependencies: ["BurlyCore", "BurlySyncMachine"]
+        ),
+        // The §5 protocol state machines (watch outbox/apply, phone
+        // ingest/ack/snapshot lifecycle), generic over opaque payloads.
+        // **Deliberately dependency-free** (m4-02): the empty dependency
+        // list is a build-enforced seam — the machines speak UUID, Int
+        // revisions, and opaque payload type parameters only, never a
+        // BurlyCore domain type, so Free Lunch can lift this target
+        // wholesale. Do not add a dependency edge here; the DTO binding
+        // lives in BurlySync, which depends on this target, not the
+        // reverse.
+        .target(
+            name: "BurlySyncMachine"
         ),
         .target(
             name: "BurlyHealth",
@@ -71,7 +84,16 @@ let package = Package(
         ),
         .testTarget(
             name: "BurlySyncTests",
-            dependencies: ["BurlySync"]
+            // BurlySyncMachine so the DTO-binding tests can name the
+            // machine's event and command types the binding produces.
+            dependencies: ["BurlySync", "BurlySyncMachine"]
+        ),
+        // Depends on BurlySyncMachine alone, matching the target it tests:
+        // the machine rules, the fake-transport convergence scenarios, and
+        // the seam guard all run without BurlyCore ever being linked.
+        .testTarget(
+            name: "BurlySyncMachineTests",
+            dependencies: ["BurlySyncMachine"]
         ),
         .testTarget(
             name: "BurlyHealthTests",
