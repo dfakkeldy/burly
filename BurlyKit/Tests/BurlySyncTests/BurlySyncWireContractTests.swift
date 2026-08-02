@@ -109,6 +109,56 @@ struct BurlySyncWireContractTests {
         #expect(BurlySyncEnvelope.decode(positiveInfinityWeight, using: nonConformingDecoder) == .malformed(.invalidPayload(.session)))
     }
 
+    @Test("digest set snapshots do not adopt the domain isWarmup default (m4-01 review 2)")
+    func digestSetSnapshotsRequireIsWarmup() {
+        let exerciseID = UUID()
+        let missingIsWarmup = """
+        {
+          "schemaVersion":1,
+          "kind":"digest",
+          "payload":{
+            "snapshotVersion":3,
+            "lastPerformance":[{
+              "exerciseID":"\(exerciseID.uuidString)","performedAt":700000000,
+              "sets":[{"weightKg":60,"reps":8}]
+            }],
+            "ackedSessionIDs":[]
+          }
+        }
+        """.data(using: .utf8)!
+        let complete = """
+        {
+          "schemaVersion":1,
+          "kind":"digest",
+          "payload":{
+            "snapshotVersion":3,
+            "lastPerformance":[{
+              "exerciseID":"\(exerciseID.uuidString)","performedAt":700000000,
+              "sets":[{"weightKg":60,"reps":8,"isWarmup":false}]
+            }],
+            "ackedSessionIDs":[]
+          }
+        }
+        """.data(using: .utf8)!
+
+        #expect(BurlySyncEnvelope.decode(missingIsWarmup) == .malformed(.invalidPayload(.digest)))
+
+        let expected = BurlySyncEnvelope(payload: .digest(
+            BurlyDigestPayloadDTO(
+                snapshotVersion: 3,
+                lastPerformance: [
+                    ExerciseLastPerformanceData(
+                        exerciseID: exerciseID,
+                        performedAt: Date(timeIntervalSinceReferenceDate: 700000000),
+                        sets: [SetSnapshot(weight: Weight(kg: 60), reps: 8, isWarmup: false)]
+                    )
+                ],
+                ackedSessionIDs: []
+            )
+        ))
+        #expect(BurlySyncEnvelope.decode(complete) == .decoded(expected))
+    }
+
     @Test("wire payloads do not adopt domain decoder defaults")
     func wirePayloadsRequireDefaultedDomainFields() {
         let snapshotMissingNeedsNaming = """
