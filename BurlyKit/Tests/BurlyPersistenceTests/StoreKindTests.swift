@@ -6,13 +6,19 @@
 //  history at push time … and never stores them."
 //  (Models/ExerciseLastPerformance.swift)
 //
-// Before this review round `SwiftDataStore` accepted a `BurlyStoreKind` at
-// construction but discarded it, so a phone-kind store could still write a
-// digest through `upsertLastPerformance` with nothing to stop it. These
-// tests pin the guard: the write succeeds on a watch-kind store and throws
-// `.operationRequiresWatchStore` on a phone-kind store, leaving no row
-// behind. (Reads stay open to either kind — see `absentRecordsThrowNotFound`
-// in StoreAPISurfaceTests — only the write is watch-only.)
+// Before the m1-04 review round `SwiftDataStore` accepted a
+// `BurlyStoreKind` at construction but discarded it, so a phone-kind store
+// could still write a digest with nothing to stop it. These tests pin the
+// guard at the entity's own write helper: it succeeds on a watch-kind store
+// and throws `.operationRequiresWatchStore` on a phone-kind store, leaving
+// no row behind. (Reads stay open to either kind — see
+// `absentRecordsThrowNotFound` in StoreAPISurfaceTests — only the write is
+// watch-only.)
+//
+// `upsertLastPerformance` is module-internal as of m1-06 review round D —
+// half of a §5 digest is not something a caller outside BurlyPersistence
+// may apply — so these reach it through `@testable`. The gate on the public
+// whole-payload path, `applyDigest`, is pinned in DigestTransactionTests.
 
 import Foundation
 import Testing

@@ -30,24 +30,24 @@ struct CascadeTests {
         let bench = Fixture.exercise(name: "Bench Press")
         let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
         let routine = Fixture.routine(over: [bench, row])
-        let session = Fixture.session(from: routine)
-        let firstItemID = try #require(session.items.first?.id)
-
-        try store.createExercise(bench)
-        try store.createExercise(row)
-        try store.createRoutine(routine)
-        try store.createSession(session)
-        for index in 0..<3 {
-            try store.logSet(
+        let empty = Fixture.session(from: routine)
+        let firstItemID = try #require(empty.items.first?.id)
+        let session = (0..<3).reduce(empty) { partial, index in
+            partial.addingSet(
                 SetRecordData(
                     order: index,
                     weight: Weight(kg: 80),
                     reps: 5,
                     completedAt: Fixture.epoch.addingTimeInterval(Double(index))
                 ),
-                toSessionItem: firstItemID
+                toItem: firstItemID
             )
         }
+
+        try store.createExercise(bench)
+        try store.createExercise(row)
+        try store.createRoutine(routine)
+        try store.createSession(session)
 
         #expect(try rowCount(SessionItem.self, in: container) == 2)
         #expect(try rowCount(SetRecord.self, in: container) == 3)
@@ -101,17 +101,17 @@ struct CascadeTests {
         let bench = Fixture.exercise(name: "Bench Press")
         let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
         let routine = Fixture.routine(over: [bench, row])
-        let session = Fixture.session(from: routine)
-        let firstItemID = try #require(session.items.first?.id)
+        let empty = Fixture.session(from: routine)
+        let firstItemID = try #require(empty.items.first?.id)
+        let session = empty.addingSet(
+            SetRecordData(order: 0, weight: Weight(kg: 90), reps: 5, completedAt: Fixture.epoch),
+            toItem: firstItemID
+        )
 
         try store.createExercise(bench)
         try store.createExercise(row)
         try store.createRoutine(routine)
         try store.createSession(session)
-        try store.logSet(
-            SetRecordData(order: 0, weight: Weight(kg: 90), reps: 5, completedAt: Fixture.epoch),
-            toSessionItem: firstItemID
-        )
 
         #expect(try rowCount(RoutineItem.self, in: container) == 2)
 
@@ -147,18 +147,18 @@ struct CascadeTests {
         try store.createExercise(deadlift)
         try store.createRoutine(routine)
 
-        let keeper = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        let doomed = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(86_400))
+        let emptyKeeper = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        let keeper = emptyKeeper.addingSet(
+            SetRecordData(order: 0, weight: Weight(kg: 140), reps: 3, completedAt: Fixture.epoch),
+            toItem: try #require(emptyKeeper.items.first?.id)
+        )
+        let emptyDoomed = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(86_400))
+        let doomed = emptyDoomed.addingSet(
+            SetRecordData(order: 0, weight: Weight(kg: 145), reps: 3, completedAt: Fixture.epoch),
+            toItem: try #require(emptyDoomed.items.first?.id)
+        )
         try store.createSession(keeper)
         try store.createSession(doomed)
-        try store.logSet(
-            SetRecordData(order: 0, weight: Weight(kg: 140), reps: 3, completedAt: Fixture.epoch),
-            toSessionItem: try #require(keeper.items.first?.id)
-        )
-        try store.logSet(
-            SetRecordData(order: 0, weight: Weight(kg: 145), reps: 3, completedAt: Fixture.epoch),
-            toSessionItem: try #require(doomed.items.first?.id)
-        )
 
         try store.deleteSession(id: doomed.id)
 
@@ -183,10 +183,19 @@ struct CascadeTests {
         let bench = Fixture.exercise(name: "Bench Press")
         let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
         let routine = Fixture.routine(over: [bench, row])
-        let session = Fixture.session(from: routine)
-        let firstItemID = try #require(session.items.first?.id)
-        let secondItemID = try #require(session.items.last?.id)
-        var setIDs: [UUID] = []
+        let empty = Fixture.session(from: routine)
+        let firstItemID = try #require(empty.items.first?.id)
+        let secondItemID = try #require(empty.items.last?.id)
+        let sets = (0..<3).map { index in
+            SetRecordData(
+                order: index,
+                weight: Weight(kg: 80),
+                reps: 5,
+                completedAt: Fixture.epoch.addingTimeInterval(Double(index))
+            )
+        }
+        let setIDs = sets.map(\.id)
+        let session = sets.reduce(empty) { $0.addingSet($1, toItem: firstItemID) }
 
         // ---- write, delete, then let the writing container go out of scope ----
         do {
@@ -195,16 +204,6 @@ struct CascadeTests {
             try store.createExercise(row)
             try store.createRoutine(routine)
             try store.createSession(session)
-            for index in 0..<3 {
-                let set = SetRecordData(
-                    order: index,
-                    weight: Weight(kg: 80),
-                    reps: 5,
-                    completedAt: Fixture.epoch.addingTimeInterval(Double(index))
-                )
-                setIDs.append(set.id)
-                try store.logSet(set, toSessionItem: firstItemID)
-            }
 
             #expect(try store.session(id: session.id) != nil)
             try store.deleteSession(id: session.id)
@@ -253,8 +252,12 @@ struct CascadeTests {
         let bench = Fixture.exercise(name: "Bench Press")
         let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
         let routine = Fixture.routine(over: [bench, row])
-        let session = Fixture.session(from: routine)
-        let firstItemID = try #require(session.items.first?.id)
+        let empty = Fixture.session(from: routine)
+        let firstItemID = try #require(empty.items.first?.id)
+        let session = empty.addingSet(
+            SetRecordData(order: 0, weight: Weight(kg: 90), reps: 5, completedAt: Fixture.epoch),
+            toItem: firstItemID
+        )
         let routineItemIDs = routine.items.map(\.id)
 
         // ---- write, delete, then let the writing container go out of scope ----
@@ -264,10 +267,6 @@ struct CascadeTests {
             try store.createExercise(row)
             try store.createRoutine(routine)
             try store.createSession(session)
-            try store.logSet(
-                SetRecordData(order: 0, weight: Weight(kg: 90), reps: 5, completedAt: Fixture.epoch),
-                toSessionItem: firstItemID
-            )
 
             #expect(try store.routine(id: routine.id) != nil)
             try store.deleteRoutine(id: routine.id)

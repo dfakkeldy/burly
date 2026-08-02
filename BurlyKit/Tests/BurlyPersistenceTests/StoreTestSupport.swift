@@ -44,25 +44,86 @@ enum Fixture {
         )
     }
 
-    /// The §2 "start" step in miniature: a session as a mutable copy of the
-    /// routine, with empty sets, ready for `logSet`. The real copy lives in
-    /// BurlyCore (§2 acceptance #1) — this is only enough to exercise
-    /// the store.
+    /// A **finished** session shaped like the routine it came from: one
+    /// item per routine item, empty sets, ready for `createSession`.
+    ///
+    /// `state` defaults to `.logged`, not to `SessionData`'s own `.active`
+    /// default (m1-06 review round D). `createSession` refuses `.active`
+    /// now — an in-flight session is a graph *plus* a journal, and only
+    /// `saveActiveSession` writes both — so the fixture every "store the
+    /// history and assert on it" test reaches for defaults to the state
+    /// those tests actually mean. A test that wants a live session wants
+    /// `Fixture.activeSession(from:)` below.
     static func session(
         id: UUID = UUID(),
         from routine: RoutineData,
-        startedAt: Date = epoch
+        startedAt: Date = epoch,
+        state: SessionState = .logged
     ) -> SessionData {
         SessionData(
             id: id,
             routineID: routine.id,
             routineName: routine.name,
             startedAt: startedAt,
+            state: state,
             origin: .live,
             items: routine.items.map { item in
                 SessionItemData(exerciseID: item.exerciseID, order: item.order)
             }
         )
+    }
+
+    /// The §2 Start product for `routine`, exactly as the watch builds it —
+    /// graph plus plan scaffolding, ready for `saveActiveSession`, which is
+    /// the only path an `.active` session can enter the store through.
+    ///
+    /// `id` re-stamps the session's own id for the handful of tests that
+    /// need a known one; `SessionData.id` is `let`, so it is rebuilt rather
+    /// than assigned. Item ids stay as `SessionBuilder` minted them.
+    static func activeSession(
+        id: UUID? = nil,
+        from routine: RoutineData,
+        startedAt: Date = epoch
+    ) -> ActiveSession {
+        let built = SessionBuilder.session(from: routine, clock: TestClock(startedAt))
+        guard let id else { return built }
+        let original = built.session
+        return ActiveSession(
+            session: SessionData(
+                id: id,
+                routineID: original.routineID,
+                routineName: original.routineName,
+                startedAt: original.startedAt,
+                endedAt: original.endedAt,
+                state: original.state,
+                revision: original.revision,
+                healthKitWorkoutID: original.healthKitWorkoutID,
+                origin: original.origin,
+                items: original.items,
+                notes: original.notes
+            ),
+            plans: built.plans,
+            restTimer: built.restTimer
+        )
+    }
+}
+
+extension SessionData {
+    /// Returns a copy with `set` appended to the item named by `itemID`.
+    ///
+    /// Tests used to reach for `store.logSet(_:toSessionItem:)` to give a
+    /// stored session some sets. That method is gone (m1-06 review round D
+    /// — see BurlyStore.swift's "There is no `logSet`"), and its absence is
+    /// the point: an active session's only write path is
+    /// `saveActiveSession`. A test that just needs *finished* history with
+    /// sets in it builds the sets into the DTO and creates the session
+    /// whole, which is what a Hevy import or an arriving §5 `session`
+    /// payload does anyway.
+    func addingSet(_ set: SetRecordData, toItem itemID: UUID) -> SessionData {
+        var copy = self
+        guard let index = copy.items.firstIndex(where: { $0.id == itemID }) else { return copy }
+        copy.items[index].sets.append(set)
+        return copy
     }
 }
 

@@ -100,6 +100,7 @@ struct CreateTransactionTests {
         // Session, a SessionItem, and a SetRecord before throwing.
         let broken = SessionData(
             startedAt: Fixture.epoch,
+            state: .logged,
             origin: .live,
             items: [
                 SessionItemData(
@@ -178,6 +179,7 @@ struct CreateTransactionTests {
         let repeatedSetID = UUID()
         let session = SessionData(
             startedAt: Fixture.epoch,
+            state: .logged,
             origin: .live,
             items: [
                 SessionItemData(

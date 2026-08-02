@@ -31,9 +31,9 @@ let package = Package(
         ),
         .target(
             name: "BurlyPersistence",
-            // BurlySync only for the ack seam (SessionAckReceipt /
-            // SessionAckApplying) that the watch-kind SwiftDataStore
-            // conforms to — see Store/SwiftDataStore+SessionAck.swift.
+            // BurlySync only for the §5 digest seam (SessionDigestReceipt /
+            // SessionDigestApplying) that the watch-kind SwiftDataStore
+            // conforms to — see Store/SwiftDataStore+SessionDigest.swift.
             // No transport, queueing, or sync policy crosses this edge.
             dependencies: ["BurlyCore", "BurlySync"]
         ),
@@ -60,8 +60,9 @@ let package = Package(
         ),
         .testTarget(
             name: "BurlyPersistenceTests",
-            // BurlySync so the ack-seam integration test can construct a
-            // SessionAckReceipt and drive it through SessionAckApplying.
+            // BurlySync so the digest-seam integration test can construct a
+            // SessionDigestReceipt and drive it through
+            // SessionDigestApplying.
             dependencies: ["BurlyPersistence", "BurlySync"]
         ),
         .testTarget(

@@ -172,12 +172,10 @@ struct StoreSurfaceTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        let active = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        var olderLogged = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
-        olderLogged.state = .logged
-        var newerLogged = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(120))
-        newerLogged.state = .logged
-        try store.createSession(active)
+        let active = Fixture.activeSession(from: routine, startedAt: Fixture.epoch)
+        let olderLogged = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
+        let newerLogged = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(120))
+        try store.saveActiveSession(active)
         try store.createSession(olderLogged)
         try store.createSession(newerLogged)
 
@@ -193,8 +191,8 @@ struct StoreSurfaceTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        let active = Fixture.session(from: routine)
-        try store.createSession(active)
+        let active = Fixture.activeSession(from: routine)
+        try store.saveActiveSession(active)
 
         #expect(try store.sessions(state: .active).map(\.id) == [active.id])
         #expect(try store.sessions(state: .logged).isEmpty)

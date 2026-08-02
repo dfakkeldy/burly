@@ -266,6 +266,15 @@ public final class SwiftDataStore: BurlyStore {
     // MARK: - Sessions
 
     public func createSession(_ session: SessionData) throws {
+        // In-flight sessions are born through `saveActiveSession` and
+        // nowhere else (m1-06 review round D). An `.active` row created
+        // here would have no `ActiveSessionJournal` beside it: invisible to
+        // Resume, so unfinishable and — since the prune skips `.active`
+        // ids — unprunable too. `SessionData.state` defaults to `.active`,
+        // so this guard is doing real work, not covering a typo.
+        guard session.state != .active else {
+            throw BurlyStoreError.activeSessionRequiresSaveActiveSession(sessionID: session.id)
+        }
         guard try model(Session.self, id: session.id) == nil else {
             throw BurlyStoreError.duplicateID(session.id)
         }
@@ -320,19 +329,6 @@ public final class SwiftDataStore: BurlyStore {
         .map { try $0.snapshot() }
     }
 
-    public func logSet(_ set: SetRecordData, toSessionItem sessionItemID: UUID) throws {
-        guard let item = try model(SessionItem.self, id: sessionItemID) else {
-            throw BurlyStoreError.notFound(sessionItemID)
-        }
-        guard try model(SetRecord.self, id: set.id) == nil else {
-            throw BurlyStoreError.duplicateID(set.id)
-        }
-        let storedSet = makeSetRecord(set)
-        context.insert(storedSet)
-        item.sets.append(storedSet)
-        try context.save()
-    }
-
     @discardableResult
     public func deleteSession(id: UUID) throws -> UUID? {
         guard let session = try model(Session.self, id: id) else {
@@ -373,6 +369,9 @@ public final class SwiftDataStore: BurlyStore {
 
         let stored = try model(Session.self, id: active.session.id)
         let resolved = try preflightSessionGraph(active.session, ownedBy: stored)
+        if active.session.state == .active {
+            try preflightSingleInFlight(incoming: active.id)
+        }
         // Encoded before any mutation: a payload that will not encode must
         // not leave a half-applied graph behind.
         let payload = try JSONEncoder().encode(ActiveSessionScaffolding(active))
@@ -389,11 +388,17 @@ public final class SwiftDataStore: BurlyStore {
                 startedAt: active.session.startedAt,
                 endedAt: active.session.endedAt,
                 state: active.session.state,
-                // The only call that ever writes `revision` on this path:
-                // the one that brings the session into existence. Every
-                // later `saveActiveSession` leaves the stored value alone
-                // (see `reconcileSessionGraph`).
-                revision: active.session.revision,
+                // The only call that ever writes `revision` on this path —
+                // and it writes the §1 constant, not the DTO's value
+                // (m1-06 review round D). A watch-authored session starts
+                // at 1, full stop; taking `active.session.revision` here
+                // let a hand-built or round-tripped DTO claim 42 and
+                // outrank every real phone edit under §5's "incoming
+                // revision ≤ stored revision → drop" rule. Every later
+                // `saveActiveSession` leaves the stored value alone (see
+                // `reconcileSessionGraph`). `createSession` is where a
+                // replicated session's own revision is preserved.
+                revision: 1,
                 healthKitWorkoutID: active.session.healthKitWorkoutID,
                 origin: active.session.origin,
                 notes: active.session.notes
@@ -430,42 +435,84 @@ public final class SwiftDataStore: BurlyStore {
     public func activeSession(id: UUID) throws -> ActiveSession? {
         guard
             let journal = try journalModel(sessionID: id),
-            let stored = try model(Session.self, id: id)
+            let stored = try model(Session.self, id: id),
+            // Checked rather than assumed, for the same reason
+            // `resumableActiveSession()` walks past a stale row (m1-06
+            // review round D): every path out of `.active` retires the
+            // journal, so a journal beside a finished session should not
+            // exist — and if one does, the honest answer is "nothing in
+            // flight under that id", not an `ActiveSession` wrapped around
+            // a session that is already history.
+            stored.state == .active
         else { return nil }
         return try makeActiveSession(stored, journal: journal)
     }
 
     public func resumableActiveSession() throws -> ActiveSession? {
-        // Fetch one, not all (m1-06 review, M4 slice). The journal table
-        // holds a row only while a session is in flight, so this is a
-        // single-row read even on a decade-deep phone store. The sort key
-        // only matters if a store somehow holds more than one journal —
-        // then "most recently written" is a defined answer rather than
-        // whatever SwiftData returned first.
-        var descriptor = FetchDescriptor<ActiveSessionJournal>(
-            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        // Still bounded (m1-06 review, M4 slice): the journal table holds a
+        // row only while a session is in flight, and `saveActiveSession`'s
+        // single-in-flight preflight keeps that at one row, so this fetch
+        // is a single-row read even on a decade-deep phone store.
+        //
+        // But it no longer *assumes* one row, and specifically no longer
+        // gives up on the newest one (m1-06 review round D). A single
+        // leftover journal — written by an older build, or out-of-band —
+        // used to be enough to hide a live workout behind it and answer
+        // "nothing to resume". So: newest first, return the first row that
+        // names a genuinely `.active` session, and clean up the rows that
+        // name a finished or deleted one on the way past. Rows that name
+        // *other* live sessions are left strictly alone; this is a read
+        // repairing a dangling pointer, not a read deciding which workout
+        // the lifter loses.
+        let journals = try context.fetch(
+            FetchDescriptor<ActiveSessionJournal>(
+                sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+            )
         )
-        descriptor.fetchLimit = 1
-        guard let journal = try context.fetch(descriptor).first else { return nil }
-        // Predicate + `fetchLimit = 1`, via `model(_:id:)`.
-        guard
-            let stored = try model(Session.self, id: journal.sessionID),
-            stored.state == .active
-        else {
-            // A journal outliving its session, or naming one that is
-            // already `.logged`, is not resumable. Reads do not repair —
-            // the next `saveActiveSession` retires the row.
-            return nil
+
+        var resumable: (session: Session, journal: ActiveSessionJournal)?
+        var stale: [ActiveSessionJournal] = []
+        for journal in journals {
+            // Predicate + `fetchLimit = 1`, via `model(_:id:)`.
+            guard
+                let stored = try model(Session.self, id: journal.sessionID),
+                stored.state == .active
+            else {
+                stale.append(journal)
+                continue
+            }
+            if resumable == nil {
+                resumable = (stored, journal)
+            }
         }
-        return try makeActiveSession(stored, journal: journal)
+
+        if stale.isEmpty == false {
+            for journal in stale {
+                context.delete(journal)
+            }
+            try context.save()
+        }
+
+        guard let resumable else { return nil }
+        return try makeActiveSession(resumable.session, journal: resumable.journal)
     }
 
     @discardableResult
     public func applyPhoneEdit(_ session: SessionData) throws -> Int {
+        // A §6 edit corrects a session that already happened; it cannot put
+        // one back in flight (m1-06 review round D). Only
+        // `saveActiveSession` writes an `.active` row, because only it
+        // writes the journal that makes the row resumable.
+        guard session.state != .active else {
+            throw BurlyStoreError.activeSessionRequiresSaveActiveSession(sessionID: session.id)
+        }
         guard let stored = try model(Session.self, id: session.id) else {
             throw BurlyStoreError.notFound(session.id)
         }
         let resolved = try preflightSessionGraph(session, ownedBy: stored)
+        // Read before the graph is rewritten, so the decision is about the
+        // session as it was, not as this edit leaves it.
+        let journal = try journalModel(sessionID: session.id)
 
         reconcileSessionGraph(stored, to: session, resolved: resolved)
         // The one line in this file that moves `revision`. §5's "incoming
@@ -474,6 +521,15 @@ public final class SwiftDataStore: BurlyStore {
         // sourced from `session.revision`: a stale DTO cannot roll it back
         // and a forged one cannot jump it forward.
         stored.revision += 1
+        if let journal {
+            // The guard above proves the session is not `.active` after
+            // this edit, so any journal it still carries is now a Resume
+            // pointer at a finished session. It goes in the same save as
+            // the state change — the rule Finish already followed, applied
+            // to the path that used to skip it: a session leaving `.active`
+            // retires its journal, whichever method moved it.
+            context.delete(journal)
+        }
 
         try context.save()
         return stored.revision
@@ -485,7 +541,14 @@ public final class SwiftDataStore: BurlyStore {
         try lastPerformanceModel(exerciseID: exerciseID)?.snapshot()
     }
 
-    public func upsertLastPerformance(_ performance: ExerciseLastPerformanceData) throws {
+    /// **Internal** (m1-06 review round D): one entry, one save, which is
+    /// half of a §5 `digest`. Public it was a way to apply the entries
+    /// without the prune — or, from the other side, to leave the entries
+    /// out of an ack — so the atomicity `applyDigest` provides could be
+    /// stepped around by calling something else. The whole-payload method
+    /// is the API; this is a convenience the *tests* still want, for
+    /// seeding a digest row without asserting anything about the prune.
+    func upsertLastPerformance(_ performance: ExerciseLastPerformanceData) throws {
         // §1: the phone derives digests from full history at push time and
         // never stores this entity — only a watch-kind store may write one.
         guard kind == .watch else {
@@ -535,7 +598,14 @@ public final class SwiftDataStore: BurlyStore {
             .map { try $0.snapshot() }
     }
 
-    public func pruneDeliveredSessions(ackedIDs: [UUID]) throws {
+    /// **Internal** (m1-06 review round D), for the mirror-image reason
+    /// `upsertLastPerformance` is: the prune on its own, in its own save,
+    /// is the half of a §5 `digest` whose isolation the M2 finding was
+    /// about. Nothing outside this module should be able to commit an ack
+    /// without the entries that arrived with it. Kept because
+    /// `applyDigest`'s prune semantics deserve their own unit tests, and
+    /// because `applyDigest` is built from the same `prune(ackedIDs:)`.
+    func pruneDeliveredSessions(ackedIDs: [UUID]) throws {
         guard kind == .watch else {
             throw BurlyStoreError.operationRequiresWatchStore
         }
@@ -715,6 +785,36 @@ public final class SwiftDataStore: BurlyStore {
             }
         }
         return try session.items.map { try resolveExercise($0.exerciseID) }
+    }
+
+    /// Proves no session other than `incoming` is currently in flight
+    /// (m1-06 review round D).
+    ///
+    /// §2 performs one workout at a time and `resumableActiveSession()`
+    /// promises *the* session to offer, so "which of the two do we resume?"
+    /// is a question with no good answer — the store refuses to create it
+    /// rather than resolving it by recency and quietly stranding the loser.
+    /// Finish or discard the session in flight first.
+    ///
+    /// The journal table is the index this is asked of, not `Session`: it
+    /// holds a row exactly while a session is `.active` (that is now true
+    /// by construction — `createSession` refuses `.active`, every path out
+    /// of `.active` retires the journal, and this method keeps the table at
+    /// one row), so the check costs a bounded fetch instead of a scan of
+    /// history. A journal whose session is gone or already finished does
+    /// not block anything; `resumableActiveSession()` is what clears it.
+    private func preflightSingleInFlight(incoming id: UUID) throws {
+        let journals = try context.fetch(FetchDescriptor<ActiveSessionJournal>())
+        for journal in journals where journal.sessionID != id {
+            guard
+                let other = try model(Session.self, id: journal.sessionID),
+                other.state == .active
+            else { continue }
+            throw BurlyStoreError.activeSessionAlreadyInFlight(
+                existingID: other.id,
+                incomingID: id
+            )
+        }
     }
 
     /// No `weightKg` finite/non-negative check here (m1-06 review, fix

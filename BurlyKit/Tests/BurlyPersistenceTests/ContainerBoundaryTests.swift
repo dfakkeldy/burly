@@ -50,12 +50,20 @@ struct ContainerBoundaryTests {
         let store = try SwiftDataStore.watch(at: .inMemory)
         let exerciseID = UUID()
 
-        try store.upsertLastPerformance(
-            ExerciseLastPerformanceData(
-                exerciseID: exerciseID,
-                performedAt: Date(timeIntervalSince1970: 1_780_000_000),
-                sets: [SetSnapshot(weight: Weight(kg: 60), reps: 8)]
-            )
+        // `applyDigest` is the whole of the public digest-write surface now
+        // (m1-06 review round D): the single-entry upsert and the bare
+        // prune went internal so no public path can apply half of a §5
+        // payload. A real caller therefore writes an entry exactly like
+        // this — the whole digest, with an empty ack list this round.
+        try store.applyDigest(
+            lastPerformance: [
+                ExerciseLastPerformanceData(
+                    exerciseID: exerciseID,
+                    performedAt: Date(timeIntervalSince1970: 1_780_000_000),
+                    sets: [SetSnapshot(weight: Weight(kg: 60), reps: 8)]
+                )
+            ],
+            ackedSessionIDs: []
         )
 
         let digest = try #require(try store.lastPerformance(exerciseID: exerciseID))

@@ -17,12 +17,31 @@ public enum BurlyStoreError: Error, Equatable {
     /// dangling one.)
     case missingExercise(UUID)
     /// The call is only valid against a watch-kind store. Today this guards
-    /// `upsertLastPerformance`: the phone derives digests from full history
-    /// at push time and never stores `ExerciseLastPerformance` rows (§1).
-    /// A phone-kind store — or a store whose kind cannot be determined —
-    /// refuses the write rather than silently accumulating rows it should
-    /// never have.
+    /// `applyDigest` and the watch working-set members: the phone derives
+    /// digests from full history at push time and never stores
+    /// `ExerciseLastPerformance` rows (§1). A phone-kind store — or a store
+    /// whose kind cannot be determined — refuses the write rather than
+    /// silently accumulating rows it should never have.
     case operationRequiresWatchStore
+    /// A write path other than `saveActiveSession` was handed a session in
+    /// `.active` state (m1-06 review round D).
+    ///
+    /// An `.active` row is only half of an in-flight session: the other
+    /// half is its `ActiveSessionJournal`, and §2 Resume is only correct
+    /// while the two exist together. `saveActiveSession` is the one method
+    /// that writes both in one save, so it is the one method allowed to
+    /// produce the state — `createSession` cannot mint an active row with
+    /// no journal, and `applyPhoneEdit` cannot resurrect a finished session
+    /// into one.
+    case activeSessionRequiresSaveActiveSession(sessionID: UUID)
+    /// `saveActiveSession` was asked to bring a second session into flight
+    /// while `existingID` is still `.active` (m1-06 review round D).
+    ///
+    /// §2 performs one workout at a time, and Resume promises *the* session
+    /// to offer, not a choice. The store enforces that rather than picking
+    /// a winner: finish or discard the session already in flight first. See
+    /// `BurlyStore.saveActiveSession(_:)`.
+    case activeSessionAlreadyInFlight(existingID: UUID, incomingID: UUID)
     /// `saveActiveSession` was handed a malformed `ActiveSession`. The
     /// strings are `ActiveSession.invariantViolations()` verbatim (dense
     /// item/set order, plan bijection, plan floor); the store refuses the

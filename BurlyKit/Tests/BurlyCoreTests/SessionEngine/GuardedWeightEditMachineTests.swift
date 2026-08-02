@@ -341,4 +341,90 @@ struct GuardedWeightEditMachineTests {
 
         #expect(try roundTripJSON(state) == state)
     }
+
+    // MARK: - The Weight boundary holds on this type too (m1-06 review round D)
+    //
+    // `weightKg` claims to be "settable only through `Weight`", and
+    // `state.weight` reconstructs a `Weight` from it on every read — which
+    // means a raw value that `Weight(kg:)` would trap on is not merely
+    // invalid, it is a delayed crash at a site with no visible connection
+    // to whatever produced it. Two ways in were open: the synthesized
+    // decoder, and arithmetic that overflowed from valid inputs.
+
+    @Test(
+        "a hostile weightKg in a decoded WeightEditState throws at the boundary instead of trapping on the next read",
+        arguments: ["-1", "-0.0001", "1e400", "-1e400"]
+    )
+    func hostileWeightKgFailsToDecode(rawKg: String) throws {
+        // Hand-built JSON, not a re-encoded value: the whole point is a
+        // payload no in-memory `WeightEditState` could have produced.
+        // `1e400` overflows `Double` to infinity during JSON parsing, which
+        // is how a non-finite value reaches a decoder at all.
+        let json = Data(#"{"lock":"locked","weightKg":\#(rawKg)}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(WeightEditState.self, from: json)
+        }
+    }
+
+    @Test("a valid decoded WeightEditState still comes back whole, armed state and all")
+    func validWeightKgStillDecodes() throws {
+        let json = Data(#"{"lock":"armed","weightKg":62.5}"#.utf8)
+        let state = try JSONDecoder().decode(WeightEditState.self, from: json)
+
+        #expect(state.weight.kg == 62.5)
+        #expect(state.lock == .armed)
+        #expect(state.lastActivityAt == nil)
+    }
+
+    @Test("an increment large enough to overflow leaves the weight where it was rather than storing infinity")
+    func overflowingAdjustmentIsRefusedRatherThanStored() {
+        let clock = ManualClock()
+        // Both inputs are perfectly valid `Weight`s. Their arithmetic is
+        // not: two detents of `.greatestFiniteMagnitude` is `+infinity`,
+        // which used to sail past the `max(0, …)` clamp and into storage,
+        // where the next `state.weight` read would trap.
+        let machine = makeMachine(clock: clock, increment: Weight(kg: .greatestFiniteMagnitude))
+        var state = WeightEditState(weight: Weight(kg: 60))
+        machine.handle(.longPressArm, &state)
+
+        let effect = machine.handle(.adjust(steps: 2), &state)
+
+        #expect(effect.weightChanged == false)
+        #expect(state.weightKg == 60)
+        #expect(state.weightKg.isFinite)
+        // The read that used to trap.
+        #expect(state.weight.kg == 60)
+        // The arm is untouched: a refused adjustment is not a lock event.
+        #expect(state.lock == .armed)
+    }
+
+    @Test("a downward overflow is refused too, rather than clamping the weight to zero")
+    func overflowingDownwardAdjustmentIsRefused() {
+        let clock = ManualClock()
+        let machine = makeMachine(clock: clock, increment: Weight(kg: .greatestFiniteMagnitude))
+        var state = WeightEditState(weight: Weight(kg: 60))
+        machine.handle(.longPressArm, &state)
+
+        let effect = machine.handle(.adjust(steps: -2), &state)
+
+        // `-infinity` clamped to 0 would look like a plausible edit — the
+        // lifter's 60 kg silently becoming bodyweight — which is worse than
+        // no movement at all.
+        #expect(effect.weightChanged == false)
+        #expect(state.weightKg == 60)
+    }
+
+    @Test("an ordinary large-but-finite adjustment still applies — the guard is about overflow, not about magnitude")
+    func largeFiniteAdjustmentStillApplies() {
+        let clock = ManualClock()
+        let machine = makeMachine(clock: clock, increment: Weight(kg: 1_000))
+        var state = WeightEditState(weight: Weight(kg: 60))
+        machine.handle(.longPressArm, &state)
+
+        let effect = machine.handle(.adjust(steps: 3), &state)
+
+        #expect(effect.weightChanged)
+        #expect(state.weightKg == 3_060)
+    }
 }

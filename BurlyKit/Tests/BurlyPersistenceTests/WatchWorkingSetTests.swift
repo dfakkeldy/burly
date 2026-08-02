@@ -2,9 +2,14 @@
 // Spec §1 store shape — "the watch never accumulates full history: after
 // ack, delivered sessions are pruned from the watch store."
 //
-// Unit-level coverage of the two working-set members on `BurlyStore`,
-// in-memory. The disk-backed §1 acceptance #6 gate — prune through the
-// BurlySync seam, cold-reopen, confirm absence — lives in
+// Unit-level, in-memory coverage of the prune rule itself:
+// `loggedSessionsAwaitingAck` (public) and `pruneDeliveredSessions`, which
+// is module-internal now (m1-06 review round D — nothing outside the module
+// may apply half a §5 digest) and reached here through `@testable`.
+// `applyDigest` runs the identical rule as part of the whole payload, so
+// pinning it once here keeps the digest tests about atomicity rather than
+// about which ids are eligible. The disk-backed §1 acceptance #6 gate —
+// prune through the BurlySync seam, cold-reopen, confirm absence — lives in
 // AckSeamIntegrationTests.swift.
 
 import Foundation
@@ -28,8 +33,7 @@ struct WatchWorkingSetTests {
         let store = try makeStore(.phone)
         let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
         let routine = Fixture.routine(over: [squat])
-        var session = Fixture.session(from: routine)
-        session.state = .logged
+        let session = Fixture.session(from: routine)
         try store.createExercise(squat)
         try store.createRoutine(routine)
         try store.createSession(session)
@@ -48,11 +52,13 @@ struct WatchWorkingSetTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        var logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        logged.state = .logged
-        let active = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
+        let logged = Fixture.session(from: routine, startedAt: Fixture.epoch)
         try store.createSession(logged)
-        try store.createSession(active)
+        // The live session goes in through the one path that can create one.
+        let active = Fixture.activeSession(
+            from: routine, startedAt: Fixture.epoch.addingTimeInterval(60)
+        )
+        try store.saveActiveSession(active)
 
         let awaiting = try store.loggedSessionsAwaitingAck()
         #expect(awaiting.count == 1)
@@ -67,13 +73,12 @@ struct WatchWorkingSetTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        var session = Fixture.session(from: routine)
-        session.state = .logged
-        try store.createSession(session)
-        try store.logSet(
+        let empty = Fixture.session(from: routine)
+        let session = empty.addingSet(
             SetRecordData(order: 0, weight: Weight(kg: 100), reps: 5, completedAt: Fixture.epoch),
-            toSessionItem: try #require(session.items.first?.id)
+            toItem: try #require(empty.items.first?.id)
         )
+        try store.createSession(session)
 
         try store.pruneDeliveredSessions(ackedIDs: [session.id])
 
@@ -91,9 +96,8 @@ struct WatchWorkingSetTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        let active = Fixture.session(from: routine) // defaults to .active
-
-        try store.createSession(active)
+        let active = Fixture.activeSession(from: routine)
+        try store.saveActiveSession(active)
 
         try store.pruneDeliveredSessions(ackedIDs: [active.id])
 
@@ -116,10 +120,8 @@ struct WatchWorkingSetTests {
         try store.createExercise(squat)
         try store.createRoutine(routine)
 
-        var acked = Fixture.session(from: routine, startedAt: Fixture.epoch)
-        acked.state = .logged
-        var unacked = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
-        unacked.state = .logged
+        let acked = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        let unacked = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
         try store.createSession(acked)
         try store.createSession(unacked)
 

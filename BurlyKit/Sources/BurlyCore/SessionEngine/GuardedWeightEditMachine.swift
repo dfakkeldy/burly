@@ -49,7 +49,10 @@ public struct WeightEditState: Sendable, Equatable, Hashable, Codable {
     public private(set) var lock: WeightEditLock
 
     /// Canonical kg, same guarantee as `SetRecordData.weightKg`: settable
-    /// only through `Weight`.
+    /// only through `Weight`, and — since `weight` below reconstructs a
+    /// `Weight` from it on every read — never permitted to hold a value
+    /// `Weight(kg:)` would trap on. Both mutators below enforce that, and
+    /// so does the custom decoder (m1-06 review round D).
     public private(set) var weightKg: Double
 
     /// Instant of the last activity while armed; `nil` when locked. The
@@ -71,12 +74,60 @@ public struct WeightEditState: Sendable, Equatable, Hashable, Codable {
     /// next set. Prefilling is not an edit, so it neither arms the control
     /// nor refreshes the idle deadline.
     public mutating func prefill(_ weight: Weight) {
-        weightKg = Swift.max(0, weight.kg)
+        setWeightKg(weight.kg)
     }
 
     fileprivate mutating func setLock(_ value: WeightEditLock) { lock = value }
-    fileprivate mutating func setWeightKg(_ value: Double) { weightKg = Swift.max(0, value) }
+
+    /// The one write to `weightKg`, so the stored value can never leave the
+    /// range `weight` is able to read back (m1-06 review round D).
+    ///
+    /// Negative clamps to zero: a crown turn below bodyweight is a real
+    /// gesture with an obvious floor, so §2's UX is "the number stops at 0",
+    /// not "the adjustment is refused". A **non-finite** proposal is
+    /// different in kind — it is not a weight the lifter could have been
+    /// reaching for, it is arithmetic that escaped (`increment` near
+    /// `.greatestFiniteMagnitude`, or a step count large enough to overflow)
+    /// — so it is refused outright and the weight simply does not move.
+    /// Clamping it instead would silently substitute 0 kg or a made-up
+    /// ceiling for a value the lifter never asked for, and storing it would
+    /// hand the next `state.weight` read a `Weight(kg:)` trap.
+    fileprivate mutating func setWeightKg(_ value: Double) {
+        guard value.isFinite else { return }
+        weightKg = Swift.max(0, value)
+    }
+
     fileprivate mutating func setLastActivityAt(_ value: Date?) { lastActivityAt = value }
+
+    private enum CodingKeys: String, CodingKey {
+        case lock, weightKg, lastActivityAt
+    }
+
+    /// Custom decoder (m1-06 review round D), for the same reason `Weight`,
+    /// `SetRecordData`, and `SetSnapshot` have one: synthesized `Decodable`
+    /// would write a bare `Double` straight into `weightKg`, past the
+    /// "settable only through `Weight`" guarantee the property claims above.
+    /// A payload carrying `"weightKg": -1` would decode cleanly and then
+    /// trap on the *next* `state.weight` read — a crash at a site with no
+    /// visible connection to the decode that caused it. Validating here
+    /// makes the hostile payload fail at the boundary it arrived through.
+    /// `encode(to:)` stays synthesized; the `CodingKeys` above pin the same
+    /// wire shape the type has always had.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        lock = try container.decode(WeightEditLock.self, forKey: .lock)
+        let rawKg = try container.decode(Double.self, forKey: .weightKg)
+        do {
+            weightKg = try Weight(validatingKg: rawKg).kg
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .weightKg,
+                in: container,
+                debugDescription: "weightKg must be a finite, non-negative number (decoded \(rawKg))."
+            )
+        }
+        lastActivityAt = try container.decodeIfPresent(Date.self, forKey: .lastActivityAt)
+    }
 }
 
 /// Everything that can reach the weight control (§2).
@@ -206,6 +257,13 @@ public struct GuardedWeightEditMachine: Sendable {
                 break
             }
             let before = state.weightKg
+            // Arithmetic on two *valid* inputs can still leave the range a
+            // weight lives in — a configured `increment` near
+            // `.greatestFiniteMagnitude` overflows to infinity in one
+            // detent. `setWeightKg` refuses that rather than storing it, so
+            // the control reads as "the crown did nothing" (no haptic-worthy
+            // change, `weightChanged == false`) instead of poisoning the
+            // next `state.weight` read.
             state.setWeightKg(before + Double(steps) * configuration.increment.kg)
             state.setLastActivityAt(now)
             effect.weightChanged = state.weightKg != before
