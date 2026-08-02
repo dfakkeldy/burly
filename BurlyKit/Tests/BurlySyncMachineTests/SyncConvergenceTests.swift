@@ -146,8 +146,8 @@ struct SyncConvergenceTests {
 
         // v1's transfer was cancelled; v2's is live.
         #expect(h.snapshotChannel == [
-            .init(version: 1, cancelled: true),
-            .init(version: 2, cancelled: false)
+            .init(version: 1, generation: 1, cancelled: true),
+            .init(version: 2, generation: 2, cancelled: false)
         ])
 
         // v2 lands first; the cancelled v1 straggles in anyway (a transfer
@@ -161,10 +161,10 @@ struct SyncConvergenceTests {
 
         // The late finished-callback for cancelled v1 does not clear v2's
         // outstanding slot; v2's own does.
-        h.phoneSnapshotTransferFinishes(version: 1)
-        #expect(h.phoneState.outstandingSnapshotVersion == 2)
-        h.phoneSnapshotTransferFinishes(version: 2)
-        #expect(h.phoneState.outstandingSnapshotVersion == nil)
+        h.phoneSnapshotTransferFinishes(version: 1, generation: 1)
+        #expect(h.phoneState.outstandingSnapshot == .init(version: 2, generation: 2))
+        h.phoneSnapshotTransferFinishes(version: 2, generation: 2)
+        #expect(h.phoneState.outstandingSnapshot == nil)
     }
 
     @Test("phone-deleted history: an entry-less digest still converges the watch working set to zero and strands nothing")
@@ -226,6 +226,92 @@ struct SyncConvergenceTests {
             #expect(h.phoneUpsertCount == 1)
             #expect(h.latestDigest?.ackedSessionIDs == [s])
         }
+    }
+
+    @Test("a resurrection after ack-and-prune never transmits, and stale queued copies converge identically in both orders")
+    func resurrectionAfterAckPruneCannotReopenPayloadRace() {
+        // m4-02 review 2, #1's full trace. Round 1's pin lived in the
+        // outbox entry, so the ack that pruned the entry also removed the
+        // pin: a later same-id completion re-entered the outbox and
+        // transport order decided the recreated payload again. Now the
+        // remembered acked set refuses the resurrection outright, so the
+        // only bytes ever on the wire are the original pinned A copies —
+        // and every delivery order of those converges on A.
+        let s = UUID()
+
+        for reversed in [false, true] {
+            var h = SyncHarness()
+            h.watchCompletes(s, payload: "payload-A")
+            h.watchActivates() // a stale retry copy queues: channel [A, A]
+            #expect(h.sessionChannel.map(\.payload) == ["payload-A", "payload-A"])
+
+            // First copy delivers; the ack lands; the pin is pruned.
+            h.deliverSessionToPhone(h.sessionChannel[0])
+            h.deliverDigestToWatch()
+            #expect(h.watchState.outbox.isEmpty)
+
+            // Upstream bug: the same id "completes" again with different
+            // bytes. Refused — reported, nothing queued, nothing new on
+            // the wire.
+            h.watchCompletes(s, payload: "payload-B")
+            #expect(h.watchStaleCompletionReports == [s])
+            #expect(h.watchState.outbox.isEmpty)
+            #expect(h.sessionChannel.map(\.payload) == ["payload-A", "payload-A"])
+
+            // The phone deletes the session; the stale queued A copies
+            // then land against an absent row, in either order.
+            h.phoneDeletesSession(s)
+            let deliveries = reversed ? [1, 0] : [0, 1]
+            for index in deliveries {
+                h.deliverSessionToPhone(h.sessionChannel[index])
+            }
+
+            // Both orders recreate the same payload: A, exactly once.
+            #expect(h.phoneStoredPayloads[s] == "payload-A")
+            #expect(h.phoneStoredRevisions[s] == 1)
+
+            // And the working set converges: the re-ack prunes the
+            // resurrected store row on the next digest delivery.
+            h.deliverDigestToWatch()
+            #expect(h.watchAwaitingAck.isEmpty)
+            #expect(h.watchState.outbox.isEmpty)
+        }
+    }
+
+    @Test("uncorrelated confirmations are inert end-to-end: duplicates, crash-era replays, and never-routed ids")
+    func uncorrelatedConfirmationsAreInert() {
+        // m4-02 review 2, #3's fault injections against the full harness.
+        var h = SyncHarness()
+        let s = UUID()
+        h.watchCompletes(s)
+        h.deliverNextSessionToPhone()
+        #expect(h.phoneState.ackAge[s] == 0)
+        let digestAfterRealConfirmation = h.latestDigest
+
+        // Duplicate confirmation: no ack reset, no new publication.
+        // (`oneDay` typed explicitly — `#expect` evaluates a bare
+        // integer-literal product as Int and its Optional<Double>-vs-Int
+        // comparison is false even for equal values.)
+        let oneDay: TimeInterval = 24 * 60 * 60
+        h.now.addTimeInterval(oneDay)
+        h.injectStoreConfirmation(s)
+        #expect(h.phoneState.ackAge[s] == oneDay)
+        #expect(h.latestDigest == digestAfterRealConfirmation)
+
+        // Never-routed id: nothing appears anywhere.
+        let ghost = UUID()
+        h.injectStoreConfirmation(ghost)
+        #expect(h.phoneState.ackAge[ghost] == nil)
+        #expect(h.latestDigest == digestAfterRealConfirmation)
+
+        // Crash-and-rehydrate from the persisted state (ack present,
+        // pending slot long consumed), then a transport-level replay of
+        // the old confirmation: still inert.
+        let persisted = h.phoneState
+        h.rehydratePhone(from: persisted)
+        h.injectStoreConfirmation(s)
+        #expect(h.phoneState.ackAge[s] == oneDay)
+        #expect(h.latestDigest == digestAfterRealConfirmation)
     }
 
     @Test("a stale drop decision racing a delete cannot ack an unstored session — the verify re-drives instead")

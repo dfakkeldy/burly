@@ -8,11 +8,13 @@
 // 2. **Policy guard (this file).** The build assertion silently disappears
 //    if someone adds the dependency edge back, so this test checks both
 //    halves of the seam: every machine source imports Foundation and
-//    nothing else (any spelling, including attribute-prefixed forms like
-//    `@_exported import`), and the manifest's BurlySyncMachine target
+//    nothing else (attribute-prefixed forms like `@_exported import` and
+//    access-level forms like `public import` included — the parser is
+//    itself pinned below), and the manifest's BurlySyncMachine target
 //    still declares no dependencies (m4-02 review 1 caught the first
 //    version of this guard checking only source text, which a
-//    manifest-level edge slips past without any import statement).
+//    manifest-level edge slips past without any import statement;
+//    review 2 caught `public import` slipping past the source scan).
 import Foundation
 import Testing
 
@@ -89,15 +91,46 @@ struct SyncMachineSeamTests {
         )
     }
 
+    @Test("the import parser recognizes every legal import spelling and rejects prose")
+    func importParserRecognizesAllSpellings() {
+        // The guard is only as strong as this parser, so the parser is
+        // pinned directly (m4-02 review 2, #4: `public import Combine`
+        // slipped past a version that only tolerated `@`-attributes
+        // before `import`).
+        #expect(importedModule(of: "import Foundation") == "Foundation")
+        #expect(importedModule(of: "  import BurlyCore") == "BurlyCore")
+        #expect(importedModule(of: "@_exported import BurlyCore") == "BurlyCore")
+        #expect(importedModule(of: "@testable import BurlySync") == "BurlySync")
+        #expect(importedModule(of: "public import Combine") == "Combine")
+        #expect(importedModule(of: "package import BurlyCore") == "BurlyCore")
+        #expect(importedModule(of: "internal import Observation") == "Observation")
+        #expect(importedModule(of: "fileprivate import CoreData") == "CoreData")
+        #expect(importedModule(of: "private import SwiftData") == "SwiftData")
+        #expect(importedModule(of: "@preconcurrency public import WatchKit") == "WatchKit")
+        #expect(importedModule(of: "import struct Foundation.Date") == "Foundation")
+        #expect(importedModule(of: "import class BurlyCore.SomeClass") == "BurlyCore")
+
+        // Prose and comments that merely contain the word are not imports.
+        #expect(importedModule(of: "// import BurlyCore would break the seam") == nil)
+        #expect(importedModule(of: "/// never import domain types here") == nil)
+        #expect(importedModule(of: "let importIndex = 3") == nil)
+    }
+
     /// The module named by an import declaration on this line, or `nil` if
     /// the line is not one. Tolerates attribute prefixes (`@_exported
-    /// import X`, `@testable import Y`) — spellings the first version of
-    /// this guard missed.
+    /// import X`, `@testable import Y`, `@preconcurrency import Z`) and
+    /// access-level modifiers (`public import X`, `private import Y`, …) —
+    /// the latter a spelling the previous version of this guard missed
+    /// (m4-02 review 2, #4): an SDK module like Combine needs no manifest
+    /// dependency, so `public import Combine` passed both guards.
     private func importedModule(of line: Substring) -> String? {
+        let accessModifiers: Set<Substring> = [
+            "public", "package", "internal", "fileprivate", "private", "open"
+        ]
         let tokens = line.trimmingCharacters(in: .whitespaces)
             .split(separator: " ", omittingEmptySubsequences: true)
         guard let importIndex = tokens.firstIndex(of: "import"),
-              tokens[..<importIndex].allSatisfy({ $0.hasPrefix("@") }),
+              tokens[..<importIndex].allSatisfy({ $0.hasPrefix("@") || accessModifiers.contains($0) }),
               importIndex + 1 < tokens.count
         else { return nil }
         // `import struct Foundation.Date` spells the module second.

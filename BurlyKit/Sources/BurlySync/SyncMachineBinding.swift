@@ -23,6 +23,11 @@
 // - `.applyDigest`            → `SessionDigestReceipt(applying:)` below,
 //                               through `SessionDigestApplying` — one
 //                               transaction, both halves.
+// - `.reportStaleSessionCompletion`
+//                             → diagnostics only (log/surface): a
+//                               completion replayed for an already-acked
+//                               session. Nothing is transmitted and no
+//                               store call is made.
 //
 // Phone machine:
 // - `.applySessionUpsert`     → one store transaction: recheck the stored
@@ -52,7 +57,15 @@
 //                               below, push latest-wins.
 // - `.transmitSnapshot`       → build the full catalog+routine payload at
 //                               that version from store truth, transfer it.
-// - `.cancelSnapshotTransfer` → cancel the transport's outstanding transfer.
+//                               The command's `generation` is the
+//                               transfer's identity: key transfer
+//                               bookkeeping by it and echo BOTH values
+//                               into `.snapshotTransferFinished` — version
+//                               alone aliases a cancelled transfer's late
+//                               callback with a live same-version
+//                               replacement (m4-02 review 2, #2).
+// - `.cancelSnapshotTransfer` → cancel the transport's transfer for that
+//                               exact `(version, generation)`.
 //
 // ## BINDING CONTRACT — phone session ingest (m4-05 implements and tests)
 //
@@ -72,12 +85,19 @@
 //    stored revision inside the store transaction and commits only if the
 //    incoming revision is still greater than what is stored (or nothing
 //    is). A lookup gone stale-low must not overwrite a newer row.
-// 3. **Confirmation only after durability.** `.sessionStoreConfirmed(id:)`
-//    is sent only once the store durably holds a row for `id` at
-//    revision ≥ the command's — a committed upsert, or a verify that
-//    found an equal/newer row. A failed or rolled-back transaction sends
-//    nothing: no confirmation, no ack, no publish; the watch's
-//    retry-until-ack re-drives the exchange.
+// 3. **Confirmation only after durability, at most once, causally
+//    correlated.** `.sessionStoreConfirmed(id:)` is sent only once the
+//    store durably holds a row for `id` at revision ≥ the command's — a
+//    committed upsert, or a verify that found an equal/newer row — and
+//    only in direct response to the specific `.applySessionUpsert` /
+//    `.confirmSessionStored` command that ran: exactly one confirmation
+//    per routed command, never synthesized, never replayed (m4-02
+//    review 2, #3). A failed or rolled-back transaction sends nothing:
+//    no confirmation, no ack, no publish; the watch's retry-until-ack
+//    re-drives the exchange. The machine ignores confirmations it
+//    cannot correlate to a pending routing — duplicates, crash-era
+//    replays, never-routed ids — without touching ack retention, but
+//    that is defense in depth, not permission to send them.
 // 4. **Failed verification re-drives.** When `.confirmSessionStored`
 //    finds no such row (the advisory lookup lost a race with a delete),
 //    the runtime feeds the payload back through `.sessionReceived` with

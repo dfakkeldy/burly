@@ -32,9 +32,11 @@ struct PhoneIngestTests {
         )
 
         // The command carries the revision so the store transaction can
-        // recheck it at the write; the ack waits for the confirmation.
+        // recheck it at the write; the ack waits for the confirmation,
+        // and the routing opens exactly one pending slot for it.
         #expect(commands == [.applySessionUpsert(id: id, revision: 1, payload: "s1")])
         #expect(state.ackAge.isEmpty)
+        #expect(state.pendingStoreConfirmations == [id: .init(revision: 1)])
     }
 
     @Test("incoming revision ≤ stored routes to the drop path's store handshake", arguments: [
@@ -53,9 +55,11 @@ struct PhoneIngestTests {
         )
 
         // No upsert — but no ack from the stale lookup either: the re-ack
-        // the retrying watch is owed rides the atomic verification.
+        // the retrying watch is owed rides the atomic verification, and
+        // the drop route opens a pending slot exactly like the apply one.
         #expect(commands == [.confirmSessionStored(id: id, revision: incoming)])
         #expect(state.ackAge.isEmpty)
+        #expect(state.pendingStoreConfirmations == [id: .init(revision: incoming)])
     }
 
     @Test("incoming revision above stored wins the upsert route")
@@ -86,16 +90,44 @@ struct PhoneIngestTests {
 
         #expect(commands == [.publishDigest(snapshotVersion: 0, ackedSessionIDs: [id])])
         #expect(state.ackAge == [id: 0])
+        // The confirmation consumed its pending slot — at most once.
+        #expect(state.pendingStoreConfirmations.isEmpty)
     }
 
-    @Test("a confirmation for an id the machine never routed is trusted — it is the runtime's store assertion")
-    func unroutedConfirmationIsTrusted() {
+    @Test("a confirmation for an id the machine never routed is ignored without touching anything")
+    func unroutedConfirmationIsIgnored() {
+        // m4-02 review 2, #3 — the previous round trusted these, which
+        // made the ack set writable by anything that could spell an
+        // event. No routing, no ack.
         var state = TestPhoneMachine.State()
         let id = UUID()
 
         let commands = machine.handle(.sessionStoreConfirmed(id: id), &state, now: t0)
 
-        #expect(commands == [.publishDigest(snapshotVersion: 0, ackedSessionIDs: [id])])
+        #expect(commands.isEmpty)
+        #expect(state.ackAge.isEmpty)
+    }
+
+    @Test("a pending routing that is never confirmed ages out at the retention bound")
+    func unconfirmedRoutingAgesOut() {
+        // Keeps the pending map bounded even when a store transaction
+        // fails and the watch never redelivers; a confirmation arriving
+        // after the sweep is ignored like any other uncorrelated one.
+        var state = TestPhoneMachine.State()
+        let id = UUID()
+        let retention = TestPhoneMachine.Configuration().ackRetention
+        _ = machine.handle(
+            .sessionReceived(id: id, revision: 1, storedRevision: nil, payload: "s1"),
+            &state,
+            now: t0
+        )
+
+        _ = machine.handle(.historyChanged, &state, now: t0.addingTimeInterval(retention))
+        #expect(state.pendingStoreConfirmations.isEmpty)
+
+        let late = machine.handle(.sessionStoreConfirmed(id: id), &state, now: t0.addingTimeInterval(retention))
+        #expect(late.isEmpty)
+        #expect(state.ackAge.isEmpty)
     }
 }
 
@@ -104,8 +136,15 @@ struct PhoneAckRetentionTests {
     let machine = TestPhoneMachine()
     let retention = TestPhoneMachine.Configuration().ackRetention
 
-    /// Confirms `id` into `state` at `now` — the only way an ack is born.
+    /// Routes and confirms `id` into `state` at `now` — the only way an
+    /// ack is born: a routed command followed by its correlated store
+    /// confirmation.
     private func ack(_ id: UUID, _ state: inout TestPhoneMachine.State, at now: Date) {
+        _ = machine.handle(
+            .sessionReceived(id: id, revision: 1, storedRevision: nil, payload: "p-\(id.uuidString)"),
+            &state,
+            now: now
+        )
         _ = machine.handle(.sessionStoreConfirmed(id: id), &state, now: now)
     }
 
@@ -198,6 +237,53 @@ struct PhoneAckRetentionTests {
         #expect(afterCorrection == [.publishDigest(snapshotVersion: 0, ackedSessionIDs: [])])
     }
 
+    @Test("a duplicate confirmation cannot reset retention — the 30-day bound survives replays")
+    func duplicateConfirmationCannotResetRetention() {
+        // m4-02 review 2, #3: the uncorrelated confirmation of the
+        // previous round reset the ack's age on every replay, so a
+        // duplicate delivered every 29 days kept the ack alive forever.
+        // The pending slot was consumed by the real confirmation; the
+        // duplicate finds nothing to correlate with and ages nothing.
+        var state = TestPhoneMachine.State()
+        let id = UUID()
+        ack(id, &state, at: t0)
+
+        // Typed explicitly: `#expect` evaluates a bare integer-literal
+        // product as Int, and its Optional<Double>-vs-Int comparison is
+        // false even for equal values.
+        let twentyNineDays: TimeInterval = 29 * 24 * 60 * 60
+        let duplicate = machine.handle(
+            .sessionStoreConfirmed(id: id),
+            &state,
+            now: t0.addingTimeInterval(twentyNineDays)
+        )
+        #expect(duplicate.isEmpty)
+        #expect(state.ackAge[id] == twentyNineDays)
+
+        // One more day and the ack expires exactly on schedule.
+        let atBound = machine.handle(.historyChanged, &state, now: t0.addingTimeInterval(retention))
+        #expect(atBound == [.publishDigest(snapshotVersion: 0, ackedSessionIDs: [])])
+    }
+
+    @Test("a confirmation replayed after crash-and-rehydrate is ignored — the persisted slot was already consumed")
+    func replayedConfirmationAfterRehydrateIsIgnored() {
+        // The routing confirmed, the ack persisted, and the pending slot
+        // was consumed before the crash — that is exactly the state that
+        // rehydrates. A transport-level replay of the old confirmation
+        // must find nothing to correlate with.
+        let id = UUID()
+        let tenDays: TimeInterval = 10 * 24 * 60 * 60
+        var state = TestPhoneMachine.State(
+            ackAge: [id: tenDays],
+            lastObservedNow: t0
+        )
+
+        let commands = machine.handle(.sessionStoreConfirmed(id: id), &state, now: t0)
+
+        #expect(commands.isEmpty)
+        #expect(state.ackAge == [id: tenDays])
+    }
+
     @Test("a rehydrated over-age ack is swept even before the clock moves")
     func rehydratedOverAgeAckIsSwept() {
         var state = TestPhoneMachine.State(
@@ -235,15 +321,15 @@ struct PhoneDigestTriggerTests {
 struct PhoneSnapshotTests {
     let machine = TestPhoneMachine()
 
-    @Test("a catalog change bumps the version once and transmits it")
+    @Test("a catalog change bumps the version once and transmits it under a fresh generation")
     func catalogChangeBumpsAndTransmits() {
         var state = TestPhoneMachine.State()
 
         let commands = machine.handle(.catalogChanged, &state, now: t0)
 
-        #expect(commands == [.transmitSnapshot(version: 1)])
+        #expect(commands == [.transmitSnapshot(version: 1, generation: 1)])
         #expect(state.latestSnapshotVersion == 1)
-        #expect(state.outstandingSnapshotVersion == 1)
+        #expect(state.outstandingSnapshot == .init(version: 1, generation: 1))
     }
 
     @Test("a newer snapshot cancels the outstanding transfer before transmitting")
@@ -254,10 +340,10 @@ struct PhoneSnapshotTests {
         let commands = machine.handle(.catalogChanged, &state, now: t0.addingTimeInterval(5))
 
         #expect(commands == [
-            .cancelSnapshotTransfer(version: 1),
-            .transmitSnapshot(version: 2)
+            .cancelSnapshotTransfer(version: 1, generation: 1),
+            .transmitSnapshot(version: 2, generation: 2)
         ])
-        #expect(state.outstandingSnapshotVersion == 2)
+        #expect(state.outstandingSnapshot == .init(version: 2, generation: 2))
     }
 
     @Test("a push trigger re-sends the current version without bumping it")
@@ -266,9 +352,9 @@ struct PhoneSnapshotTests {
 
         let commands = machine.handle(.snapshotPushTriggered, &state, now: t0)
 
-        #expect(commands == [.transmitSnapshot(version: 3)])
+        #expect(commands == [.transmitSnapshot(version: 3, generation: 1)])
         #expect(state.latestSnapshotVersion == 3)
-        #expect(state.outstandingSnapshotVersion == 3)
+        #expect(state.outstandingSnapshot == .init(version: 3, generation: 1))
     }
 
     @Test("a lost finished-callback cannot wedge push triggers — every push moment cancels and re-sends")
@@ -283,18 +369,57 @@ struct PhoneSnapshotTests {
 
         let firstPush = machine.handle(.snapshotPushTriggered, &state, now: t0.addingTimeInterval(60))
         #expect(firstPush == [
-            .cancelSnapshotTransfer(version: 1),
-            .transmitSnapshot(version: 1)
+            .cancelSnapshotTransfer(version: 1, generation: 1),
+            .transmitSnapshot(version: 1, generation: 2)
         ])
 
         // And again on the next push moment — liveness does not depend on
         // any callback ever arriving.
         let secondPush = machine.handle(.snapshotPushTriggered, &state, now: t0.addingTimeInterval(120))
         #expect(secondPush == [
-            .cancelSnapshotTransfer(version: 1),
-            .transmitSnapshot(version: 1)
+            .cancelSnapshotTransfer(version: 1, generation: 2),
+            .transmitSnapshot(version: 1, generation: 3)
         ])
-        #expect(state.outstandingSnapshotVersion == 1)
+        #expect(state.outstandingSnapshot == .init(version: 1, generation: 3))
+    }
+
+    @Test("a cancelled same-version transfer's late callback cannot clear the live replacement's slot")
+    func sameVersionLateCallbackCannotClearLiveSlot() {
+        // m4-02 review 2, #2: push moments cancel-and-resend the *same*
+        // version, so version alone aliased the cancelled transfer's late
+        // callback with its live replacement — the callback cleared the
+        // slot, and the next catalog change transmitted v2 without
+        // cancelling the still-live v1 transfer. Generations break the
+        // alias.
+        var state = TestPhoneMachine.State()
+        _ = machine.handle(.catalogChanged, &state, now: t0)
+        _ = machine.handle(.snapshotPushTriggered, &state, now: t0.addingTimeInterval(60))
+        #expect(state.outstandingSnapshot == .init(version: 1, generation: 2))
+
+        // The cancelled generation-1 transfer reports in late, carrying
+        // the same version as the live generation-2 one: slot intact.
+        _ = machine.handle(
+            .snapshotTransferFinished(version: 1, generation: 1),
+            &state,
+            now: t0.addingTimeInterval(61)
+        )
+        #expect(state.outstandingSnapshot == .init(version: 1, generation: 2))
+
+        // Supersession therefore still cancels the transfer that is
+        // actually alive.
+        let commands = machine.handle(.catalogChanged, &state, now: t0.addingTimeInterval(90))
+        #expect(commands == [
+            .cancelSnapshotTransfer(version: 1, generation: 2),
+            .transmitSnapshot(version: 2, generation: 3)
+        ])
+
+        // And the live transfer's own callback clears its slot normally.
+        _ = machine.handle(
+            .snapshotTransferFinished(version: 2, generation: 3),
+            &state,
+            now: t0.addingTimeInterval(120)
+        )
+        #expect(state.outstandingSnapshot == nil)
     }
 
     @Test("a push trigger over a stale outstanding transfer supersedes it like an edit would")
@@ -304,29 +429,30 @@ struct PhoneSnapshotTests {
         // catalog version 3.
         var state = TestPhoneMachine.State(
             latestSnapshotVersion: 3,
-            outstandingSnapshotVersion: 1
+            lastTransferGeneration: 4,
+            outstandingSnapshot: .init(version: 1, generation: 2)
         )
 
         let commands = machine.handle(.snapshotPushTriggered, &state, now: t0)
 
         #expect(commands == [
-            .cancelSnapshotTransfer(version: 1),
-            .transmitSnapshot(version: 3)
+            .cancelSnapshotTransfer(version: 1, generation: 2),
+            .transmitSnapshot(version: 3, generation: 5)
         ])
-        #expect(state.outstandingSnapshotVersion == 3)
+        #expect(state.outstandingSnapshot == .init(version: 3, generation: 5))
     }
 
     @Test("a finished transfer clears the outstanding slot; a late callback for a superseded one does not")
-    func transferFinishedClearsOnlyMatchingVersion() {
+    func transferFinishedClearsOnlyMatchingIdentity() {
         var state = TestPhoneMachine.State()
         _ = machine.handle(.catalogChanged, &state, now: t0)
         _ = machine.handle(.catalogChanged, &state, now: t0.addingTimeInterval(5))
 
         // The cancelled v1 transfer reports in late: v2 keeps the slot.
-        _ = machine.handle(.snapshotTransferFinished(version: 1), &state, now: t0.addingTimeInterval(6))
-        #expect(state.outstandingSnapshotVersion == 2)
+        _ = machine.handle(.snapshotTransferFinished(version: 1, generation: 1), &state, now: t0.addingTimeInterval(6))
+        #expect(state.outstandingSnapshot == .init(version: 2, generation: 2))
 
-        _ = machine.handle(.snapshotTransferFinished(version: 2), &state, now: t0.addingTimeInterval(7))
-        #expect(state.outstandingSnapshotVersion == nil)
+        _ = machine.handle(.snapshotTransferFinished(version: 2, generation: 2), &state, now: t0.addingTimeInterval(7))
+        #expect(state.outstandingSnapshot == nil)
     }
 }

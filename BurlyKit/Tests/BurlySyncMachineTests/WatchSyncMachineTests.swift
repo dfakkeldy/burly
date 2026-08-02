@@ -132,6 +132,46 @@ struct WatchOutboxTests {
         #expect(commands == [.applyDigest(payload: "d1")])
         #expect(state.outbox == [.init(id: id, payload: "s1")])
     }
+
+    @Test("a completion for an already-acked id is refused as a stale resurrection — reported, never transmitted")
+    func ackedIDCompletionIsRefused() {
+        // m4-02 review 2, #1: the ack that prunes an entry also removes
+        // its pin, so without this guard a later same-id completion
+        // re-entered the outbox and handed the payload decision back to
+        // transport order. The acked set the digest delivered refuses it.
+        var state = TestWatchMachine.State()
+        let id = UUID()
+        _ = TestWatchMachine.handle(.sessionCompleted(id: id, payload: "A"), &state)
+        _ = TestWatchMachine.handle(.digestReceived(ackedSessionIDs: [id], payload: "d1"), &state)
+        #expect(state.outbox.isEmpty)
+
+        let commands = TestWatchMachine.handle(.sessionCompleted(id: id, payload: "B"), &state)
+
+        #expect(commands == [.reportStaleSessionCompletion(id: id)])
+        #expect(state.outbox.isEmpty)
+
+        // Nothing to retry either — the refusal is total.
+        let activation = TestWatchMachine.handle(.activated(alreadyQueuedSessionIDs: []), &state)
+        #expect(activation.isEmpty)
+    }
+
+    @Test("the remembered acked set is replaced wholesale by each digest — the guard's horizon is the phone's retention")
+    func ackedSetIsLatestWins() {
+        var state = TestWatchMachine.State()
+        let id = UUID()
+        _ = TestWatchMachine.handle(.sessionCompleted(id: id, payload: "A"), &state)
+        _ = TestWatchMachine.handle(.digestReceived(ackedSessionIDs: [id], payload: "d1"), &state)
+        #expect(state.lastAckedSessionIDs == [id])
+
+        // ~30 days later the phone's retention aged the id out of its
+        // digests; the guard ages out with it, by design — bounded state
+        // can refuse resurrections only within the ack horizon.
+        _ = TestWatchMachine.handle(.digestReceived(ackedSessionIDs: [], payload: "d2"), &state)
+        #expect(state.lastAckedSessionIDs.isEmpty)
+
+        let commands = TestWatchMachine.handle(.sessionCompleted(id: id, payload: "B"), &state)
+        #expect(commands == [.transmitSession(id: id, payload: "B")])
+    }
 }
 
 @Suite("§5 watch machine — digest application")

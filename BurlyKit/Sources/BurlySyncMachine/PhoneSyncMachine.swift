@@ -21,7 +21,12 @@
 // Structurally, an ack can now exist only downstream of a store
 // confirmation; a runtime cannot leak one early without simply lying in
 // `.sessionStoreConfirmed`, and the binding contract (BurlySync's
-// `SyncMachineBinding.swift`) forbids exactly that.
+// `SyncMachineBinding.swift`) forbids exactly that. Confirmations are
+// also *correlated* (m4-02 review 2, #3): each routing opens exactly one
+// pending slot, a confirmation consumes it, and anything the machine
+// cannot match to a slot — a duplicate, a crash-era replay, an id never
+// routed — is ignored without touching retention, so replays cannot
+// reset an ack's age and quietly defeat the 30-day bound.
 //
 // ## The stored revision rides the event — as advice, rechecked at the write
 //
@@ -86,12 +91,47 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
         }
     }
 
+    /// One session ingest routed to the store and not yet confirmed: the
+    /// revision the command carried, and how long the routing has waited.
+    /// Ages exactly like an ack and is dropped at the same bound — a
+    /// confirmation that takes longer than the retention window to arrive
+    /// is dead anyway (the watch's retry re-drives the exchange), and
+    /// aging keeps the pending map bounded even if a store transaction
+    /// fails and its session is never redelivered.
+    public struct PendingIngest: Sendable, Equatable {
+        public var revision: Int
+        public var age: TimeInterval
+
+        public init(revision: Int, age: TimeInterval = 0) {
+            precondition(age >= 0, "Pending ingest age must be non-negative.")
+            self.revision = revision
+            self.age = age
+        }
+    }
+
+    /// Identity of one snapshot transfer: the catalog version it carries
+    /// plus a monotonically increasing per-transfer generation. Version
+    /// alone cannot tell a cancelled transfer's late callback apart from
+    /// the live replacement carrying the *same* version (m4-02 review 2,
+    /// #2) — push moments cancel-and-resend the current version, so two
+    /// transfers of one version genuinely coexist.
+    public struct SnapshotTransfer: Sendable, Equatable {
+        public var version: Int
+        public var generation: Int
+
+        public init(version: Int, generation: Int) {
+            self.version = version
+            self.generation = generation
+        }
+    }
+
     /// Everything the phone side of the protocol remembers. A plain value;
     /// the runtime persists it (m4-05) — in particular `ackAge` and
     /// `lastObservedNow` must survive relaunch together (they are one
     /// fact: "how old each ack was, as of when") or every unpruned watch
     /// session redelivers as a fresh arrival, and `latestSnapshotVersion`
-    /// must survive or the monotonic version line resets under the watch.
+    /// and `lastTransferGeneration` must survive or the monotonic version
+    /// and generation lines reset under the watch and the transport.
     public struct State: Sendable, Equatable {
         /// Accumulated forward-only age of each acked session id — the
         /// retention clock §5's 30-day bound runs against (see the file
@@ -104,32 +144,53 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
         /// suspended is counted in full by the first event after resume.
         public fileprivate(set) var lastObservedNow: Date?
 
+        /// Ingests routed to the store whose confirmations have not
+        /// arrived. `.sessionStoreConfirmed` is honored only for ids in
+        /// here, and removes them — at most once per routing (m4-02
+        /// review 2, #3): a confirmation the machine cannot correlate to
+        /// a command it issued (never routed, already consumed, or a
+        /// replay from before a crash) is ignored without touching
+        /// retention, so duplicates cannot keep an ack alive forever.
+        public fileprivate(set) var pendingStoreConfirmations: [UUID: PendingIngest]
+
         /// The monotonic §5 snapshot version of the phone's current
         /// catalog+routine working set. Bumped only by `.catalogChanged`;
         /// push triggers re-send the current version.
         public fileprivate(set) var latestSnapshotVersion: Int
 
-        /// The version whose transfer is currently outstanding, if any —
-        /// what §5's supersession rule ("a newer snapshot cancels any
-        /// outstanding snapshot transfer") cancels against. Advisory, not
+        /// The generation stamped on the most recent `transmitSnapshot`
+        /// command — monotonic across every transfer this machine ever
+        /// commanded, so no two transfers share an identity even at the
+        /// same version.
+        public fileprivate(set) var lastTransferGeneration: Int
+
+        /// The transfer currently outstanding, if any — what §5's
+        /// supersession rule ("a newer snapshot cancels any outstanding
+        /// snapshot transfer") cancels against. Advisory, not
         /// load-bearing for liveness: a push moment re-sends the current
         /// version regardless, so a lost finished-callback can only cost
         /// one redundant cancel, never wedge the pipeline (m4-02 review 1,
-        /// #3).
-        public fileprivate(set) var outstandingSnapshotVersion: Int?
+        /// #3). Cleared only by a callback matching the full
+        /// (version, generation) identity (review 2, #2).
+        public fileprivate(set) var outstandingSnapshot: SnapshotTransfer?
 
         public init(
             ackAge: [UUID: TimeInterval] = [:],
             lastObservedNow: Date? = nil,
+            pendingStoreConfirmations: [UUID: PendingIngest] = [:],
             latestSnapshotVersion: Int = 0,
-            outstandingSnapshotVersion: Int? = nil
+            lastTransferGeneration: Int = 0,
+            outstandingSnapshot: SnapshotTransfer? = nil
         ) {
             precondition(latestSnapshotVersion >= 0, "Snapshot version must be non-negative.")
+            precondition(lastTransferGeneration >= 0, "Transfer generation must be non-negative.")
             precondition(ackAge.values.allSatisfy { $0 >= 0 }, "Ack ages must be non-negative.")
             self.ackAge = ackAge
             self.lastObservedNow = lastObservedNow
+            self.pendingStoreConfirmations = pendingStoreConfirmations
             self.latestSnapshotVersion = latestSnapshotVersion
-            self.outstandingSnapshotVersion = outstandingSnapshotVersion
+            self.lastTransferGeneration = lastTransferGeneration
+            self.outstandingSnapshot = outstandingSnapshot
         }
     }
 
@@ -145,10 +206,15 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
         /// row for `id` at a revision ≥ the one the triggering command
         /// carried — either the conditional upsert committed, or the
         /// atomic verification found an equal-or-newer row. This is the
-        /// only event that records an ack. Sending it without that store
-        /// guarantee is a binding-contract violation (see
-        /// `SyncMachineBinding.swift`), not a state the machine can
-        /// detect.
+        /// only event that records an ack, and it is honored **at most
+        /// once per routed command**: only while `id` is in
+        /// `pendingStoreConfirmations` (m4-02 review 2, #3). Duplicates,
+        /// crash-era replays, and confirmations for ids the machine never
+        /// routed are ignored without touching retention. Sending one
+        /// without the store guarantee remains a binding-contract
+        /// violation (see `SyncMachineBinding.swift`) the machine cannot
+        /// detect; the correlation here is defense in depth, not
+        /// permission to replay.
         case sessionStoreConfirmed(id: UUID)
 
         /// Stored history changed locally — a §6 edit, a delete, an import.
@@ -168,11 +234,15 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
         /// never wedge these pushes (m4-02 review 1, #3).
         case snapshotPushTriggered
 
-        /// The transport finished (or failed) the transfer of `version`.
-        /// Completion is not "the watch applied it" — the watch's own
-        /// version rule handles staleness — this only clears the
-        /// outstanding slot so supersession has nothing left to cancel.
-        case snapshotTransferFinished(version: Int)
+        /// The transport finished (or failed) the transfer identified by
+        /// `(version, generation)` — both echoed from the
+        /// `transmitSnapshot` command that started it (m4-02 review 2,
+        /// #2: version alone aliases a cancelled transfer's late callback
+        /// with its live same-version replacement). Completion is not
+        /// "the watch applied it" — the watch's own version rule handles
+        /// staleness — this only clears the outstanding slot so
+        /// supersession has nothing left to cancel.
+        case snapshotTransferFinished(version: Int, generation: Int)
     }
 
     public enum Command: Sendable, Equatable {
@@ -208,14 +278,16 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
         case publishDigest(snapshotVersion: Int, ackedSessionIDs: Set<UUID>)
 
         /// Build the full catalog+routine payload at `version` from store
-        /// truth and start its transfer.
-        case transmitSnapshot(version: Int)
+        /// truth and start its transfer. `generation` is this transfer's
+        /// identity; the runtime must key its transfer bookkeeping by it
+        /// and echo both values into `.snapshotTransferFinished`.
+        case transmitSnapshot(version: Int, generation: Int)
 
-        /// §5 supersession: cancel the outstanding transfer of `version`.
-        /// Always emitted before the `transmitSnapshot` that replaces it;
-        /// cancelling a transfer the transport already finished or lost
-        /// is a harmless no-op there.
-        case cancelSnapshotTransfer(version: Int)
+        /// §5 supersession: cancel the outstanding transfer identified by
+        /// `(version, generation)`. Always emitted before the
+        /// `transmitSnapshot` that replaces it; cancelling a transfer the
+        /// transport already finished or lost is a harmless no-op there.
+        case cancelSnapshotTransfer(version: Int, generation: Int)
     }
 
     public var configuration: Configuration
@@ -237,7 +309,12 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
             // §5 idempotency: incoming ≤ stored → drop silently. Either
             // branch is only a routing decision; the ack waits for the
             // store's confirmation, and the write/verify rechecks the
-            // revision where the advisory lookup cannot be stale.
+            // revision where the advisory lookup cannot be stale. The
+            // routing is recorded so exactly one confirmation can be
+            // honored for it — a re-route of the same id overwrites the
+            // slot, which is correct: the serialized executor (binding
+            // contract item 1) finishes one delivery before the next.
+            state.pendingStoreConfirmations[id] = PendingIngest(revision: revision)
             let applies = storedRevision.map { revision > $0 } ?? true
             if applies {
                 return [.applySessionUpsert(id: id, revision: revision, payload: payload)]
@@ -245,12 +322,18 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
             return [.confirmSessionStored(id: id, revision: revision)]
 
         case let .sessionStoreConfirmed(id):
+            // Honored only against a routing this machine issued, at most
+            // once (m4-02 review 2, #3): consuming the pending slot is
+            // what makes a duplicate or crash-era replay inert — without
+            // it, replayed confirmations could reset an ack's age forever
+            // and the 30-day bound would be a fiction.
+            guard state.pendingStoreConfirmations.removeValue(forKey: id) != nil else {
+                return []
+            }
             // The store durably holds the session (or an equal/newer row):
             // the ack is earned, its retention restarts, and the digest —
             // derived from history that now contains what it acks — goes
-            // out. A confirmation for an id the machine never routed is
-            // trusted the same way: it is the runtime's assertion about
-            // its own store.
+            // out.
             state.ackAge[id] = 0
             return [publishDigest(state)]
 
@@ -258,16 +341,8 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
             return [publishDigest(state)]
 
         case .catalogChanged:
-            let superseded = state.outstandingSnapshotVersion
             state.latestSnapshotVersion += 1
-            state.outstandingSnapshotVersion = state.latestSnapshotVersion
-            var commands: [Command] = []
-            if let superseded {
-                // §5: a newer snapshot cancels any outstanding transfer.
-                commands.append(.cancelSnapshotTransfer(version: superseded))
-            }
-            commands.append(.transmitSnapshot(version: state.latestSnapshotVersion))
-            return commands
+            return replaceOutstandingTransfer(&state)
 
         case .snapshotPushTriggered:
             // Unconditionally cancel-and-resend the current version. The
@@ -279,22 +354,42 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
             // redundant cancel of a live transfer costs one requeue on a
             // launch/daily cadence; a silent wedge costs the watch every
             // future snapshot. Liveness wins.
-            var commands: [Command] = []
-            if let outstanding = state.outstandingSnapshotVersion {
-                commands.append(.cancelSnapshotTransfer(version: outstanding))
-            }
-            state.outstandingSnapshotVersion = state.latestSnapshotVersion
-            commands.append(.transmitSnapshot(version: state.latestSnapshotVersion))
-            return commands
+            return replaceOutstandingTransfer(&state)
 
-        case let .snapshotTransferFinished(version):
-            // A late callback for a superseded (cancelled) transfer must
-            // not clear the slot out from under the newer one.
-            if state.outstandingSnapshotVersion == version {
-                state.outstandingSnapshotVersion = nil
+        case let .snapshotTransferFinished(version, generation):
+            // Full-identity match only (m4-02 review 2, #2): a late
+            // callback from a cancelled transfer — including one that
+            // carried the *same version* as its live replacement — must
+            // not clear the slot out from under the transfer that is
+            // actually in flight.
+            if state.outstandingSnapshot == SnapshotTransfer(version: version, generation: generation) {
+                state.outstandingSnapshot = nil
             }
             return []
         }
+    }
+
+    /// §5 supersession plus the review-1 liveness rule, in one place:
+    /// cancel whatever transfer is outstanding (harmless if it already
+    /// finished) and transmit the current version under a fresh
+    /// generation, which becomes the only identity whose callback can
+    /// clear the slot.
+    private func replaceOutstandingTransfer(_ state: inout State) -> [Command] {
+        var commands: [Command] = []
+        if let superseded = state.outstandingSnapshot {
+            commands.append(.cancelSnapshotTransfer(
+                version: superseded.version,
+                generation: superseded.generation
+            ))
+        }
+        state.lastTransferGeneration += 1
+        let transfer = SnapshotTransfer(
+            version: state.latestSnapshotVersion,
+            generation: state.lastTransferGeneration
+        )
+        state.outstandingSnapshot = transfer
+        commands.append(.transmitSnapshot(version: transfer.version, generation: transfer.generation))
+        return commands
     }
 
     private func publishDigest(_ state: State) -> Command {
@@ -305,10 +400,16 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
     }
 
     /// Adds the forward-only delta since the last handled event to every
-    /// ack's age and drops the ones at or past retention. A backwards
-    /// `now` contributes zero — rollback can shorten nothing and extend
-    /// nothing; only observed forward wall time ages an ack. See the file
-    /// doc for why the correction after a rollback deliberately counts.
+    /// ack's — and every pending confirmation's — age, and drops the ones
+    /// at or past retention. A backwards `now` contributes zero —
+    /// rollback can shorten nothing and extend nothing; only observed
+    /// forward wall time ages anything. See the file doc for why the
+    /// correction after a rollback deliberately counts. Pending
+    /// confirmations share the ack bound: a confirmation that has not
+    /// arrived within the retention window never will (its executor is
+    /// long gone), and sweeping it keeps the pending map bounded; a
+    /// swept-then-arriving confirmation is safely ignored and the watch's
+    /// retry re-drives the exchange.
     private func ageAcks(_ state: inout State, now: Date) {
         let delta: TimeInterval
         if let last = state.lastObservedNow {
@@ -319,7 +420,7 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
         state.lastObservedNow = now
 
         // The sweep runs even at delta 0: a rehydrated state may already
-        // carry an over-age ack, and it must not survive into a publish
+        // carry an over-age entry, and it must not survive into a publish
         // just because the clock has not moved since relaunch.
         for (id, age) in state.ackAge {
             let aged = age + delta
@@ -327,6 +428,14 @@ public struct PhoneSyncMachine<SessionPayload: Sendable & Equatable>: Sendable {
                 state.ackAge.removeValue(forKey: id)
             } else if delta > 0 {
                 state.ackAge[id] = aged
+            }
+        }
+        for (id, pending) in state.pendingStoreConfirmations {
+            let aged = pending.age + delta
+            if aged >= configuration.ackRetention {
+                state.pendingStoreConfirmations.removeValue(forKey: id)
+            } else if delta > 0 {
+                state.pendingStoreConfirmations[id] = PendingIngest(revision: pending.revision, age: aged)
             }
         }
     }

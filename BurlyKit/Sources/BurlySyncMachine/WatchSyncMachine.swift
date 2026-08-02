@@ -35,6 +35,11 @@
 // `lastAppliedSnapshotVersion` atomically with the snapshot's store apply,
 // or a crash between the two replays/holds a snapshot — replay is safe
 // either way because whole-replace application is idempotent).
+// `lastAckedSessionIDs` persists atomically with the digest's store apply
+// for the same reason: it is the digest's other half, and losing it to a
+// crash merely re-admits the stale-completion guard's worst case until
+// the next digest arrives — safe, because digests keep naming every
+// retained ack for ~30 days.
 //
 // Commands are obligations, not suggestions: `handle` is deliberately not
 // `@discardableResult`, because a dropped `.applyDigest` is a lost prune
@@ -83,9 +88,29 @@ public enum WatchSyncMachine<
         /// never run backwards.
         public fileprivate(set) var lastAppliedSnapshotVersion: Int?
 
-        public init(outbox: [OutboxEntry] = [], lastAppliedSnapshotVersion: Int? = nil) {
+        /// The acked ids from the most recently applied digest, replaced
+        /// wholesale on every digest — exactly the latest-wins semantics
+        /// the digest itself has, and bounded by the same fact that bounds
+        /// the phone (each digest carries the phone's current ack set,
+        /// which §5 retains ~30 days). This is what closes the
+        /// resurrection hole (m4-02 review 2, #1): the ack that prunes an
+        /// outbox entry also removes its pin, so without this set a later
+        /// same-id completion would re-enter the outbox and hand the
+        /// payload decision back to transport order. A completion for an
+        /// id in here is refused instead — see `handle`. Once the phone's
+        /// retention ages the id out of its digests, the id leaves this
+        /// set too; the determinism guarantee is scoped to that horizon,
+        /// which is the best bounded state can honestly offer.
+        public fileprivate(set) var lastAckedSessionIDs: Set<UUID>
+
+        public init(
+            outbox: [OutboxEntry] = [],
+            lastAppliedSnapshotVersion: Int? = nil,
+            lastAckedSessionIDs: Set<UUID> = []
+        ) {
             self.outbox = outbox
             self.lastAppliedSnapshotVersion = lastAppliedSnapshotVersion
+            self.lastAckedSessionIDs = lastAckedSessionIDs
         }
     }
 
@@ -141,6 +166,16 @@ public enum WatchSyncMachine<
         /// sessions on the watch forever once the acks age out (§5, m1-06
         /// review round F).
         case applyDigest(payload: DigestPayload)
+
+        /// Diagnostic only: a `.sessionCompleted` named a session the
+        /// phone has already durably acked. §2 Finish is one-way and the
+        /// store prunes acked sessions, so this can only be a stale
+        /// replay or an upstream bug — transmitting it would reopen the
+        /// exact payload-winner race that pinning closed, because the
+        /// original pin left with the ack (m4-02 review 2, #1). The
+        /// runtime logs/surfaces it; nothing enters the outbox and
+        /// nothing reaches the transport.
+        case reportStaleSessionCompletion(id: UUID)
     }
 
     /// Applies one event. Pure and deterministic: same event against the
@@ -149,6 +184,13 @@ public enum WatchSyncMachine<
     public static func handle(_ event: Event, _ state: inout State) -> [Command] {
         switch event {
         case let .sessionCompleted(id, payload):
+            // A completion for an id the phone has already acked is a
+            // stale resurrection, never a new logical session — refuse it
+            // before it can re-enter the outbox and reopen the payload
+            // race the pin below closed (m4-02 review 2, #1).
+            guard !state.lastAckedSessionIDs.contains(id) else {
+                return [.reportStaleSessionCompletion(id: id)]
+            }
             // Dedupe by id, **pinning the first payload** (m4-02 review 1,
             // #1). A replayed completion (crash after Finish, before the
             // persisted state caught up) must not enqueue the session
@@ -202,8 +244,11 @@ public enum WatchSyncMachine<
         case let .digestReceived(ackedSessionIDs, payload):
             // The only way out of the outbox. Ids the outbox does not hold
             // are fine — acks are retained ~30 days phone-side, so most
-            // digests re-name sessions long since pruned here.
+            // digests re-name sessions long since pruned here. The full
+            // set is remembered (wholesale, latest-wins) so a stale
+            // re-completion of a pruned session can be refused above.
             state.outbox.removeAll { ackedSessionIDs.contains($0.id) }
+            state.lastAckedSessionIDs = ackedSessionIDs
             return [.applyDigest(payload: payload)]
         }
     }

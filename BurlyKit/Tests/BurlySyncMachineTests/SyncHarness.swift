@@ -42,6 +42,7 @@ struct SyncHarness {
 
     struct SnapshotTransfer: Equatable {
         var version: Int
+        var generation: Int
         var cancelled = false
     }
 
@@ -73,6 +74,7 @@ struct SyncHarness {
     private(set) var watchAwaitingAck: Set<UUID> = []
     private(set) var watchAppliedSnapshotVersions: [Int] = []
     private(set) var watchAppliedDigestCount = 0
+    private(set) var watchStaleCompletionReports: [UUID] = []
 
     // MARK: - Fault injection
 
@@ -126,6 +128,8 @@ struct SyncHarness {
                 enqueueSession(id: id, payload: payload)
             case let .applySnapshot(version, _):
                 watchAppliedSnapshotVersions.append(version)
+            case let .reportStaleSessionCompletion(id):
+                watchStaleCompletionReports.append(id)
             }
         }
     }
@@ -147,6 +151,8 @@ struct SyncHarness {
                 watchAppliedSnapshotVersions.append(version)
             case .applyDigest:
                 watchAppliedDigestCount += 1
+            case let .reportStaleSessionCompletion(id):
+                watchStaleCompletionReports.append(id)
             }
         }
         return commands
@@ -197,8 +203,24 @@ struct SyncHarness {
         runPhone(.snapshotPushTriggered)
     }
 
-    mutating func phoneSnapshotTransferFinishes(version: Int) {
-        runPhone(.snapshotTransferFinished(version: version))
+    mutating func phoneSnapshotTransferFinishes(version: Int, generation: Int) {
+        runPhone(.snapshotTransferFinished(version: version, generation: generation))
+    }
+
+    /// Feeds a bare `.sessionStoreConfirmed` outside any routed command —
+    /// the review-2 #3 fault injections: a duplicate confirmation, a
+    /// replay surviving a crash, or a confirmation for an id never routed.
+    /// A contract-abiding runtime never does this; the machine must shrug
+    /// it off without touching retention.
+    mutating func injectStoreConfirmation(_ id: UUID) {
+        runPhone(.sessionStoreConfirmed(id: id))
+    }
+
+    /// Simulates a phone crash-and-rehydrate: the machine state is
+    /// whatever was last persisted (the caller passes it), and any
+    /// runtime-held in-flight work is gone.
+    mutating func rehydratePhone(from state: PhoneMachine.State) {
+        phoneState = state
     }
 
     /// §1 deleteSession on the phone: the store row goes away; acks are the
@@ -272,11 +294,13 @@ struct SyncHarness {
                     payload: "digest-\(digestCounter)"
                 )
 
-            case let .transmitSnapshot(version):
-                snapshotChannel.append(SnapshotTransfer(version: version))
+            case let .transmitSnapshot(version, generation):
+                snapshotChannel.append(SnapshotTransfer(version: version, generation: generation))
 
-            case let .cancelSnapshotTransfer(version):
-                for index in snapshotChannel.indices where snapshotChannel[index].version == version {
+            case let .cancelSnapshotTransfer(version, generation):
+                for index in snapshotChannel.indices
+                where snapshotChannel[index].version == version
+                    && snapshotChannel[index].generation == generation {
                     snapshotChannel[index].cancelled = true
                 }
             }
