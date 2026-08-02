@@ -84,7 +84,7 @@ struct PhoneSessionIngestTests {
         #expect(published.isEmpty)
 
         await scheduler.waitUntilWaiting(count: 1)
-        await scheduler.advance(by: .seconds(5))
+        scheduler.advance(by: .seconds(5))
         await coordinator.drainPendingDebounces()
 
         published = await digestPublisher.published
@@ -171,7 +171,7 @@ struct PhoneSessionIngestTests {
 
     // MARK: - Item 3: a failed transaction sends nothing
 
-    @Test("item 3 — a session naming an exercise the phone has never heard of fails closed: no session row, no ack, no publish, but an already-committed placeholder survives")
+    @Test("item 3 / major 1 — a session naming an exercise the phone has never heard of fails closed atomically: no session row, no placeholder residue, no ack, no publish")
     func missingExerciseReferenceFailsClosedWithNoAckOrPublish() async throws {
         let store = try makePhoneStore()
         let placeholder = Fixture.exercise(name: "Custom", origin: .custom, needsNaming: true)
@@ -201,10 +201,15 @@ struct PhoneSessionIngestTests {
 
         try await coordinator.sessionReceived(payload)
 
-        // The placeholder's own createExercise call committed independently
-        // and before the failure — a crash/failure between the two writes
-        // is benign, as the coordinator's doc explains.
-        #expect(try store.exercise(id: placeholder.id) != nil)
+        // m4-04 review round 1, major 1: the placeholder upsert and the
+        // session apply are now ONE transaction
+        // (`applyReplicatedSession(_:upsertingPlaceholderExercises:)`), so
+        // a rejection of the session rolls the placeholder back too — it
+        // must not survive as committed residue with no session, no ack,
+        // and no way for a retry to know it was ever created for this
+        // delivery (the failure mode the previous, two-save version of
+        // this test explicitly blessed).
+        #expect(try store.exercise(id: placeholder.id) == nil, "major 1: the placeholder must not survive a rejected delivery — it shares the session's transaction now")
         // The session itself never landed — preflight rejected it before
         // any row was touched, and `commit()`'s rollback-on-throw backstops
         // the same guarantee for a failure that reached a live save.
@@ -303,7 +308,7 @@ struct PhoneSessionIngestTests {
 
         try await coordinator.sessionReceived(payload)
         await scheduler.waitUntilWaiting(count: 1)
-        await scheduler.advance(by: .seconds(5))
+        scheduler.advance(by: .seconds(5))
         await coordinator.drainPendingDebounces()
 
         let events = spy.log.snapshot
@@ -352,7 +357,9 @@ final class OrderRecordingStatePersisting: PhoneSyncStatePersisting, @unchecked 
     let log = OrderLog()
     private var stored: PhoneSyncRuntimeState?
 
-    func load() throws -> PhoneSyncRuntimeState? { stored }
+    func load() throws -> PhoneSyncLoadResult? {
+        stored.map { PhoneSyncLoadResult(runtimeState: $0, recoveredFromCorruption: false) }
+    }
 
     func save(_ state: PhoneSyncRuntimeState) throws {
         stored = state

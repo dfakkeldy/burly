@@ -44,6 +44,7 @@ public enum SessionDigestGenerator {
     /// `store`'s full current `.logged` history **at the moment this runs**
     /// — never a cached or earlier-fetched slice list, which is what makes
     /// "at generation time" true rather than aspirational.
+    @MainActor
     public static func generate(
         from store: any BurlyStore,
         snapshotVersion: Int,
@@ -67,10 +68,22 @@ public enum SessionDigestGenerator {
     /// the session with the latest `sessionStartedAt` that has any set
     /// against that exercise (ties broken by session id, descending, for
     /// full determinism — see `isNewer` below), and returns every slice
-    /// belonging to *that* (exercise, session) pair as the entry's `sets`,
-    /// in the deterministic order `Array<SetRecordSlice>
-    /// .sortedForDeterministicSummation()` already defines for §7's own
-    /// accumulators (by `completedAt`, then by the set's own `id`).
+    /// belonging to *that* (exercise, session) pair as the entry's `sets`.
+    ///
+    /// **Sets are ordered by their own `order` field — their position
+    /// within the exercise — not by `completedAt`** (m4-04 review round 1,
+    /// major 9). §2's ghost row is explicit about what this list means:
+    /// "last session's numbers **for this set index**", so the field whose
+    /// entire purpose is positional identity is the correct primary key,
+    /// not a wall-clock timestamp that is *usually* monotonic with position
+    /// but is not guaranteed to be (a §6 set edit, or two `SessionItem`s for
+    /// the same exercise with interleaved completion times, can both make
+    /// `order` and `completedAt` disagree). `completedAt` remains the
+    /// tie-break for the case `order` alone cannot resolve — two sets
+    /// sharing one `order` value because they come from *different* items
+    /// referencing the same exercise (the "same exercise twice in one
+    /// session" shape) — and the set's own `id` breaks any tie that
+    /// survives even that.
     ///
     /// A slice with a `nil` exerciseID is excluded — a digest is keyed by
     /// exercise (§5), and no payload could ever carry an entry for one (see
@@ -103,7 +116,7 @@ public enum SessionDigestGenerator {
         return winners.map { exerciseID, winner in
             let key = ExerciseSessionKey(exerciseID: exerciseID, sessionID: winner.sessionID)
             let sets = (byExerciseAndSession[key] ?? [])
-                .sortedByCompletedAtThenID()
+                .sortedByOrderThenCompletedAtThenID()
                 .map { SetSnapshot(weight: $0.set.weight, reps: $0.set.reps, isWarmup: $0.set.isWarmup) }
             return ExerciseLastPerformanceData(
                 exerciseID: exerciseID,
@@ -135,18 +148,27 @@ public enum SessionDigestGenerator {
     }
 }
 
-/// A local re-derivation of the same rule §7's accumulators use via
-/// `Array<SetRecordSlice>.sortedForDeterministicSummation()` (BurlyCore,
-/// `internal` — not part of that module's public surface): sort by the
-/// set's own `completedAt`, then by its stable `id` to fully break ties, so
-/// the emitted `sets` order depends only on which sets exist, never on the
-/// order the store's fetch happened to return them in.
+/// The ghost-row set ordering (m4-04 review round 1, major 9): primarily by
+/// each set's own `order` — its position within the exercise, matching §2's
+/// "for this set index" — then by `completedAt`, then by the set's own
+/// stable `id`, so two sets that somehow share both `order` and
+/// `completedAt` still resolve deterministically. Note this is
+/// *deliberately not* `Array<SetRecordSlice>
+/// .sortedForDeterministicSummation()` (BurlyCore, `internal`, used by §7's
+/// summation-only accumulators, where `order` is irrelevant and
+/// `completedAt` is the only meaningful axis) — that helper answers a
+/// different question ("what total, regardless of visitation order") than
+/// this one ("what is this set's position").
 private extension Array where Element == SetRecordSlice {
-    func sortedByCompletedAtThenID() -> [SetRecordSlice] {
+    func sortedByOrderThenCompletedAtThenID() -> [SetRecordSlice] {
         sorted { lhs, rhs in
-            lhs.set.completedAt == rhs.set.completedAt
-                ? lhs.set.id.uuidString < rhs.set.id.uuidString
-                : lhs.set.completedAt < rhs.set.completedAt
+            if lhs.set.order != rhs.set.order {
+                return lhs.set.order < rhs.set.order
+            }
+            if lhs.set.completedAt != rhs.set.completedAt {
+                return lhs.set.completedAt < rhs.set.completedAt
+            }
+            return lhs.set.id.uuidString < rhs.set.id.uuidString
         }
     }
 }

@@ -23,13 +23,25 @@ public protocol PhoneSyncTransporting: Sendable {
     /// `generation` carries, so the coordinator's later
     /// `.snapshotTransferFinished` echo and this call agree on which
     /// attempt is which (m4-02 review 2, #2).
-    func transmitSnapshot(_ payload: BurlySnapshotPayloadDTO, generation: Int) async
+    ///
+    /// `throws` (m4-04 review round 1, major 3): a trigger that only marks
+    /// itself "done" after a successful enqueue (the daily push, the
+    /// install-flip edge) needs a real failure signal to retry against —
+    /// a transport that could never fail made that ordering fix vacuous.
+    /// A conformer that genuinely cannot fail to *start* a transfer (most
+    /// underlying transports can at least always queue the attempt) may
+    /// simply never throw.
+    func transmitSnapshot(_ payload: BurlySnapshotPayloadDTO, generation: Int) async throws
 
     /// Cancels the transfer identified by `(version, generation)` — a
     /// harmless no-op if the transport already finished or lost it (§5
     /// supersession; `PhoneSyncMachine`'s own doc on
-    /// `.cancelSnapshotTransfer`).
-    func cancelSnapshotTransfer(version: Int, generation: Int) async
+    /// `.cancelSnapshotTransfer`). `PhoneSyncCoordinator` treats a thrown
+    /// cancellation failure as best-effort and does not let it block the
+    /// `transmitSnapshot` that always follows it in the same command batch
+    /// — an old transfer failing to cancel must never prevent the new one
+    /// from starting.
+    func cancelSnapshotTransfer(version: Int, generation: Int) async throws
 }
 
 /// The §5 `digest` publish half of the transport seam, kept separate from

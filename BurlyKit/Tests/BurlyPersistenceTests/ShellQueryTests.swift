@@ -21,6 +21,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m5-01 — hasRoutines / loggedSessionCount: bounded phone-shell queries")
 struct ShellQueryTests {
 

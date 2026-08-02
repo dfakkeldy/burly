@@ -28,6 +28,32 @@
 // may delete history while acks persist" (§5's 30-day ack retention: an ack
 // can legitimately outlive the session it acks).
 //
+// ## Set-index independence (m4-04 review round 1, major 9)
+//
+// A first version of this test's oracle re-sorted each exercise's sets by
+// `completedAt` — the exact same comparator `SessionDigestGenerator` used
+// at the time. Both agreed, including on a bug: production sorted by
+// wall-clock completion time, but §2's ghost row wants "for this set
+// index" — the set's `order` field, not when it happened to be tapped.
+// Random trials never caught it because every set was generated at
+// `startedAt + setIndex × 30 s`, so `order` and `completedAt` were always
+// perfectly correlated in the fixture data — the two algorithms could never
+// have disagreed no matter which one was "right."
+//
+// Two independent fixes: (1) `SessionDigestGenerator` now sorts by `order`
+// first (see that file's doc); (2) this generator's random `completedAt`
+// values are now assigned *independent* of `order` (a uniform random
+// offset within the session, not `setIndex × 30s`), so roughly half the
+// sets in any given trial have `order` and `completedAt` disagreeing on
+// direction — the shape that would have caught the original bug. The
+// oracle itself no longer re-sorts by anything: each fixture item's `sets`
+// array is already constructed in ascending `order` sequence (see the
+// generator below), so the oracle's expected value is that array *as
+// constructed*, sharing no comparator with production at all. Two fixed,
+// non-randomized tests below pin the exact adversarial shapes directly:
+// `setsOrderedByOrderFieldEvenWithReversedCompletedAt` and
+// `identicalOrderAndCompletedAtBreakTieBySetID`.
+//
 // ## Seed / shrink policy
 //
 // Swift Testing has no built-in shrinking. The policy adopted here: a fixed
@@ -48,6 +74,7 @@ import BurlySync
 import BurlyFixtures
 @testable import BurlyPhoneSync
 
+@MainActor
 @Suite("m4-04 — SessionDigestGenerator: the §5 completeness property")
 struct SessionDigestGeneratorTests {
 
@@ -88,7 +115,12 @@ struct SessionDigestGeneratorTests {
                         weight: Weight(kg: Double(Int.random(in: 8...40, using: &rng) * 5)),
                         reps: Int.random(in: 1...12, using: &rng),
                         isWarmup: Double.random(in: 0..<1, using: &rng) < 0.2,
-                        completedAt: startedAt.addingTimeInterval(Double(setIndex) * 30)
+                        // Deliberately INDEPENDENT of `setIndex`/`order`
+                        // (major 9) — a uniform random offset within the
+                        // session, so `order` and `completedAt` disagree on
+                        // direction roughly half the time across the 40
+                        // seeds, rather than always marching together.
+                        completedAt: startedAt.addingTimeInterval(Double(Int.random(in: 0..<3_600, using: &rng)))
                     )
                 }
                 items.append(SessionItemData(exerciseID: exercise.id, order: items.count, sets: sets))
@@ -253,6 +285,84 @@ struct SessionDigestGeneratorTests {
         #expect(entry.sets.map(\.weightKg) == [100, 110])
     }
 
+    // MARK: - Set-index independence pins (m4-04 review round 1, major 9)
+
+    @Test("sets are ordered by their own `order` field even when completedAt runs in the opposite direction")
+    func setsOrderedByOrderFieldEvenWithReversedCompletedAt() throws {
+        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let store = try makePhoneStore()
+        try store.createExercise(squat)
+
+        // completedAt deliberately runs the OPPOSITE direction from order:
+        // the set logged first (order 0) was, per this fixture, completed
+        // LAST by wall clock. A `completedAt`-primary sort (the pre-fix
+        // behavior) would emit [120, 110, 100]; the fixed behavior — sort
+        // by `order` first — must emit [100, 110, 120].
+        let session = SessionData(
+            startedAt: Fixture.epoch,
+            state: .logged,
+            origin: .live,
+            items: [
+                SessionItemData(
+                    exerciseID: squat.id, order: 0,
+                    sets: [
+                        SetRecordData(order: 0, weight: Weight(kg: 100), reps: 5, completedAt: Fixture.epoch.addingTimeInterval(180)),
+                        SetRecordData(order: 1, weight: Weight(kg: 110), reps: 5, completedAt: Fixture.epoch.addingTimeInterval(120)),
+                        SetRecordData(order: 2, weight: Weight(kg: 120), reps: 5, completedAt: Fixture.epoch.addingTimeInterval(60))
+                    ]
+                )
+            ]
+        )
+        try store.createSession(session)
+
+        let payload = try SessionDigestGenerator.generate(from: store, snapshotVersion: 0, ackedSessionIDs: [])
+        let entry = try #require(payload.lastPerformance.first { $0.exerciseID == squat.id })
+        #expect(
+            entry.sets.map(\.weightKg) == [100, 110, 120],
+            "sets must follow `order`, not `completedAt` — §2's ghost row means \"for this set index\""
+        )
+    }
+
+    @Test("two sets sharing both `order` and `completedAt` (from two items on the same exercise) break the tie by the set's own id")
+    func identicalOrderAndCompletedAtBreakTieBySetID() throws {
+        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let store = try makePhoneStore()
+        try store.createExercise(squat)
+
+        // Two DIFFERENT items referencing the same exercise, each
+        // contributing a set at `order: 0` and the same `completedAt` — the
+        // one shape the primary key and the first tie-break both leave
+        // unresolved. Fixed ids (low/high uuidString) so the "lower
+        // uuidString sorts first" rule is pinned rather than incidental.
+        let loID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let hiID = UUID(uuidString: "FFFFFFFF-0000-0000-0000-000000000001")!
+        let sharedCompletedAt = Fixture.epoch.addingTimeInterval(60)
+
+        let session = SessionData(
+            startedAt: Fixture.epoch,
+            state: .logged,
+            origin: .live,
+            items: [
+                SessionItemData(
+                    exerciseID: squat.id, order: 0,
+                    sets: [SetRecordData(id: hiID, order: 0, weight: Weight(kg: 200), reps: 5, completedAt: sharedCompletedAt)]
+                ),
+                SessionItemData(
+                    exerciseID: squat.id, order: 1,
+                    sets: [SetRecordData(id: loID, order: 0, weight: Weight(kg: 100), reps: 5, completedAt: sharedCompletedAt)]
+                )
+            ]
+        )
+        try store.createSession(session)
+
+        let payload = try SessionDigestGenerator.generate(from: store, snapshotVersion: 0, ackedSessionIDs: [])
+        let entry = try #require(payload.lastPerformance.first { $0.exerciseID == squat.id })
+        #expect(
+            entry.sets.map(\.weightKg) == [100, 200],
+            "with order AND completedAt tied, the set's own id must break the tie deterministically (lower uuidString first)"
+        )
+    }
+
     // MARK: - Oracle
 
     /// A deliberately different algorithm from
@@ -260,24 +370,30 @@ struct SessionDigestGeneratorTests {
     /// ascending by `startedAt` and overwrite a dictionary keyed by
     /// exerciseID — "latest wins" falls out of iteration order, not an
     /// explicit comparison.
+    ///
+    /// **No sort at all for `sets`** (major 9): the random generator above
+    /// builds each item's `sets` array in ascending `order` sequence
+    /// already (`(0..<setCount).map { setIndex in ... }`), and this trial
+    /// never puts the same exercise in two items within one session (the
+    /// `for exercise in exercises where ...` loop visits each exercise at
+    /// most once per session) — so the expected value for one exercise's
+    /// winning session is simply that one item's `sets` array, verbatim.
+    /// This shares no comparator with `SessionDigestGenerator` whatsoever,
+    /// which is what makes this oracle genuinely independent rather than a
+    /// second call to the same sort dressed up differently. (The
+    /// multi-item "same exercise twice" merge shape has its own dedicated,
+    /// non-randomized pin below —
+    /// `sameExerciseTwiceInOneSessionMergesDeterministically` — precisely
+    /// because it needs a merge rule this simpler oracle does not exercise.)
     private func independentOracle(from sessions: [SessionData]) -> [ExerciseLastPerformanceData] {
         var winners: [UUID: ExerciseLastPerformanceData] = [:]
         for session in sessions.sorted(by: { $0.startedAt < $1.startedAt }) {
-            var setsByExercise: [UUID: [SetRecordData]] = [:]
             for item in session.items {
-                guard let exerciseID = item.exerciseID else { continue }
-                setsByExercise[exerciseID, default: []].append(contentsOf: item.sets)
-            }
-            for (exerciseID, sets) in setsByExercise {
-                let ordered = sets.sorted { lhs, rhs in
-                    lhs.completedAt == rhs.completedAt
-                        ? lhs.id.uuidString < rhs.id.uuidString
-                        : lhs.completedAt < rhs.completedAt
-                }
+                guard let exerciseID = item.exerciseID, item.sets.isEmpty == false else { continue }
                 winners[exerciseID] = ExerciseLastPerformanceData(
                     exerciseID: exerciseID,
                     performedAt: session.startedAt,
-                    sets: ordered.map { SetSnapshot(weight: $0.weight, reps: $0.reps, isWarmup: $0.isWarmup) }
+                    sets: item.sets.map { SetSnapshot(weight: $0.weight, reps: $0.reps, isWarmup: $0.isWarmup) }
                 )
             }
         }

@@ -31,6 +31,7 @@ import Testing
 import BurlyCore
 import BurlyPersistence
 
+@MainActor
 @Suite("m1-04 review — container boundary: no public path yields a ModelContainer")
 struct ContainerBoundaryTests {
 

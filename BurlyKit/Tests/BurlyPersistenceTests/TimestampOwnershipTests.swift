@@ -27,6 +27,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m1-06 m2 — updatedAt ownership: local authoring vs replicated apply")
 struct TimestampOwnershipTests {
 

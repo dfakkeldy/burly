@@ -17,6 +17,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§1 — watch working-set pruning API")
 struct WatchWorkingSetTests {
 

@@ -16,6 +16,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m1-04 — updateRoutine and sessions(state:)")
 struct StoreSurfaceTests {
 

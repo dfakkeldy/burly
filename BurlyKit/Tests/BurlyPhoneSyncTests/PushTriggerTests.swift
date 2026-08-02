@@ -5,6 +5,11 @@
 // snapshot cancels any outstanding snapshot transfer." Every timing
 // assertion here runs under `ManualTriggerScheduler`/`TestClock` — no real
 // sleeping, no wall-clock jitter, exact boundaries asserted directly.
+//
+// Also covers m4-04 review round 1 majors 3 (a trigger's "done" state is
+// only set after a successful push), 4 (command batches never interleave
+// across transport awaits), and 5 (digest publications read current state
+// at fire time, not schedule time).
 import Foundation
 import Testing
 import BurlyCore
@@ -88,6 +93,24 @@ struct PushTriggerTests {
         #expect(await transport.transmissions.count == 2)
     }
 
+    @Test("major 3 — a failed install-flip push retains retry state: the next call, even a redundant true, retries it")
+    func watchInstalledRetriesAfterAFailedPush() async throws {
+        let store = try makePhoneStore()
+        let transport = FakeTransport()
+        let coordinator = makeCoordinator(store: store, transport: transport, scheduler: ManualTriggerScheduler())
+
+        await transport.setFailNextTransmitCount(1)
+        await #expect(throws: FakeTransport.TransmitFailure.self) {
+            try await coordinator.watchAppInstalledDidChange(true)
+        }
+        #expect(await transport.transmissions.isEmpty, "the failed attempt must not have enqueued anything")
+
+        // A redundant `true` — pre-fix, this would be a silent no-op
+        // forever, since `isWatchAppInstalled` is already `true`.
+        try await coordinator.watchAppInstalledDidChange(true)
+        #expect(await transport.transmissions.count == 1, "the retry state must make a redundant true retry the failed push")
+    }
+
     // MARK: - Catalog-edit debounce (§5: "debounced 5 s")
 
     @Test("a burst of catalog edits collapses into exactly one push, and nothing fires before the quiet period elapses")
@@ -101,17 +124,24 @@ struct PushTriggerTests {
         await coordinator.catalogDidChange()
         await coordinator.catalogDidChange()
 
-        await scheduler.waitUntilWaiting(count: 3)
+        // The redesigned coalescer (major 6) cancels superseded countdowns
+        // rather than leaving them parked, so a burst settles to exactly
+        // one live waiter — never three. `settle()` lets the cancellations
+        // from the second/third calls actually finish removing the earlier
+        // ones before we check.
+        await scheduler.settle()
+        #expect(scheduler.pendingCount == 1, "a burst must settle to exactly one pending countdown")
 
-        // No `drainPendingDebounces()` here: at 4.9 s none of the three
-        // registered sleeps has reached its 5 s deadline, so `drain()`
-        // (which awaits every spawned task's completion) would block
-        // forever waiting on tasks that are correctly still suspended. The
-        // absence of a transmission needs no synchronization to observe.
-        await scheduler.advance(by: .seconds(4.9))
+        // No `drainPendingDebounces()` here: at 4.9 s the one live
+        // countdown has not reached its 5 s deadline, so `drain()` (which
+        // awaits the coalescer's in-flight task unconditionally) would
+        // block forever waiting on a task that is correctly still
+        // suspended. The absence of a transmission needs no
+        // synchronization to observe.
+        scheduler.advance(by: .seconds(4.9))
         #expect(await transport.transmissions.isEmpty, "must not fire before the quiet period elapses")
 
-        await scheduler.advance(by: .seconds(0.1)) // total 5.0 s
+        scheduler.advance(by: .seconds(0.1)) // total 5.0 s
         await coordinator.drainPendingDebounces()
         let transmissions = await transport.transmissions
         #expect(transmissions.count == 1, "three edits in one burst must reach the machine as exactly one .catalogChanged")
@@ -125,21 +155,23 @@ struct PushTriggerTests {
         let coordinator = makeCoordinator(store: store, transport: transport, scheduler: scheduler)
 
         await coordinator.catalogDidChange() // t=0, deadline 5
-        await scheduler.waitUntilWaiting(count: 1)
-        await scheduler.advance(by: .seconds(3)) // t=3, before the first deadline
+        let firstWaiterID = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(3)) // t=3, before the first deadline
 
-        await coordinator.catalogDidChange() // a second edit restarts the window: deadline now 3+5=8
-        await scheduler.waitUntilWaiting(count: 2)
+        await coordinator.catalogDidChange() // a second edit: cancels the first, restarts the window at 3+5=8
+        // Wait for the SECOND registration specifically — a plain "wait
+        // until >= 1 waiter" could return while the first, not-yet-
+        // cancelled waiter is still the only one present.
+        _ = await scheduler.waitForFreshWaiter(excluding: [firstWaiterID])
+        #expect(scheduler.pendingCount == 1, "the superseded first countdown must be gone, not merely joined by a second")
 
-        // No `drain()` at t=5: the *second* edit's task (deadline 8) is
-        // still correctly suspended, and `drain()` awaits every spawned
-        // task unconditionally, so it would block on that one. The stale
-        // first task resuming as a no-op needs no synchronization to
-        // observe its absence of effect.
-        await scheduler.advance(by: .seconds(2)) // t=5: the FIRST edit's original deadline, must NOT fire
+        // No `drain()` at t=5: `drain()` awaits the coalescer's in-flight
+        // task unconditionally, and the live (second) countdown's deadline
+        // (8) has not been reached yet.
+        scheduler.advance(by: .seconds(2)) // t=5: the FIRST edit's original deadline, must NOT fire
         #expect(await transport.transmissions.isEmpty, "the first edit's timer must be superseded, not merely delayed")
 
-        await scheduler.advance(by: .seconds(3)) // t=8: 5 s after the SECOND edit
+        scheduler.advance(by: .seconds(3)) // t=8: 5 s after the SECOND edit
         await coordinator.drainPendingDebounces()
         #expect(await transport.transmissions.count == 1)
     }
@@ -155,14 +187,45 @@ struct PushTriggerTests {
         )
 
         await coordinator.catalogDidChange()
-        await scheduler.waitUntilWaiting(count: 1)
+        _ = await scheduler.waitForFreshWaiter(excluding: [])
         // No `drain()` before the deadline — see the burst test above.
-        await scheduler.advance(by: .milliseconds(999))
+        scheduler.advance(by: .milliseconds(999))
         #expect(await transport.transmissions.isEmpty)
 
-        await scheduler.advance(by: .milliseconds(1))
+        scheduler.advance(by: .milliseconds(1))
         await coordinator.drainPendingDebounces()
         #expect(await transport.transmissions.count == 1)
+    }
+
+    @Test("major 3 — a catalog push failure is surfaced on lastCatalogPushFailure and retried automatically, without re-bumping the snapshot version")
+    func catalogPushSurfacesAndRetriesOnFailure() async throws {
+        let store = try makePhoneStore()
+        let transport = FakeTransport()
+        let scheduler = ManualTriggerScheduler()
+        let coordinator = makeCoordinator(
+            store: store, transport: transport, scheduler: scheduler,
+            configuration: .init(catalogEditDebounce: .seconds(1), digestPublishDebounce: .seconds(1), catalogPushRetryCount: 2)
+        )
+
+        await transport.setFailNextTransmitCount(1)
+        await coordinator.catalogDidChange()
+        _ = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(1)) // fires, fails once
+        await coordinator.drainPendingDebounces()
+
+        #expect(await transport.transmissions.isEmpty, "the first attempt failed and must not have recorded a transmission")
+        #expect(coordinator.lastCatalogPushFailure != nil, "the failure must be surfaced")
+        #expect(coordinator.currentMachineState.latestSnapshotVersion == 1, "exactly one .catalogChanged reached the machine, despite two transport attempts")
+
+        // The retry is scheduled internally (not via catalogDidChange()) —
+        // advance past its own quiet period.
+        _ = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(1))
+        await coordinator.drainPendingDebounces()
+
+        #expect(await transport.transmissions.count == 1, "the retry must succeed and land the transmission")
+        #expect(coordinator.lastCatalogPushFailure == nil, "a subsequent success clears the surfaced failure")
+        #expect(coordinator.currentMachineState.latestSnapshotVersion == 1, "still exactly one version bump for the one edit")
     }
 
     // MARK: - Digest-publish coalescing (binding contract item 6)
@@ -191,13 +254,68 @@ struct PushTriggerTests {
         let sessionTwo = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
         try await coordinator.sessionReceived(BurlySessionPayloadDTO(session: sessionTwo, needsNamingExercises: []))
 
-        await scheduler.waitUntilWaiting(count: 2)
-        await scheduler.advance(by: .seconds(5))
+        await scheduler.settle()
+        #expect(scheduler.pendingCount == 1, "the burst must settle to exactly one pending countdown")
+        scheduler.advance(by: .seconds(5))
         await coordinator.drainPendingDebounces()
 
         let published = await digestPublisher.published
         #expect(published.count == 1, "two acks arriving within the quiet period must publish exactly once")
         #expect(Set(published.first?.ackedSessionIDs ?? []) == [sessionOne.id, sessionTwo.id], "the one publish must carry the latest, complete acked set — not the first ack's stale snapshot")
+    }
+
+    @Test("major 5 — a digest publish reads the snapshot version and acked set current AT FIRE TIME, not captured when the burst started")
+    func digestPublishReadsCurrentStateAtFireTimeNotScheduleTime() async throws {
+        let store = try makePhoneStore()
+        let bench = Fixture.exercise(name: "Bench Press")
+        try store.createExercise(bench)
+        let routine = Fixture.routine(over: [bench])
+        try store.createRoutine(routine)
+        let scheduler = ManualTriggerScheduler()
+        let digestPublisher = FakeDigestPublisher()
+        // A short catalog debounce, a longer digest debounce, so the
+        // catalog edit's version bump lands WHILE the digest publish is
+        // still in its own quiet period.
+        let coordinator = PhoneSyncCoordinator(
+            store: store,
+            transport: FakeTransport(),
+            digestPublisher: digestPublisher,
+            statePersisting: InMemoryPhoneSyncStatePersisting(),
+            clock: TestClock(),
+            scheduler: scheduler,
+            configuration: .init(catalogEditDebounce: .seconds(1), digestPublishDebounce: .seconds(5))
+        )
+
+        // A session ingest schedules a digest publish while
+        // `latestSnapshotVersion == 0`.
+        let session = Fixture.session(from: routine, startedAt: Fixture.epoch)
+        try await coordinator.sessionReceived(BurlySessionPayloadDTO(session: session, needsNamingExercises: []))
+        #expect(coordinator.currentMachineState.latestSnapshotVersion == 0)
+
+        // A catalog edit, scheduled at the same moment, whose OWN (shorter)
+        // debounce elapses first and bumps the version to 1 before the
+        // digest's quiet period is over.
+        await coordinator.catalogDidChange()
+
+        await scheduler.waitUntilWaiting(count: 2) // both countdowns registered — nothing superseded yet, safe to count
+        scheduler.advance(by: .seconds(1)) // catalog fires -> version bumps to 1
+        // NOT `drainPendingDebounces()` here: it drains BOTH coalescers, and
+        // the digest one's countdown (deadline 5) has not been reached yet
+        // — draining it would hang waiting for a task that cannot resolve
+        // until the next `advance` below. `settle()` just lets the
+        // catalog's own resumed task run (its version bump is synchronous,
+        // reached well before its own transport await).
+        await scheduler.settle()
+        #expect(coordinator.currentMachineState.latestSnapshotVersion == 1)
+
+        scheduler.advance(by: .seconds(4)) // total 5s since the session ingest -> digest fires
+        await coordinator.drainPendingDebounces()
+
+        let published = await digestPublisher.published
+        let digest = try #require(published.first)
+        #expect(published.count == 1)
+        #expect(digest.snapshotVersion == 1, "must reflect the version at FIRE time, not the 0 that was current when the burst started")
+        #expect(digest.ackedSessionIDs == [session.id])
     }
 
     // MARK: - Daily push
@@ -222,6 +340,30 @@ struct PushTriggerTests {
         clock.advance(by: 2 * 60 * 60) // total 25 h since the first fire
         try await coordinator.dailyPushIfDue()
         #expect(await transport.transmissions.count == 2, "due now")
+    }
+
+    @Test("major 3 — a failed daily push does not mark the day consumed: the next check still retries rather than waiting a full interval")
+    func dailyPushDoesNotMarkDoneOnFailure() async throws {
+        let store = try makePhoneStore()
+        let transport = FakeTransport()
+        let clock = TestClock()
+        let coordinator = makeCoordinator(
+            store: store, transport: transport, scheduler: ManualTriggerScheduler(), clock: clock,
+            configuration: .init(dailyPushInterval: 24 * 60 * 60)
+        )
+
+        await transport.setFailNextTransmitCount(1)
+        await #expect(throws: FakeTransport.TransmitFailure.self) {
+            try await coordinator.dailyPushIfDue()
+        }
+        #expect(await transport.transmissions.isEmpty)
+
+        // Only a few minutes later — pre-fix, `lastDailyPushAt` would
+        // already have been set by the failed attempt, suppressing this
+        // for a full 24 h.
+        clock.advance(by: 5 * 60)
+        try await coordinator.dailyPushIfDue()
+        #expect(await transport.transmissions.count == 1, "the failure must not have consumed the day's push")
     }
 
     @Test("the daily push due-state survives a relaunch via the persisted runtime state")
@@ -281,8 +423,8 @@ struct PushTriggerTests {
         let coordinator = makeCoordinator(store: store, transport: transport, scheduler: scheduler)
 
         await coordinator.catalogDidChange()
-        await scheduler.waitUntilWaiting(count: 1)
-        await scheduler.advance(by: .seconds(5))
+        _ = await scheduler.waitForFreshWaiter(excluding: [])
+        scheduler.advance(by: .seconds(5))
         await coordinator.drainPendingDebounces()
 
         let transmissions = await transport.transmissions
@@ -290,5 +432,61 @@ struct PushTriggerTests {
         #expect(transmissions.first?.payload.exercises.map(\.id) == [bench.id])
         #expect(transmissions.first?.payload.routines.map(\.id) == [routine.id])
         #expect(transmissions.first?.payload.version == 1)
+    }
+
+    // MARK: - Major 4: command batches never interleave across transport awaits
+
+    @Test("major 4 — a second push's command batch never starts its own transport calls until the first push's whole batch has finished")
+    func commandBatchesNeverInterleaveAcrossTransportAwaits() async throws {
+        let store = try makePhoneStore()
+        let transport = FakeTransport()
+        let coordinator = makeCoordinator(store: store, transport: transport, scheduler: ManualTriggerScheduler())
+
+        // Establish an outstanding transfer at generation 1.
+        try await coordinator.applicationDidLaunch()
+        #expect(await transport.transmissions.map(\.generation) == [1])
+
+        // Arm the gate: the NEXT cancelSnapshotTransfer call suspends until
+        // released, letting this test hold "Push A is mid-batch" open.
+        await transport.armCancelGate()
+
+        // Push A: a second launch trigger -> [cancel(1), transmit(2)].
+        // Spawned concurrently since it will suspend inside the gated
+        // cancel call.
+        let pushA = Task { try await coordinator.applicationDidLaunch() }
+
+        // Deterministically wait for Push A to have actually reached the
+        // gated call (not a guessed delay).
+        while await transport.hasCancelGateWaiter() == false {
+            await Task.yield()
+        }
+
+        // Push B: a third launch trigger, started while Push A is
+        // suspended mid-batch. Pre-fix, `@MainActor` isolation alone does
+        // not stop this from interleaving its OWN cancel/transmit calls
+        // with Push A's, since Push A is suspended at an `await`. Post-fix,
+        // this must block on the execution lock and touch the transport
+        // not at all until Push A's whole batch — cancel AND transmit —
+        // has finished.
+        let pushB = Task { try await coordinator.applicationDidLaunch() }
+
+        // Deterministically wait for Push B to have actually reached (and
+        // blocked on) the execution lock.
+        while coordinator.executionWaiterCountForTesting == 0 {
+            await Task.yield()
+        }
+        #expect(await transport.cancellations.isEmpty, "Push B must not have touched the transport yet")
+        #expect(await transport.transmissions.map(\.generation) == [1], "Push B's transmit must not have started either")
+
+        await transport.releaseCancelGate()
+        try await pushA.value
+        try await pushB.value
+
+        // Strict ordering: Push A's cancel/transmit pair lands before Push
+        // B's — never interleaved.
+        let cancellations = await transport.cancellations.map(\.generation)
+        let transmissions = await transport.transmissions.map(\.generation)
+        #expect(cancellations == [1, 2], "Push A's cancel(1) then Push B's cancel(2), never reordered")
+        #expect(transmissions == [1, 2, 3], "Push A's transmit(2) fully lands before Push B's transmit(3) starts")
     }
 }

@@ -8,6 +8,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m4-04 — allLoggedSetSlices: the digest generator's one-shot fetch")
 struct AllLoggedSetSlicesTests {
 

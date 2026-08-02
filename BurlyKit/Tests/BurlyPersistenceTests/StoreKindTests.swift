@@ -25,6 +25,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("§1 — ExerciseLastPerformance is a watch-store-only write")
 struct StoreKindTests {
 

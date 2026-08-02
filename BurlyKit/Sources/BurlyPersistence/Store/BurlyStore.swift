@@ -49,23 +49,42 @@
 //
 // ## Threading
 //
-// `SwiftDataStore` does not declare `Sendable`, but that is not the backstop
-// it might look like (m1-06 review, finding m3): the current SDK's
+// **`@MainActor`-isolated, compiler-enforced (m4-04 review round 1, blocker
+// 2).** `SwiftDataStore` does not declare `Sendable`, and that was never the
+// backstop it might look like (m1-06 review, finding m3): the current SDK's
 // `ModelContext` is itself `@unchecked Sendable`, and `@Model` classes now
-// pick up `Sendable` from the macro, so the type system does not actually
-// stop a store — or a model object read from one — from being handed
-// across an actor boundary. What contains this is caller-owned discipline
-// plus the sealed API surface above (no `@Model` type ever appears in a
-// `BurlyStore` signature), not a compiler-enforced guarantee. Create and
-// use a store from one isolation domain (the app's `@MainActor` in
-// practice); to hand data across an actor boundary, pass the value types
-// this API returns, never the store. A dedicated confinement mechanism
-// (`@MainActor` or a `ModelActor`) is a later-milestone decision, not made
-// here.
+// pick up `Sendable` from the macro, so the type system alone does not stop
+// a store — or a model object read from one — from being handed across an
+// actor boundary. Until this round, "create and use a store from one
+// isolation domain (the app's `@MainActor` in practice)" was caller-enforced
+// discipline stated in a comment, not a guarantee. It is a guarantee now:
+// this protocol and `SwiftDataStore` are both `@MainActor`, so a second
+// isolation domain touching the same store — a background import, a
+// differently-isolated sync actor, anything not already on the main actor —
+// fails to *compile*, not merely to be remembered. `BurlyPhoneSync
+// .PhoneSyncCoordinator` is `@MainActor` for exactly this reason (see its
+// own doc), and every store call in this codebase — §6 edits, §9 catalog
+// browsing, imports, the phone sync runtime — now funnels through the one
+// executor the platform already schedules UI and most app logic on.
+//
+// This is what makes the compare-and-conditional-write sequences in this
+// protocol (`applyReplicatedSession`'s revision recheck chief among them)
+// actually race-proof rather than merely documented as such: two `@MainActor`
+// calls can never run their bodies concurrently or interleave mid-method —
+// the *only* place a second call can begin is after the first one fully
+// returns, or at an `await` the first one itself contains. None of
+// `BurlyStore`'s compare-then-mutate-then-save sequences contain an `await`
+// between the compare and the save, so no interleaving window exists for
+// them at all, compiler-provable rather than asserted.
+//
+// To hand data across an actor boundary, pass the value types this API
+// returns, never the store itself (the store type remains non-`Sendable`
+// on purpose — see `SwiftDataStore`'s own doc).
 
 import Foundation
 import BurlyCore
 
+@MainActor
 public protocol BurlyStore: AnyObject {
 
     // MARK: - Exercises (archive-only; see the note above)
@@ -402,16 +421,33 @@ public protocol BurlyStore: AnyObject {
     ///   one only ever carries someone else's number forward, exactly as
     ///   `createSession` already does for the absent case.
     ///
-    /// Refuses `state == .active` on the **incoming** payload with
-    /// `.activeSessionRequiresSaveActiveSession`, same rule as
-    /// `applyPhoneEdit` and for the same reason: an `.active` row is only
-    /// half of an in-flight session, and only `saveActiveSession` writes
-    /// the other half. If the *stored* row happens to be `.active` and a
-    /// higher-revision, non-`.active` replica wins over it, its journal is
-    /// retired in the same save — `applyPhoneEdit`'s "editing a session
-    /// *out* of `.active` is fine" rule, applied here too, so a replicated
-    /// session can never leave a Resume pointer at a row that is no longer
-    /// in flight.
+    /// **The existing-row no-op check runs before the `.active` guard**
+    /// (m4-04 review round 1, major 8). A stale replica — incoming revision
+    /// ≤ stored — is a silent no-op *unconditionally*, even in the
+    /// unreachable-on-today's-protocol shape where the stale payload also
+    /// happens to claim `.active`: refusing it there instead would throw on
+    /// exactly the payload §5's idempotency rule says to drop quietly, and
+    /// the sync runtime built on this method sends no ack for a thrown
+    /// command — an honest drop is owed a re-ack, not silence.
+    ///
+    /// Only once a call is actually about to create or replace does the
+    /// `.active` prohibition apply: refuses `state == .active` on the
+    /// **incoming** payload with `.activeSessionRequiresSaveActiveSession`,
+    /// same rule as `applyPhoneEdit` and for the same reason — an `.active`
+    /// row is only half of an in-flight session, and only
+    /// `saveActiveSession` writes the other half. If the *stored* row
+    /// happens to be `.active` and a higher-revision, non-`.active` replica
+    /// wins over it, its journal is retired in the same save —
+    /// `applyPhoneEdit`'s "editing a session *out* of `.active` is fine"
+    /// rule, applied here too, so a replicated session can never leave a
+    /// Resume pointer at a row that is no longer in flight.
+    ///
+    /// **Revision range validated first** (m4-04 review round 1, major 7):
+    /// throws `.invalidRevision` for a `session.revision` outside
+    /// `SessionData.hasValidRevision`'s `1...maximumRevision` — before the
+    /// no-op check, before preflight, before anything is touched. A wire
+    /// payload's `SessionData` already can't decode an out-of-range value;
+    /// this is the backstop for a caller that built one directly.
     ///
     /// On the current §5 protocol only the create branch is reachable — a
     /// watch-authored session always arrives at revision 1, and only
@@ -426,6 +462,27 @@ public protocol BurlyStore: AnyObject {
     /// item/set id in the payload is already owned by a *different* session.
     @discardableResult
     func applyReplicatedSession(_ session: SessionData) throws -> Int
+
+    /// The whole §5 session ingest, atomically (m4-04 review round 1, major
+    /// 1): `applyReplicatedSession(_:)`'s rule above, plus an idempotent
+    /// upsert of every `placeholders` entry, all in the **one** transaction
+    /// `applyReplicatedSession(_:)` alone already used. A session naming a
+    /// `needsNaming` placeholder the phone has never seen must not be able
+    /// to leave that placeholder committed while the session itself — and
+    /// the ack it would have earned — never lands; folding both into one
+    /// `commit()` closes that window the same way `applyDigest`'s single
+    /// save closes the digest's two-halves window.
+    ///
+    /// Placeholder upsert is create-if-absent only, exactly like
+    /// `applyCatalogSeed`'s "never overwrite" policy: an already-known
+    /// exercise (the user may have named it between deliveries) is left
+    /// completely untouched. `applyReplicatedSession(_:)` is this method
+    /// with `placeholders: []`.
+    @discardableResult
+    func applyReplicatedSession(
+        _ session: SessionData,
+        upsertingPlaceholderExercises placeholders: [ExerciseData]
+    ) throws -> Int
 
     // MARK: - Last-performance digests (watch store; §1, §5 `digest`)
 

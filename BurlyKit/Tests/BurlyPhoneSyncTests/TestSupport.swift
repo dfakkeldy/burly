@@ -84,12 +84,23 @@ final class TestClock: WallClock, @unchecked Sendable {
 }
 
 /// A fresh in-memory phone store per test.
+@MainActor
 func makePhoneStore(clock: any WallClock = TestClock()) throws -> SwiftDataStore {
     try SwiftDataStore(kind: .phone, at: .inMemory, clock: clock)
 }
 
 // MARK: - Transport / publisher fakes
 
+/// A `TransmitFailure`-throwing, gate-able fake transport.
+///
+/// - `failNextTransmitCount` / `failNextCancelCount`: fail the next N calls
+///   of the respective kind (major 3's retry/surface tests).
+/// - `armCancelGate()` / `releaseCancelGate()`: make
+///   `cancelSnapshotTransfer` suspend until released — the deterministic
+///   way to construct major 4's "one call is mid-batch when another
+///   starts" scenario without a real sleep. `hasCancelGateWaiter()` lets a
+///   test poll for "the gated call has actually been reached" instead of
+///   guessing a delay.
 actor FakeTransport: PhoneSyncTransporting {
     struct Transmission: Equatable {
         var payload: BurlySnapshotPayloadDTO
@@ -99,16 +110,65 @@ actor FakeTransport: PhoneSyncTransporting {
         var version: Int
         var generation: Int
     }
+    struct TransmitFailure: Error, Equatable {}
+    struct CancelFailure: Error, Equatable {}
 
     private(set) var transmissions: [Transmission] = []
     private(set) var cancellations: [Cancellation] = []
 
-    func transmitSnapshot(_ payload: BurlySnapshotPayloadDTO, generation: Int) async {
+    private(set) var failNextTransmitCount = 0
+    private(set) var failNextCancelCount = 0
+
+    private var cancelGateArmed = false
+    private var cancelGateWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func setFailNextTransmitCount(_ count: Int) {
+        failNextTransmitCount = count
+    }
+
+    func setFailNextCancelCount(_ count: Int) {
+        failNextCancelCount = count
+    }
+
+    func transmitSnapshot(_ payload: BurlySnapshotPayloadDTO, generation: Int) async throws {
+        if failNextTransmitCount > 0 {
+            failNextTransmitCount -= 1
+            throw TransmitFailure()
+        }
         transmissions.append(Transmission(payload: payload, generation: generation))
     }
 
-    func cancelSnapshotTransfer(version: Int, generation: Int) async {
+    func cancelSnapshotTransfer(version: Int, generation: Int) async throws {
+        if cancelGateArmed {
+            await withCheckedContinuation { continuation in
+                cancelGateWaiters.append(continuation)
+            }
+        }
+        if failNextCancelCount > 0 {
+            failNextCancelCount -= 1
+            throw CancelFailure()
+        }
         cancellations.append(Cancellation(version: version, generation: generation))
+    }
+
+    func armCancelGate() {
+        cancelGateArmed = true
+    }
+
+    /// Releases every call currently parked on the gate and disarms it —
+    /// calls made *after* this are not gated again until `armCancelGate()`
+    /// is called anew.
+    func releaseCancelGate() {
+        cancelGateArmed = false
+        let waiters = cancelGateWaiters
+        cancelGateWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func hasCancelGateWaiter() -> Bool {
+        cancelGateWaiters.isEmpty == false
     }
 }
 

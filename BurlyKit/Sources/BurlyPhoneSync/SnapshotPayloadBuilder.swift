@@ -27,6 +27,7 @@ public enum SnapshotPayloadBuilder {
     /// does. A `needsNaming` placeholder the watch just created and the
     /// phone hasn't merged yet is never archived, so it always rides along
     /// normally.
+    @MainActor
     public static func build(version: Int, from store: any BurlyStore) throws -> BurlySnapshotPayloadDTO {
         BurlySnapshotPayloadDTO(
             version: version,

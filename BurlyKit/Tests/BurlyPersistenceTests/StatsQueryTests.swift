@@ -24,6 +24,7 @@ import Testing
 import BurlyCore
 @testable import BurlyPersistence
 
+@MainActor
 @Suite("m6-01 — loggedSetSlices / loggedSessionDates: bounded stats queries")
 struct StatsQueryTests {
     /// A fixed, deterministic calendar for the `TrailingWindow`-based
