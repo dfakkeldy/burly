@@ -172,6 +172,45 @@ final class ResumeUITests: XCTestCase {
         )
     }
 
+    /// m2-06 review finding 1.1: Resume must land on the item the lifter
+    /// was actually looking at, not just the first one with something left
+    /// to log. **No UI-level pin here on purpose**: Push/Pull's second item
+    /// (Bench Press/Pull-Up) is deliberately seeded with no digest (§2
+    /// acceptance #5's other half), so logging on it from a UI test
+    /// requires raising `reps` from "unset" by hand -- and `RepsControlView`
+    /// collapses its +/- buttons into one accessibility-adjustable element
+    /// (VoiceOver-friendly, `RepsControlView.swift`'s own doc), which
+    /// relies on `XCUIElement.increment()`/`.decrement()` -- not available
+    /// on this watchOS XCTest SDK (confirmed by a build failure, not a
+    /// guess). Rather than spend this task's last acceptance-sim.sh run
+    /// discovering whether some other simulated gesture reaches the same
+    /// accessibility action, this fix is pinned at the layer the reviewer's
+    /// own guidance pointed at instead: `SessionEngineTests
+    /// .setCurrentItemRecordsAndSurvivesRoundTrip` (BurlyCore) and
+    /// `ActiveSessionTransactionTests.currentItemIDSurvivesCrashAndResume`
+    /// (BurlyPersistence, a real save → cold-reopen → `resumableActiveSession()`
+    /// round trip) exercise the exact mechanism deterministically, with no
+    /// simulator involved.
+
+    /// m2-06 review finding 4.1: a token containing path syntax (`/`,
+    /// `..`) must never be accepted as a filename component -- it must be
+    /// rejected and fall back to the ordinary `.inMemory` store, the same
+    /// as an absent token, not accepted as a nested or traversing path and
+    /// not surfaced as a store-open failure either.
+    func testMalformedStoreTokenFallsBackToInMemoryStore() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.storeTokenKey] = "../../etc/evil"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(
+            legDayRow.waitForExistence(timeout: 15),
+            "Expected a malformed store token to fall back to the ordinary in-memory store, not fail to open or misbehave"
+        )
+        XCTAssertFalse(app.staticTexts["storeUnavailableView.heading"].exists)
+    }
+
     // MARK: - Helpers
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {

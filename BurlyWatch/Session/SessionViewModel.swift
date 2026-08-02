@@ -177,21 +177,37 @@ final class SessionViewModel {
         self.store = store
         self.haptics = haptics
         self.now = now
-        // Resume fidelity (m2-06): land on the first item that still has
-        // something left to log, not just the first item overall. A fresh
-        // Start (nothing logged anywhere) picks the same page either way,
-        // so this is a no-op for every existing flow; a Resume of a
-        // multi-item session that already finished its first exercise
-        // lands where the lifter left off instead of paging them back to
-        // an exercise with nothing left to do. Falls back to the first
-        // unskipped item (previous behavior, and `nil` when there is none)
-        // once every item is already fully logged.
-        self.currentItemID = engine.session.unskippedItems.first { engine.session.hasEmptySetSlot($0.id) }?.id
-            ?? engine.session.unskippedItems.first?.id
+        self.currentItemID = Self.resolveInitialItem(engine.session)
         refreshPrefill()
         if startInSummary {
             requestEndWorkout()
         }
+    }
+
+    /// The page to land on when this view model is constructed -- for a
+    /// fresh Start *and* for Resume (m2-06 review finding 1.1).
+    ///
+    /// Prefers `ActiveSession.currentItemID`, the item last recorded via
+    /// `applyCurrentItem`/`engine.setCurrentItem` and journaled with the
+    /// rest of the scaffolding -- so Resume genuinely lands where the
+    /// lifter left off, including a page move made *after* the last set
+    /// they logged, which a "first item with an empty slot" heuristic can
+    /// never recover (m2-06 review round 1 finding 1.1's own example: log
+    /// on A, page to B, kill with both still incomplete -- the old
+    /// heuristic landed back on A). Falls back to the first item that
+    /// still has something left to log, then to the first unskipped item,
+    /// when the restored id is `nil` (a brand-new session, or a session
+    /// saved before this field existed) or names an item that is no longer
+    /// unskipped (the lifter skipped it after being on it, or moved on)
+    /// -- the same graceful-degradation posture the pre-fix heuristic
+    /// already took, kept as a fallback rather than a hard requirement.
+    private static func resolveInitialItem(_ active: ActiveSession) -> UUID? {
+        let unskipped = active.unskippedItems
+        if let restored = active.currentItemID, unskipped.contains(where: { $0.id == restored }) {
+            return restored
+        }
+        return unskipped.first { active.hasEmptySetSlot($0.id) }?.id
+            ?? unskipped.first?.id
     }
 
     // MARK: - Reads
@@ -299,6 +315,11 @@ final class SessionViewModel {
     private func applyCurrentItem(_ id: UUID?) {
         play(engine.pageAway())
         currentItemID = id
+        // m2-06 review finding 1.1: record the page for Resume, in the
+        // same journaled record `persist()` is about to save -- one
+        // transaction, no separate write that a crash between the two
+        // could tear apart.
+        engine.setCurrentItem(id)
         refreshPrefill()
         persist()
     }
@@ -393,6 +414,8 @@ final class SessionViewModel {
             pendingRetry = nil
             play(outcome.haptics)
             refreshPrefill()
+        } catch BurlyStoreError.sessionNoLongerInFlight(_, _) {
+            resolveSessionNoLongerInFlight()
         } catch {
             saveFailure = String(describing: error)
             pendingRetry = { [weak self] in self?.attemptLog(itemID: itemID, reps: reps) }
@@ -595,6 +618,16 @@ final class SessionViewModel {
             finishedSummary = SessionSummaryBuilder.summarize(
                 engine.session, referenceDate: now(), lastPerformance: lastPerformance(for:)
             )
+        } catch BurlyStoreError.sessionNoLongerInFlight(_, _) {
+            // m2-06 review finding 3.1: the store already moved this
+            // session out of `.active` through some other legitimate
+            // writer -- retrying this exact save can never succeed
+            // (`saveActiveSession` refuses it every time), so the ordinary
+            // "stays true, offer Retry" contract above would wedge
+            // `isFinishing` forever with Keep going/Discard disabled and
+            // no working forward path. Resolve to the session's real
+            // terminal state instead, which also clears `isFinishing`.
+            resolveSessionNoLongerInFlight()
         } catch {
             // `isFinishing` stays true: the engine already committed
             // `.logged` in memory, so the summary screen must keep offering
@@ -674,9 +707,67 @@ final class SessionViewModel {
             try store.saveActiveSession(engine.session)
             saveFailure = nil
             pendingRetry = nil
+        } catch BurlyStoreError.sessionNoLongerInFlight(_, _) {
+            resolveSessionNoLongerInFlight()
         } catch {
             saveFailure = String(describing: error)
             pendingRetry = { [weak self] in self?.persist() }
+        }
+    }
+
+    /// m2-06 review finding 3.1: `.sessionNoLongerInFlight` means the
+    /// **store**, not this view, already moved the session out of
+    /// `.active` -- some other legitimate writer (a §6 phone edit, a
+    /// future sync apply) got there first while this view was still
+    /// attached to it. That is a terminal state transition, not a
+    /// transient save failure: this view's `engine.session` is stale
+    /// active state that `saveActiveSession` will refuse forever, so
+    /// installing the ordinary `pendingRetry`/`finishSaveError` closures
+    /// the other catch branches use would resubmit that same stale state
+    /// on every retry and wedge permanently -- worse than an ordinary
+    /// transient failure, because there, retrying eventually succeeds.
+    ///
+    /// Resolves by re-reading the session's *real* stored state and
+    /// routing there directly, exactly the way a normal Finish or Discard
+    /// would have looked from the outside:
+    ///
+    /// - Still stored (the common case -- some other writer finished it):
+    ///   renders through the same `finishedSummary` acknowledgement Finish
+    ///   itself produces. `plans: [:]` is safe here -- `SessionSummaryBuilder
+    ///   .summarize` never reads `ActiveSession.plans`/`.restTimer`, only
+    ///   `session.items`/`.startedAt`/`.endedAt` (see that type's doc).
+    /// - No longer stored at all (a §6 delete): dismisses through
+    ///   `didDiscard`, same as an ordinary successful Discard.
+    ///
+    /// Clears every blocking/retry flag this view can be in, including
+    /// `isFinishing` -- the specific gap m2-06 review finding 3.1 named:
+    /// without this, a Finish that hit this condition left `isFinishing ==
+    /// true` forever, disabling Keep going and Discard while Retry could
+    /// never succeed.
+    private func resolveSessionNoLongerInFlight() {
+        isFinishing = false
+        finishSaveError = nil
+        saveFailure = nil
+        pendingRetry = nil
+        pendingFinishHaptics = []
+        endWorkoutPreview = nil
+        do {
+            if let stored = try store.session(id: engine.session.id) {
+                finishedSummary = SessionSummaryBuilder.summarize(
+                    ActiveSession(session: stored, plans: [:]),
+                    referenceDate: now(),
+                    lastPerformance: lastPerformance(for:)
+                )
+            } else {
+                didDiscard = true
+            }
+        } catch {
+            // The re-read itself failed -- an honest blocking error rather
+            // than silently claiming resolution that may not have
+            // happened. Retrying redoes this same resolution, not the
+            // original (already-doomed) mutation.
+            saveFailure = String(describing: error)
+            pendingRetry = { [weak self] in self?.resolveSessionNoLongerInFlight() }
         }
     }
 

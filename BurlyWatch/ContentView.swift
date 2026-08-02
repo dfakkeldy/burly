@@ -55,6 +55,14 @@ struct ContentView: View {
             // session is no longer active and flips to the routine list.
             ResumeSessionView(preview: preview)
                 .onAppear { viewModel.load() }
+        case .unreadableSession(let sessionID):
+            // m2-06 review finding 2.1: a targeted, self-clearing recovery
+            // -- see `WatchHomeViewModel`'s doc -- never the Retry-only
+            // `.failed` state below, which would just re-read the same
+            // undecodable journal forever.
+            UnreadableSessionView {
+                viewModel.discardUnreadableSession(sessionID)
+            }
         case .loaded(let rows):
             // Reload on every reappearance (m2-03): finishing or discarding
             // a workout pops back here, and the "last done N days ago" text

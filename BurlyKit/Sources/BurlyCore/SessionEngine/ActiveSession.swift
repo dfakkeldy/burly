@@ -95,16 +95,38 @@ public struct ActiveSession: Sendable, Equatable, Codable, Identifiable {
     /// record so it survives crash/resume.
     public var restTimer: RestTimerState?
 
+    /// The item the watch UI was showing when this record was last saved
+    /// (m2-06 review finding 1.1). Pure UI bookkeeping, the same kind of
+    /// scaffolding `plans`/`restTimer` already are: §1 is frozen and has no
+    /// concept of "which page was on screen," so this cannot live on
+    /// `SessionData` any more than the rest timer can. Journaled alongside
+    /// them (`ActiveSessionScaffolding`) so Resume can land back on the
+    /// exact item the lifter was looking at, not just the first one with
+    /// something left to log.
+    ///
+    /// `nil` when nothing has recorded a page yet (a brand-new session), or
+    /// when the caller simply never set it (every pre-m2-06 construction
+    /// site) -- both read the same as "no restored position," which is
+    /// exactly the old default behavior. A value naming an item that no
+    /// longer exists, or one that was skipped after being viewed, is not
+    /// validated here; `SessionViewModel`'s restore logic treats that as
+    /// "no restored position" too rather than trusting a stale reference
+    /// (the same graceful-degradation posture `RestTimerState`'s decode
+    /// clamp already takes for a stored value that no longer makes sense).
+    public var currentItemID: UUID?
+
     public var id: UUID { session.id }
 
     public init(
         session: SessionData,
         plans: [UUID: ItemPlan],
-        restTimer: RestTimerState? = nil
+        restTimer: RestTimerState? = nil,
+        currentItemID: UUID? = nil
     ) {
         self.session = session
         self.plans = plans
         self.restTimer = restTimer
+        self.currentItemID = currentItemID
     }
 
     // MARK: - Reads

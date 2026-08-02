@@ -396,6 +396,29 @@ struct SessionEngineTests {
         #expect(resumed.tick() == [.restTimerFinished])
     }
 
+    @Test("setCurrentItem is pure bookkeeping: it records the id, survives a crash/resume JSON round trip, and defaults to nil for every caller that never sets it (m2-06 review finding 1.1)")
+    func setCurrentItemRecordsAndSurvivesRoundTrip() throws {
+        let ids = SequentialIDs()
+        let clock = ManualClock()
+        var engine = makeEngine(ids: ids, clock: clock)
+        #expect(engine.session.currentItemID == nil)
+
+        let secondItemID = engine.session.items[1].id
+        engine.setCurrentItem(secondItemID)
+        #expect(engine.session.currentItemID == secondItemID)
+
+        // Not a rule -- setting it never touches sets, plans, or the timer.
+        let beforeMutation = engine.session
+        engine.setCurrentItem(nil)
+        #expect(engine.session.currentItemID == nil)
+        #expect(engine.session.allSets == beforeMutation.allSets)
+        #expect(engine.session.plans == beforeMutation.plans)
+
+        engine.setCurrentItem(secondItemID)
+        let restored = try roundTripJSON(engine.session)
+        #expect(restored.currentItemID == secondItemID)
+    }
+
     @Test("A full three-set exercise produces the expected haptic log end to end")
     func endToEndHapticLog() throws {
         let ids = SequentialIDs()

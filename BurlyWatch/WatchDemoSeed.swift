@@ -84,6 +84,19 @@ enum WatchDemoSeed {
         /// finish-or-discard recovery choice instead of an unsaved logging
         /// screen -- see `SessionConflictView`.
         case activeConflict
+        /// `.routines`, plus Leg Day itself left `.active` and in flight
+        /// (m2-06 review finding 3.1). Distinct from `.activeConflict`
+        /// (which leaves *Push/Pull* active, deliberately digest-less)
+        /// specifically because Leg Day's own item (Back Squat) has a
+        /// seeded `ExerciseLastPerformance` digest -- resuming into it
+        /// prefills real reps immediately, so `SessionRecoveryUITests`'
+        /// log-path pin can tap Log set without first needing to raise
+        /// reps from "unset" by hand (no reliable way to do that from
+        /// XCUITest on watchOS -- `RepsControlView`'s +/- buttons collapse
+        /// into one accessibility-adjustable element, and
+        /// `XCUIElement.increment()`/`.decrement()` are unavailable on this
+        /// watchOS XCTest SDK).
+        case activeLegDay
     }
 
     /// Thrown by a recognized scenario's seed construction. Never converted
@@ -170,13 +183,17 @@ enum WatchDemoSeed {
         guard scenario != .brokenSeed else {
             throw SeedError.intentionallyBroken
         }
-        let store = try SwiftDataStore(kind: .watch, at: storeLocation())
+        let location = storeLocation()
+        let store = try SwiftDataStore(kind: .watch, at: location)
         switch scenario {
         case .routines:
             try seedRoutinesIfNeeded(into: store)
         case .activeConflict:
             try seedRoutinesIfNeeded(into: store)
-            try seedActiveConflictIfNeeded(into: store)
+            try seedActiveConflictIfNeeded(into: store, location: location)
+        case .activeLegDay:
+            try seedRoutinesIfNeeded(into: store)
+            try seedActiveLegDayIfNeeded(into: store)
         case .empty, .brokenSeed:
             break
         }
@@ -187,15 +204,30 @@ enum WatchDemoSeed {
     /// `storeTokenEnvironmentKey` names a token -- see that key's doc for
     /// why this is a token turned into a URL here, not a URL handed in
     /// directly.
+    ///
+    /// **The raw value must parse as a `UUID`** (m2-06 review finding 4.1).
+    /// The doc above calls this "a bare token, never a path," but nothing
+    /// enforced that: the previous version interpolated the raw
+    /// environment string directly into a path component, so a value
+    /// containing `/` or `..` could name a nested or traversing path
+    /// instead of a single opaque filename -- exactly the shape a path-
+    /// injection value takes. `UUID(uuidString:)` accepts only the
+    /// canonical 8-4-4-4-12 hex form, which cannot contain a path
+    /// separator or a `.` run, so this closes the vector by construction
+    /// rather than by blocklisting characters. A value that fails to parse
+    /// falls back to `.inMemory` -- the same fail-quiet posture already
+    /// documented for an absent/empty value, since a malformed token is a
+    /// test-harness mistake, not a scenario of its own that deserves the
+    /// fail-*closed* treatment `Scenario`'s own bad-value case gets.
     private static func storeLocation() -> BurlyStoreLocation {
         guard
-            let token = ProcessInfo.processInfo.environment[storeTokenEnvironmentKey],
-            !token.isEmpty
+            let raw = ProcessInfo.processInfo.environment[storeTokenEnvironmentKey],
+            let token = UUID(uuidString: raw)
         else {
             return .inMemory
         }
         let url = FileManager.default.temporaryDirectory
-            .appending(path: "BurlyWatchUITest-\(token).store", directoryHint: .notDirectory)
+            .appending(path: "BurlyWatchUITest-\(token.uuidString).store", directoryHint: .notDirectory)
         return .file(url)
     }
 
@@ -214,11 +246,42 @@ enum WatchDemoSeed {
         try seedRoutines(into: store)
     }
 
-    /// Same idempotency as `seedRoutinesIfNeeded`, for the second scenario
-    /// that seeds into a store this file might reopen.
-    private static func seedActiveConflictIfNeeded(into store: SwiftDataStore) throws {
-        guard try store.resumableActiveSession() == nil else { return }
+    /// Idempotent, but **not** by re-checking `resumableActiveSession()`
+    /// (m2-06 review finding 4.2). That check answers "is something active
+    /// right now," which is exactly what the UI legitimately changes: once
+    /// `ResumeSessionView`/`SessionConflictView`'s Finish or Discard
+    /// resolves the seeded conflict, `resumableActiveSession()` correctly
+    /// returns `nil` again -- and a relaunch on the *same* on-disk store
+    /// with the old check would read that as "never seeded" and mint a
+    /// brand-new active conflict, resurrecting the gate over a fixture the
+    /// lifter already resolved. A real store never does that: nothing
+    /// re-creates a workout just because none happens to be active at the
+    /// moment.
+    ///
+    /// So this records that the fixture was applied with a companion
+    /// marker file next to the on-disk store (`.file` locations only --
+    /// `.inMemory` starts genuinely fresh every launch, so the old
+    /// nil-check is exactly right there and is kept as the fallback),
+    /// independent of whatever the seeded session's own state ends up
+    /// being -- Discard in particular leaves *no* trace in the store
+    /// itself, so a signal that lived only in the store could never
+    /// distinguish "never seeded" from "seeded, then discarded."
+    private static func seedActiveConflictIfNeeded(into store: SwiftDataStore, location: BurlyStoreLocation) throws {
+        guard case .file(let storeURL) = location else {
+            guard try store.resumableActiveSession() == nil else { return }
+            try seedActiveConflict(into: store)
+            return
+        }
+        let marker = activeConflictSeededMarkerURL(for: storeURL)
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
         try seedActiveConflict(into: store)
+        FileManager.default.createFile(atPath: marker.path, contents: nil)
+    }
+
+    private static func activeConflictSeededMarkerURL(for storeURL: URL) -> URL {
+        storeURL
+            .deletingPathExtension()
+            .appendingPathExtension("activeConflictSeeded")
     }
 
     private static func seedRoutines(into store: SwiftDataStore) throws {
@@ -304,6 +367,27 @@ enum WatchDemoSeed {
         let active = SessionBuilder.session(from: pushPull, clock: SystemWallClock())
         try store.saveActiveSession(active)
     }
+
+    /// Idempotent counterpart to `seedActiveConflictIfNeeded`, for
+    /// `.activeLegDay` -- see that scenario's doc.
+    private static func seedActiveLegDayIfNeeded(into store: SwiftDataStore) throws {
+        guard try store.resumableActiveSession() == nil else { return }
+        try seedActiveLegDay(into: store)
+    }
+
+    /// m2-06 review finding 3.1: leaves Leg Day itself `.active`, so
+    /// `SessionRecoveryUITests` can Resume into it and immediately Log set
+    /// (Back Squat's seeded digest prefills real reps) to exercise the
+    /// `saveActiveSession` call the fix's faults target.
+    private static func seedActiveLegDay(into store: SwiftDataStore) throws {
+        guard let legDay = try store.routines(includingArchived: false)
+            .first(where: { $0.name == "Leg Day" })
+        else {
+            throw SeedError.catalogMissingExercise(name: "Leg Day")
+        }
+        let active = SessionBuilder.session(from: legDay, clock: SystemWallClock())
+        try store.saveActiveSession(active)
+    }
 }
 
 /// Wraps a real `SwiftDataStore` and deterministically fails a chosen
@@ -320,6 +404,59 @@ final class FaultInjectingStore: BurlyStore {
         case saveActiveSession
         case createExercise
         case deleteSession
+        /// m2-06 review finding 2.1: simulates `resumableActiveSession()`
+        /// settling on a real, otherwise-well-formed journal whose payload
+        /// will not decode -- the exact shape `SwiftDataStore
+        /// .makeActiveSession` produces when `JSONDecoder` throws -- without
+        /// this DEBUG-only test target needing to reach past `BurlyStore`'s
+        /// public surface to write a raw corrupt payload (deliberately no
+        /// such write path exists; `BurlyContainer.swift`'s boundary doc).
+        /// The underlying session is genuinely active and well-formed; only
+        /// the *error this one call reports* is faked, which is exactly the
+        /// seam BurlyWatchUITests needs to prove `WatchHomeViewModel`
+        /// recovers (`.unreadableSession`) rather than wedging on Retry.
+        /// Bypasses `maybeFail`'s success/failure counters entirely -- see
+        /// `resumableActiveSession()`'s override below for why none are
+        /// needed here.
+        case resumableActiveSessionUnreadable
+        /// m2-06 review finding 3.1: forces the session named by the
+        /// *next* `saveActiveSession(_:)` call's own `active.session.id`
+        /// out of `.active` through the store's real `applyPhoneEdit` path
+        /// -- exactly what a legitimate concurrent writer (a future sync
+        /// apply, a §6 phone edit) would do -- immediately before
+        /// forwarding that call. `saveActiveSession` then throws the
+        /// *real* `.sessionNoLongerInFlight`, from real store state, not a
+        /// fabricated error: this fault exists to prove `SessionViewModel`
+        /// resolves that terminal condition correctly (the store's own
+        /// behavior here is already covered by `BurlyPersistenceTests`).
+        /// One-shot: fires on the first `saveActiveSession` call only, via
+        /// `forcedSessionOutOfFlight` below.
+        case forceSessionOutOfFlightBeforeNextSave
+        /// m2-06 review finding 6.1: injects a real active session (via
+        /// the wrapped store, for a routine named "Push/Pull") the first
+        /// time `resumableActiveSession()` is called at least
+        /// `lateSessionInjectionDelay` after this store was constructed --
+        /// simulating a session becoming active between the home shell's
+        /// own gate check (which runs within the first fraction of a
+        /// second of launch, before the routine list has even rendered,
+        /// and may run more than once if `scenePhase` also fires early)
+        /// and `SessionEntryView.start()`'s independent defensive
+        /// re-check a moment later, the race `SessionConflictView` exists
+        /// to catch.
+        ///
+        /// Deliberately wall-clock-gated rather than call-count-gated: an
+        /// exact "fire on the Nth call" latch would silently assume how
+        /// many times the shell itself calls `resumableActiveSession()`
+        /// before the lifter's first tap, which this file does not control
+        /// and SwiftUI does not document as stable (an `.inactive` →
+        /// `.active` `scenePhase` transition shortly after cold launch can
+        /// legitimately trigger an extra shell-side `load()`). The delay
+        /// only has to separate "calls that happen as part of app launch
+        /// settling" from "a call caused by an XCUITest tap that only
+        /// fires after `waitForExistence` already confirmed the routine
+        /// list rendered" -- which is a real, comfortably-sized gap in
+        /// practice, not a race the test itself could lose.
+        case injectActiveSessionOnLateResumableCheck
     }
 
     struct InjectedFailure: Error, Equatable, CustomStringConvertible {
@@ -331,6 +468,20 @@ final class FaultInjectingStore: BurlyStore {
     private let fault: Fault
     private var successesBeforeFailing: Int
     private var failuresToProduce: Int
+    /// One-shot latch for `.forceSessionOutOfFlightBeforeNextSave`.
+    private var hasForcedSessionOutOfFlight = false
+    /// One-shot latch for `.injectActiveSessionOnLateResumableCheck`.
+    private var hasInjectedLateActiveSession = false
+    /// When this wrapper was constructed -- i.e. app launch, for all
+    /// practical purposes. `.injectActiveSessionOnLateResumableCheck`
+    /// measures from here; see that case's doc for why wall-clock rather
+    /// than a call count.
+    private let constructedAt = Date()
+    /// How long after construction `.injectActiveSessionOnLateResumableCheck`
+    /// waits before injecting -- comfortably past the shell's own
+    /// launch-time `resumableActiveSession()` call(s), comfortably before
+    /// an XCUITest's `waitForExistence`-gated tap can plausibly land.
+    private static let lateSessionInjectionDelay: TimeInterval = 1.5
 
     init(
         wrapping store: SwiftDataStore,
@@ -409,11 +560,49 @@ final class FaultInjectingStore: BurlyStore {
     // MARK: - Active session
 
     func saveActiveSession(_ active: ActiveSession) throws {
+        if fault == .forceSessionOutOfFlightBeforeNextSave, !hasForcedSessionOutOfFlight {
+            hasForcedSessionOutOfFlight = true
+            // Real store state, not a fabricated throw: if the session
+            // this call is about to save is still genuinely active,
+            // finish it out from under the caller through the store's own
+            // §6 edit path first. The `saveActiveSession` call below then
+            // sees a stored row that is no longer `.active` and throws the
+            // real `.sessionNoLongerInFlight` on its own.
+            if var current = try wrapped.session(id: active.session.id), current.state == .active {
+                current.state = .logged
+                current.endedAt = current.endedAt ?? Date()
+                _ = try wrapped.applyPhoneEdit(current)
+            }
+        }
         try maybeFail(.saveActiveSession)
         try wrapped.saveActiveSession(active)
     }
     func activeSession(id: UUID) throws -> ActiveSession? { try wrapped.activeSession(id: id) }
-    func resumableActiveSession() throws -> ActiveSession? { try wrapped.resumableActiveSession() }
+    func resumableActiveSession() throws -> ActiveSession? {
+        if
+            fault == .injectActiveSessionOnLateResumableCheck,
+            !hasInjectedLateActiveSession,
+            Date().timeIntervalSince(constructedAt) >= Self.lateSessionInjectionDelay
+        {
+            hasInjectedLateActiveSession = true
+            if let pushPull = try wrapped.routines(includingArchived: false).first(where: { $0.name == "Push/Pull" }) {
+                let active = SessionBuilder.session(from: pushPull, clock: SystemWallClock())
+                try wrapped.saveActiveSession(active)
+            }
+        }
+        guard let real = try wrapped.resumableActiveSession() else { return nil }
+        if fault == .resumableActiveSessionUnreadable {
+            // Simulates the real decode failure `SwiftDataStore
+            // .makeActiveSession` produces for a corrupt journal -- see
+            // `Fault.resumableActiveSessionUnreadable`'s doc. Self-clearing:
+            // once `real` is discarded through the store's own (non-
+            // intercepted) `deleteSession`, `wrapped.resumableActiveSession()`
+            // legitimately returns `nil` and this branch stops firing on
+            // its own, with no extra state to reset.
+            throw BurlyStoreError.unreadableActiveSessionJournal(sessionID: real.id)
+        }
+        return real
+    }
     @discardableResult
     func applyPhoneEdit(_ session: SessionData) throws -> Int { try wrapped.applyPhoneEdit(session) }
 
