@@ -26,44 +26,51 @@ struct WelcomeView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 12) {
-                Image(systemName: "figure.strengthtraining.traditional")
-                    .font(.system(size: 48))
-                    // Decorative -- the heading right below says the same
-                    // thing in words.
-                    .accessibilityHidden(true)
-                Text("Welcome to Burly")
-                    .font(.largeTitle.bold())
-                    .accessibilityIdentifier("welcomeView.heading")
-                Text("A watch-first lifting tracker. Choose how you'd like to start.")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .accessibilityIdentifier("welcomeView.message")
+            // Scroll-capable root (m5-01 review finding 7): on a short
+            // iPhone at an accessibility text size, the large heading, the
+            // wrapped message, and two growing buttons can exceed the
+            // viewport — a ScrollView keeps both first-launch actions
+            // reachable at every supported Dynamic Type size.
+            ScrollView {
+                VStack(spacing: 12) {
+                    Image(systemName: "figure.strengthtraining.traditional")
+                        .font(.system(size: 48))
+                        // Decorative -- the heading right below says the same
+                        // thing in words.
+                        .accessibilityHidden(true)
+                    Text("Welcome to Burly")
+                        .font(.largeTitle.bold())
+                        .accessibilityIdentifier("welcomeView.heading")
+                    Text("A watch-first lifting tracker. Choose how you'd like to start.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("welcomeView.message")
 
-                VStack(spacing: 10) {
-                    Button {
-                        WelcomeState.markCompleted()
-                        path.append(.importHevy)
-                    } label: {
-                        Label("Import from Hevy", systemImage: "tray.and.arrow.down")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("welcomeView.importButton")
+                    VStack(spacing: 10) {
+                        Button {
+                            WelcomeState.markCompleted()
+                            path.append(.importHevy)
+                        } label: {
+                            Label("Import from Hevy", systemImage: "tray.and.arrow.down")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("welcomeView.importButton")
 
-                    Button {
-                        WelcomeState.markCompleted()
-                        onStartFresh()
-                    } label: {
-                        Label("Start fresh", systemImage: "sparkles")
-                            .frame(maxWidth: .infinity)
+                        Button {
+                            WelcomeState.markCompleted()
+                            onStartFresh()
+                        } label: {
+                            Label("Start fresh", systemImage: "sparkles")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("welcomeView.startFreshButton")
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("welcomeView.startFreshButton")
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
+                .padding()
             }
-            .padding()
             .navigationDestination(for: WelcomeRoute.self) { route in
                 switch route {
                 case .importHevy:

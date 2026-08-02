@@ -8,23 +8,28 @@ import SwiftUI
 
 struct ImportPlaceholderView: View {
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "tray.and.arrow.down")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
-                // Decorative -- the heading below says the same thing.
-                .accessibilityHidden(true)
-            Text("Import from Hevy")
-                .font(.headline)
-                .accessibilityIdentifier("importPlaceholderView.heading")
-            Text("Importing your Hevy routines and history is coming in a later update.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("importPlaceholderView.message")
+        // Scroll-capable root (m5-01 review finding 7): the heading, the
+        // wrapped message, and large Dynamic Type must never clip the
+        // placeholder's content unreachably.
+        ScrollView {
+            VStack(spacing: 12) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.secondary)
+                    // Decorative -- the heading below says the same thing.
+                    .accessibilityHidden(true)
+                Text("Import from Hevy")
+                    .font(.headline)
+                    .accessibilityIdentifier("importPlaceholderView.heading")
+                Text("Importing your Hevy routines and history is coming in a later update.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("importPlaceholderView.message")
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
         }
-        .padding()
-        .frame(maxWidth: .infinity)
         .navigationTitle("Import from Hevy")
         .navigationBarTitleDisplayMode(.inline)
     }

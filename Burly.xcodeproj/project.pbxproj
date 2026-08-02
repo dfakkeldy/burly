@@ -43,6 +43,7 @@
 		FCBDAC4D143D7B59FAB386BA /* StoreUnavailableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 143D7B59FAB386BA278453F3 /* StoreUnavailableView.swift */; };
 		39D8D6F4A4D16084B6298D2B /* WelcomeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4D16084B6298D2B0E31B98E /* WelcomeState.swift */; };
 		09E81AA82A7CD9CC7FE95840 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A7CD9CC7FE958405BB1B88E /* WelcomeView.swift */; };
+		B64D91A3C3E95F84A9D2E5F1 /* PhoneDemoSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E95F84A9D2E5F1B64D91A3 /* PhoneDemoSeed.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -115,6 +116,7 @@
 		143D7B59FAB386BA278453F3 /* StoreUnavailableView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StoreUnavailableView.swift; sourceTree = "<group>"; };
 		A4D16084B6298D2B0E31B98E /* WelcomeState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WelcomeState.swift; sourceTree = "<group>"; };
 		2A7CD9CC7FE958405BB1B88E /* WelcomeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		C3E95F84A9D2E5F1B64D91A3 /* PhoneDemoSeed.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneDemoSeed.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -218,6 +220,7 @@
 				143D7B59FAB386BA278453F3 /* StoreUnavailableView.swift */,
 				A4D16084B6298D2B0E31B98E /* WelcomeState.swift */,
 				2A7CD9CC7FE958405BB1B88E /* WelcomeView.swift */,
+				C3E95F84A9D2E5F1B64D91A3 /* PhoneDemoSeed.swift */,
 				C51BD6EEF9104C888FE46F50 /* Assets.xcassets */,
 				27C97A5861114CF784774D7E /* Preview Content */,
 			);
@@ -465,6 +468,7 @@
 				FCBDAC4D143D7B59FAB386BA /* StoreUnavailableView.swift in Sources */,
 				39D8D6F4A4D16084B6298D2B /* WelcomeState.swift in Sources */,
 				09E81AA82A7CD9CC7FE95840 /* WelcomeView.swift in Sources */,
+				B64D91A3C3E95F84A9D2E5F1 /* PhoneDemoSeed.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

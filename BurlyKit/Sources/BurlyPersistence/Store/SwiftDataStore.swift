@@ -714,6 +714,37 @@ public final class SwiftDataStore: BurlyStore {
             .map(\.startedAt)
     }
 
+    // MARK: - Phone-shell existence/count (m5-01; bounded)
+    //
+    // See the protocol doc: predicate-free on purpose. The only natural
+    // predicates are documented SwiftData sharp edges (optional-Date
+    // equality, enum equality), and relationship optional-chaining in
+    // `#Predicate` is the shape that crashed the CI runner (third runner
+    // divergence — pinned in `setRecordFilterPredicate`'s doc above).
+
+    public func hasRoutines() throws -> Bool {
+        // Existence, not a list: the routine table is user-authored and
+        // small by construction (§ arch), so a flat fetch plus the
+        // Swift-side archive filter — the same shape and rationale as
+        // `exercises(includingArchived:)` — never touches `.items` and is
+        // bounded by the routine table's size, not the store's.
+        try context.fetch(FetchDescriptor<Routine>())
+            .contains { $0.archivedAt == nil }
+    }
+
+    public func loggedSessionCount() throws -> Int {
+        // Count, not a graph: flat `Session` rows only — `.items`/sets are
+        // never faulted, so this costs like `allLoggedSessionDates()`
+        // (proportional to session count, ~3,600 at the arch doc's decade
+        // scale), not like the session → items → sets amplification
+        // `sessions(state:)` would. The state filter stays in Swift for
+        // the same enum-in-`#Predicate` reason `sessions(state:)`
+        // documents.
+        try context.fetch(FetchDescriptor<Session>())
+            .filter { $0.state == .logged }
+            .count
+    }
+
     /// **Internal** (m1-06 review round D), for the mirror-image reason
     /// `upsertLastPerformance` is: the prune on its own, in its own save,
     /// is the half of a §5 `digest` whose isolation the M2 finding was

@@ -599,4 +599,39 @@ public protocol BurlyStore: AnyObject {
     /// prevent. Bounding this with a manufactured window would buy no
     /// safety and would just be a window for its own sake.
     func allLoggedSessionDates() throws -> [Date]
+
+    // MARK: - Phone-shell existence/count (m5-01; bounded)
+    //
+    // The phone shell's appearance must establish "is there anything?" and
+    // "how many workouts?" without hydrating full graphs (m5-01 review
+    // finding 3): a decade-old phone store holds ~40-50k rows, and the
+    // shell's original read (`routines(includingArchived:)` +
+    // `sessions(state:)` on the main actor) snapshotted every routine's
+    // items and every session's items→sets just to draw empty states and a
+    // count. These two queries answer the shell's questions at
+    // existence/count cost instead; the tabs that render rows fetch them
+    // from the existing `routines(includingArchived:)` /
+    // `sessions(state:)` surfaces only when that tab is shown.
+    //
+    // Both are deliberately **predicate-free**: the only natural
+    // predicates — `archivedAt == nil` over an optional `Date`, and enum
+    // equality on `state` — are documented SwiftData sharp edges (see
+    // `exercises(includingArchived:)` and `sessions(state:)`), and
+    // relationship optional-chaining in `#Predicate` is the exact shape
+    // that crashed the CI runner (the third runner divergence, pinned in
+    // `SwiftDataStore.setRecordFilterPredicate`'s doc). The filters happen
+    // in Swift over flat rows, exactly like `exercises(includingArchived:)`
+    // and `allLoggedSessionDates()`.
+
+    /// `true` when at least one non-archived routine is stored — the phone
+    /// shell's Routines existence check (§9). Bounded: reads the routine
+    /// table only (user-authored, small by construction), never `.items`.
+    func hasRoutines() throws -> Bool
+
+    /// How many `.logged` sessions are stored — the phone shell's History
+    /// existence check and Stats scalar (m5-01). Bounded: a flat projection
+    /// over the `Session` table (no `.items`/sets faulting), the same cost
+    /// class as `allLoggedSessionDates()`. An `.active` workout is not
+    /// history yet, exactly as `sessions(state:)` documents.
+    func loggedSessionCount() throws -> Int
 }

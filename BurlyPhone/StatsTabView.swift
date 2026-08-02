@@ -3,6 +3,12 @@
 // (no logged sessions yet), and a minimal honest summary once workouts
 // exist -- the stats charts are a later task, so the non-empty state is a
 // count and a plain statement, never a chart.
+//
+// The count is the bounded `loggedSessionCount()` scalar (m5-01 review
+// finding 3): Stats never needs the session graph, so it never asks for
+// it -- the shell's appearance load already provides the scalar, and this
+// tab renders from the sessions domain state (finding 4) with a visible
+// Retry.
 
 import SwiftUI
 
@@ -17,7 +23,7 @@ struct StatsTabView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch viewModel.state {
+        switch viewModel.sessionsState {
         case .loading:
             ProgressView()
         case .failed(let message):
@@ -26,10 +32,10 @@ struct StatsTabView: View {
                 title: "Couldn't load stats",
                 message: message,
                 identifierPrefix: "statsTab",
-                onRetry: { viewModel.load() }
+                onRetry: { viewModel.loadSessions() }
             )
         case .loaded:
-            if viewModel.loggedSessions.isEmpty {
+            if viewModel.loggedSessionCount == 0 {
                 EmptyStateView(
                     icon: "chart.bar.xaxis",
                     title: "No stats yet",
@@ -39,7 +45,7 @@ struct StatsTabView: View {
             } else {
                 List {
                     Section {
-                        LabeledContent("Workouts logged", value: "\(viewModel.loggedSessions.count)")
+                        LabeledContent("Workouts logged", value: "\\(viewModel.loggedSessionCount)")
                             .accessibilityIdentifier("statsTab.workoutCountRow")
                     } footer: {
                         Text("Detailed stats charts are coming in a later update.")

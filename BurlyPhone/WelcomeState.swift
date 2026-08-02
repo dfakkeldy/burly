@@ -22,7 +22,29 @@ enum WelcomeState {
     static let forceWelcomeArgument = "-burly-force-welcome"
     /// Force the welcome to be skipped, even on a genuine fresh install.
     static let skipWelcomeArgument = "-burly-skip-welcome"
+    /// Remove the persisted welcome flag before the test's first launch
+    /// (m5-01 review finding 5): a persistence test must prove the genuine
+    /// uncompleted state — a stale `true` left by an earlier test in the
+    /// same suite run would otherwise let the relaunch assertion pass even
+    /// when `markCompleted()` is broken. This removes **only** the
+    /// namespaced welcome key; nothing else in UserDefaults is touched.
+    static let resetWelcomeArgument = "-burly-reset-welcome"
     #endif
+
+    /// Compile-time-gated reset seam (m5-01 review finding 5): when
+    /// `resetWelcomeArgument` is present, removes `persistedKey` so the
+    /// next `isCompleted()` read sees the genuine uncompleted state. Called
+    /// from `ContentView.init` before the first read; real launches never
+    /// pass the argument, so this is a no-op for them.
+    static func resetIfRequested(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        defaults: UserDefaults = .standard
+    ) {
+        #if DEBUG
+        guard arguments.contains(resetWelcomeArgument) else { return }
+        defaults.removeObject(forKey: persistedKey)
+        #endif
+    }
 
     /// `true` once the user has made the first-launch choice.
     ///

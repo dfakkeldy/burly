@@ -176,3 +176,130 @@ finding, the selector for tab bar buttons on iPhone is the spec'd title,
 not an accessibilityIdentifier — the UITabBarButton ignores identifiers
 on iPhone; identifiers work only on iPad's Liquid Glass toolbar.
 ```
+
+## 2026-08-02 — Fix round 2: cross-engine review (7 majors + 1 minor)
+
+The codex review (`/Users/dfakkeldy/Developer/health-apps/.scratch/m5-01-review-1.md`)
+returned NOT-SAFE with 7 majors + 1 minor. All findings fixed on top of
+`d7f840f` in this worktree (not pushed — the dispatcher runs the simulator
+acceptance).
+
+### Per-finding fixes
+
+1. **Welcome gated behind store startup, no recovery** — `ContentView` no
+   longer resolves the store in `init` or from `body`. Welcome state is read
+   first; the store is resolved lazily from a `.task` attached to the
+   shell-content branch (fires exactly when the tab shell is entered), and
+   the result lives in `@State` — the lifetime-stable owner. A failure shows
+   `StoreUnavailableView` with a Retry that re-attempts construction and
+   replaces `storeResult`. A first launch reaches a welcome choice even if
+   storage is unavailable.
+2. **No snapshot reload after foregrounding** — `MainTabView` now observes
+   `scenePhase` and re-runs the shell's `load()` when it becomes `.active`,
+   plus the currently-visible tab's rows (selection-tracked), exactly the
+   accepted watch-shell behavior (m2-01 finding 4.1). Query failures keep
+   their visible per-tab Retry.
+3. **Unbounded whole-store reads on the shell** — added two bounded store
+   queries, `hasRoutines()` and `loggedSessionCount()` (BurlyStore +
+   SwiftDataStore), count/existence only, predicate-free (no
+   relationship-optional-chaining — the exact shape that crashed the CI
+   runner; see the pinned third-runner-divergence note in
+   `SwiftDataStore.setRecordFilterPredicate`'s doc). The shell's `load()`
+   uses only these; History and Routines rows load from the existing §6/§9
+   surfaces only when their tab is shown (per-tab `.task`), and Stats uses
+   the count scalar, never `sessions(state:)`.
+4. **One failure disabled unrelated tabs** — `PhoneHomeViewModel` now keeps
+   two independent `LoadState`s: `routinesState` (Routines tab) and
+   `sessionsState` (History + Stats tabs). A failed routine query no longer
+   blanks History/Stats, and a corrupted session no longer blanks Routines.
+5. **Persistence test provable-broken-passes** — added a compile-time-gated
+   reset seam, `-burly-reset-welcome` (`WelcomeState.resetIfRequested()`,
+   called from `ContentView.init` before the first read), which removes
+   ONLY the namespaced welcome key. The relaunch test now proves genuine
+   uncompleted state → choice → relaunch without any force/reset arguments;
+   it fails if `markCompleted()` is broken.
+6. **Empty-state tests depended on simulator residue** — added
+   `PhoneDemoSeed` (DEBUG-only, fail-closed): `BURLY_PHONE_UI_TEST_SCENARIO`
+   with `empty` / `populated` / `brokenSeed`, mirroring the watch's
+   post-review `WatchDemoSeed` shape. A recognized scenario that cannot seed
+   returns `.failure` and renders `StoreUnavailableView` — never falls
+   through to the persistent store. Empty-state tests now launch with
+   `empty`; a new populated test asserts real session/routine rows render.
+7. **First-launch controls unreachable at large Dynamic Type** —
+   `WelcomeView` and `ImportPlaceholderView` roots are now `ScrollView`s.
+8. **Routine-row identifiers mutable/non-unique** — Routines rows are now
+   keyed by `routine.id.uuidString` (like History session rows), not name.
+
+### Tests added/changed
+
+- `BurlyKit/Tests/BurlyPersistenceTests/ShellQueryTests.swift` (new, Swift
+  Testing): `hasRoutines` false/true/archive-tracked; `loggedSessionCount`
+  counts `.logged` regardless of origin, excludes `.active`.
+- `BurlyPhoneUITests/BurlyPhoneUITests.swift`: welcome tests use the reset
+  seam instead of force; shell test uses scenario `empty`; new
+  `testPopulatedScenarioRendersRealRows` and
+  `testBrokenSeedFailsClosedToStorageError`.
+
+### Files
+
+```
+BurlyKit/.../Store/BurlyStore.swift        (+ hasRoutines / loggedSessionCount protocol docs)
+BurlyKit/.../Store/SwiftDataStore.swift    (+ bounded predicate-free implementations)
+BurlyKit/Tests/BurlyPersistenceTests/ShellQueryTests.swift  (new)
+BurlyPhone/ContentView.swift               (rewritten: welcome-first, lazy store, Retry)
+BurlyPhone/PhoneHomeViewModel.swift        (rewritten: per-domain states, bounded load)
+BurlyPhone/MainTabView.swift               (scenePhase reload + selection)
+BurlyPhone/HistoryTabView.swift            (lazy rows, sessionsState)
+BurlyPhone/RoutinesTabView.swift           (lazy rows, routinesState, id-keyed rows)
+BurlyPhone/StatsTabView.swift              (scalar count, sessionsState)
+BurlyPhone/StoreUnavailableView.swift      (+ Retry)
+BurlyPhone/WelcomeState.swift              (+ resetWelcomeArgument / resetIfRequested)
+BurlyPhone/PhoneDemoSeed.swift             (new: fail-closed scenarios)
+BurlyPhone/WelcomeView.swift               (scrollable root)
+BurlyPhone/ImportPlaceholderView.swift     (scrollable root)
+Burly.xcodeproj/project.pbxproj            (PhoneDemoSeed.swift added to BurlyPhone target)
+HANDOFF-burly-m5-01.md                     (this file)
+```
+
+### Verification (run for real, one build at a time)
+
+1. `cd BurlyKit && swift test`
+   → `Test run with 434 tests in 49 suites passed after 1.034 seconds.`
+   (428 prior + 6 new ShellQueryTests; BurlyKit green.)
+2. `xcodebuild build-for-testing -scheme BurlyPhone -destination
+   'generic/platform=iOS Simulator'`
+   → `** TEST BUILD SUCCEEDED **`
+
+HARD LIMITS respected: no simulator was booted/created/shut down, no
+`xcodebuild test` was run, `Scripts/acceptance-sim.sh` was not executed —
+the dispatcher runs the simulator acceptance (boots the named sim pair,
+runs BurlyPhoneUITests, exports the .xcresult).
+
+### Interpretations / notes for review
+
+- **History and Stats share the sessions domain state.** Finding 4's
+  "independent load states" is implemented as two domains (routines surface,
+  logged-session surfaces) — the review's own framing. A session-graph
+  corruption surfaces in both History and Stats; Routines is untouched, and
+  vice versa.
+- **`hasRoutines`/`loggedSessionCount` are predicate-free by design.** Both
+  filter in Swift over flat rows, following the file's existing
+  `exercises(includingArchived:)` / `allLoggedSessionDates()` precedent —
+  this sidesteps the optional-Date and enum `#Predicate` sharp edges AND the
+  relationship-optional-chaining shape that crashed the CI runner.
+- **The scenePhase `.active` reload also refreshes the visible tab's rows**
+  (selection-tracked), so a background writer's new sessions/routines show
+  up on foreground without a tab switch; hidden tabs' rows are not fetched.
+- **`brokenSeed` is a third scenario beyond the review's named two.**
+  `empty`/`populated` are the review's requirements; `brokenSeed` exists
+  solely to pin the fail-closed property end to end (the watch's post-review
+  shape has the identical scenario), and the UI test asserts the storage
+  error state appears and no tab-shell content leaks through.
+
+## Repo state (fix round 2)
+
+`git status --short --branch` on the worktree is clean at the commit below.
+The canonical checkout (`~/Developer/burly`) was untouched. Other agents'
+worktrees were not disturbed. Not pushed — the dispatcher runs the
+simulator acceptance.
+

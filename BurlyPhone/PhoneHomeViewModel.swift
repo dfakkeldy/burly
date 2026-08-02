@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Loads the iPhone shell's shared state from the phone store (spec m5-01):
-// the History, Routines, and Stats tabs all render from this one load, so a
-// launch reads the store once instead of once per tab.
+// the History, Routines, and Stats tabs all render from this one load.
 //
-// The reads are the store's own history-surface queries -- routines
-// excluding archived (§9) and sessions(state: .logged) (§6 history surface;
-// an `.active` workout is not history yet) -- so an empty result is a real
-// "this phone has nothing yet" and a non-empty result renders rows, never a
-// hardcoded empty state.
+// The shell's appearance load is deliberately bounded (m5-01 review
+// finding 3): it asks existence/count questions — `hasRoutines()` and
+// `loggedSessionCount()` — never full graphs. A decade-old phone store
+// holds ~40-50k rows; hydrating every routine's items and every session's
+// items→sets just to draw empty states and a workout count was the review's
+// exact complaint. The tabs that render rows load them from the store's
+// existing surfaces only when that tab is shown (`loadRoutinesForDisplay`
+// / `loadSessionsForDisplay`).
+//
+// The two domains carry independent `LoadState`s (m5-01 review finding 4):
+// a failed routine query must not disable History or Stats, and a failed
+// session query must not disable Routines — each tab renders only its own
+// domain's state, so one failure never replaces valid content in an
+// unrelated tab.
 
 import Foundation
 import BurlyCore
@@ -23,9 +31,15 @@ final class PhoneHomeViewModel {
         case failed(String)
     }
 
-    private(set) var state: LoadState = .loading
-    private(set) var routines: [RoutineData] = []
-    private(set) var loggedSessions: [SessionData] = []
+    // Routines domain (Routines tab).
+    private(set) var routinesState: LoadState = .loading
+    private(set) var hasRoutines = false
+    private(set) var routineRows: [RoutineData] = []
+
+    // Logged-session domain (History and Stats tabs).
+    private(set) var sessionsState: LoadState = .loading
+    private(set) var loggedSessionCount = 0
+    private(set) var sessionRows: [SessionData] = []
 
     private let store: BurlyStore
 
@@ -33,13 +47,66 @@ final class PhoneHomeViewModel {
         self.store = store
     }
 
+    // MARK: - Bounded shell snapshot (finding 3)
+
+    /// The shell's appearance/foreground snapshot: existence and count
+    /// only, from the bounded queries — never full graphs. Each domain
+    /// loads independently (finding 4), so one failing query does not
+    /// disable the other domain's tabs.
     func load() {
+        loadRoutines()
+        loadSessions()
+    }
+
+    /// Routines existence, at routine-table cost.
+    func loadRoutines() {
+        routinesState = .loading
         do {
-            routines = try store.routines(includingArchived: false)
-            loggedSessions = try store.sessions(state: .logged)
-            state = .loaded
+            hasRoutines = try store.hasRoutines()
+            routinesState = .loaded
         } catch {
-            state = .failed(String(describing: error))
+            routinesState = .failed(String(describing: error))
+        }
+    }
+
+    /// Logged-session count, at flat-session-row cost (the Stats scalar).
+    func loadSessions() {
+        sessionsState = .loading
+        do {
+            loggedSessionCount = try store.loggedSessionCount()
+            sessionsState = .loaded
+        } catch {
+            sessionsState = .failed(String(describing: error))
+        }
+    }
+
+    // MARK: - Per-tab display loads (rows only when the tab is shown)
+
+    /// Routines rows — the store's own §9 surface. Called only when the
+    /// Routines tab is shown (its `.task`) or its Retry is tapped, never
+    /// from the shell's appearance load (finding 3).
+    func loadRoutinesForDisplay() {
+        routinesState = .loading
+        do {
+            hasRoutines = try store.hasRoutines()
+            routineRows = try store.routines(includingArchived: false)
+            routinesState = .loaded
+        } catch {
+            routinesState = .failed(String(describing: error))
+        }
+    }
+
+    /// History rows — the store's own §6 history surface. Called only when
+    /// the History tab is shown (its `.task`) or its Retry is tapped, never
+    /// from the shell's appearance load (finding 3).
+    func loadSessionsForDisplay() {
+        sessionsState = .loading
+        do {
+            loggedSessionCount = try store.loggedSessionCount()
+            sessionRows = try store.sessions(state: .logged)
+            sessionsState = .loaded
+        } catch {
+            sessionsState = .failed(String(describing: error))
         }
     }
 }
