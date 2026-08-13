@@ -1202,7 +1202,8 @@ public final class SwiftDataStore: BurlyStore {
         return ActiveSession(
             session: try stored.snapshot(),
             plans: scaffolding.plans,
-            restTimer: scaffolding.restTimer
+            restTimer: scaffolding.restTimer,
+            currentItemID: scaffolding.currentItemID
         )
     }
 

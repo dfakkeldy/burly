@@ -81,6 +81,36 @@ struct ActiveSessionTransactionTests {
         #expect(resumed.plan(resumed.items[0].id)?.restOverride == 120)
     }
 
+    @Test("m2-06 review finding 1.1 — currentItemID rides along in the same transaction and survives a cold reopen, so Resume can land on the exact page the lifter was viewing")
+    func currentItemIDSurvivesCrashAndResume() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let secondItemID: UUID
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: TestClock())
+            var (active, _, _) = try startedSession(in: store)
+            secondItemID = active.items[1].id
+            active.currentItemID = secondItemID
+            try store.saveActiveSession(active)
+        }
+
+        let reopened = try SwiftDataStore(kind: .watch, at: .file(url))
+        let resumed = try #require(try reopened.resumableActiveSession())
+
+        #expect(resumed.currentItemID == secondItemID)
+    }
+
+    @Test("m2-06 review finding 1.1 — a session saved before currentItemID existed (or that never set it) resumes with nil, not a decode failure")
+    func currentItemIDDefaultsToNilWhenNeverSet() throws {
+        let store = try makeStore(.watch)
+        let (active, _, _) = try startedSession(in: store)
+        try store.saveActiveSession(active)
+
+        let resumed = try #require(try store.resumableActiveSession())
+        #expect(resumed.currentItemID == nil)
+    }
+
     @Test("a swap before anything is logged rewrites the STORED exerciseID — the exact divergence B1 named")
     func swapBeforeLoggingRewritesTheStoredExerciseReference() throws {
         let store = try makeStore(.watch)

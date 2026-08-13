@@ -95,16 +95,38 @@ public struct ActiveSession: Sendable, Equatable, Codable, Identifiable {
     /// record so it survives crash/resume.
     public var restTimer: RestTimerState?
 
+    /// The item the watch UI was showing when this record was last saved
+    /// (m2-06 review finding 1.1). Pure UI bookkeeping, the same kind of
+    /// scaffolding `plans`/`restTimer` already are: §1 is frozen and has no
+    /// concept of "which page was on screen," so this cannot live on
+    /// `SessionData` any more than the rest timer can. Journaled alongside
+    /// them (`ActiveSessionScaffolding`) so Resume can land back on the
+    /// exact item the lifter was looking at, not just the first one with
+    /// something left to log.
+    ///
+    /// `nil` when nothing has recorded a page yet (a brand-new session), or
+    /// when the caller simply never set it (every pre-m2-06 construction
+    /// site) -- both read the same as "no restored position," which is
+    /// exactly the old default behavior. A value naming an item that no
+    /// longer exists, or one that was skipped after being viewed, is not
+    /// validated here; `SessionViewModel`'s restore logic treats that as
+    /// "no restored position" too rather than trusting a stale reference
+    /// (the same graceful-degradation posture `RestTimerState`'s decode
+    /// clamp already takes for a stored value that no longer makes sense).
+    public var currentItemID: UUID?
+
     public var id: UUID { session.id }
 
     public init(
         session: SessionData,
         plans: [UUID: ItemPlan],
-        restTimer: RestTimerState? = nil
+        restTimer: RestTimerState? = nil,
+        currentItemID: UUID? = nil
     ) {
         self.session = session
         self.plans = plans
         self.restTimer = restTimer
+        self.currentItemID = currentItemID
     }
 
     // MARK: - Reads
@@ -151,6 +173,44 @@ public struct ActiveSession: Sendable, Equatable, Codable, Identifiable {
     /// order (§2, skip is a routing decision).
     public var unskippedItems: [SessionItemData] {
         session.items.filter { plans[$0.id]?.isSkipped != true }
+    }
+
+    /// The item a session-viewing UI should land on when it first shows
+    /// this session -- for a fresh Start and for Resume alike (m2-06
+    /// review finding 1.1; relocated from `SessionViewModel`'s own private
+    /// `resolveInitialItem` in round 2, since this is pure policy over
+    /// `ActiveSession` with no view/store dependency, and every other §2
+    /// rule already lives in BurlyCore per the "engine owns logic, zero
+    /// policy in views" convention this codebase states explicitly
+    /// (`SessionViewModel.swift`'s own file doc) -- and BurlyCore is the
+    /// layer `swift test` can actually exercise this at, unlike the view
+    /// model itself (no unit-test target hosts `BurlyWatch`; `SessionViewModel`
+    /// is reachable only through `BurlyWatchUITests`, a black-box UI-testing
+    /// bundle that cannot `@testable import BurlyWatch`).
+    ///
+    /// Prefers `currentItemID` -- the page last recorded via
+    /// `SessionEngine.setCurrentItem(_:)` and journaled alongside
+    /// `plans`/`restTimer` -- when it still names an unskipped item, so
+    /// Resume lands exactly where the lifter was looking, including a page
+    /// move made *after* the last set they logged (which "first item with
+    /// an empty slot" can never recover: log on A, page to B, kill with
+    /// both still incomplete -- that heuristic alone lands back on A).
+    ///
+    /// Falls back to the first unskipped item with something left to log,
+    /// then to the first unskipped item at all, when the restored id is
+    /// `nil` (a brand-new session, or one saved before this field existed)
+    /// or names an item that is no longer unskipped (skipped after being
+    /// viewed) -- the same graceful-degradation posture a stale/dangling
+    /// restored value gets everywhere else in this record (`RestTimerState`'s
+    /// decode clamp is the same idea for a different field). `nil` only
+    /// when there are no unskipped items at all.
+    public var initialPageItemID: UUID? {
+        let unskipped = unskippedItems
+        if let restored = currentItemID, unskipped.contains(where: { $0.id == restored }) {
+            return restored
+        }
+        return unskipped.first { hasEmptySetSlot($0.id) }?.id
+            ?? unskipped.first?.id
     }
 
     // MARK: - Invariants
