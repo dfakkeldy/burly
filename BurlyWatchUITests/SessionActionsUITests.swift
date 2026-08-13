@@ -112,9 +112,7 @@ final class SessionActionsUITests: XCTestCase {
         XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
         addExercise.tap()
 
-        let benchPress = app.buttons["exercisePicker.row.Barbell Bench Press"]
-        XCTAssertTrue(benchPress.waitForExistence(timeout: 5))
-        benchPress.tap()
+        selectPickerExercise(named: "Barbell Bench Press", in: app)
         XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" })
         XCTAssertTrue(
             waitFor { (exerciseName.value as? String) == "Exercise 2 of 2" },
@@ -196,6 +194,18 @@ final class SessionActionsUITests: XCTestCase {
         let addExercise = app.buttons["sessionActions.addExercise"]
         XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
         addExercise.tap()
+
+        selectPickerExercise(named: name, in: app)
+    }
+
+    /// Picker lists are lazy on watchOS. Filtering reduces this to the one
+    /// uniquely named target, so its row is realized without relying on an
+    /// arbitrary scroll distance or the List's initial accessibility fold.
+    private func selectPickerExercise(named name: String, in app: XCUIApplication) {
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected search in the exercise picker")
+        searchField.tap()
+        searchField.typeText(name)
 
         let exercise = app.buttons["exercisePicker.row.\(name)"]
         XCTAssertTrue(exercise.waitForExistence(timeout: 5), "Expected \(name) in the exercise picker")

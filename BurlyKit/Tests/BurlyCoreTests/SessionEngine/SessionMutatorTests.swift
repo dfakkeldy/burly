@@ -208,6 +208,30 @@ struct SessionMutatorTests {
         #expect(active.nextUnskippedItemID(after: last) == first)
     }
 
+    @Test("skipping the final visible item wraps to the first visible item, not a skipped item")
+    func skippingFinalVisibleItemWrapsToFirstVisibleItem() throws {
+        var active = try startedSession().session
+        let skippedFirst = active.items[0].id
+        let firstVisible = active.items[1].id
+        let finalVisible = active.items[2].id
+
+        try SessionMutator.skipExercise(itemID: skippedFirst, in: &active)
+
+        #expect(active.nextUnskippedItemID(after: finalVisible) == firstVisible)
+    }
+
+    @Test("skipping every item leaves no next visible item")
+    func skippingEveryItemLeavesNoNextVisibleItem() throws {
+        var active = try startedSession().session
+        let itemIDs = active.items.map(\.id)
+
+        for itemID in itemIDs {
+            try SessionMutator.skipExercise(itemID: itemID, in: &active)
+        }
+
+        #expect(active.nextUnskippedItemID(after: itemIDs.last!) == nil)
+    }
+
     // MARK: - Swap
 
     @Test("swap with nothing logged yet replaces the exercise in place")

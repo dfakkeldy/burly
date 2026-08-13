@@ -258,6 +258,7 @@ final class SessionViewModel {
                         : lhs.value > rhs.value
                 }
                 .prefix(Self.recentExerciseLimit)
+                .map { ($0.key, $0.value) }
         )
 
         return exercises.sorted { lhs, rhs in

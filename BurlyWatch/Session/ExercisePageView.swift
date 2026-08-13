@@ -35,22 +35,30 @@ struct ExercisePageView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(viewModel.exerciseName(item.exerciseID))
-                .font(.headline)
-                .lineLimit(2)
-                // The vertical pager deliberately presents one item at a
-                // time. Its ordinal makes that rendered sequence available
-                // to VoiceOver (and proves a move-up/down changed the
-                // screen's order without relying on an ambiguous first
-                // matching row in UI tests).
-                .accessibilityValue(
-                    "Exercise \(viewModel.renderedItemOrdinal(for: item.id) ?? 0) of \(viewModel.items.count)"
-                )
-                .accessibilityIdentifier(currentIdentifier("exercisePage.name"))
+            exerciseNameHeader
             Text(setCounterText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(currentIdentifier("exercisePage.setCounter"))
+        }
+    }
+
+    @ViewBuilder
+    private var exerciseNameHeader: some View {
+        let name = Text(viewModel.exerciseName(item.exerciseID))
+            .font(.headline)
+            .lineLimit(2)
+            .accessibilityIdentifier(currentIdentifier("exercisePage.name"))
+        if let ordinal = viewModel.renderedItemOrdinal(for: item.id) {
+            // The vertical pager deliberately presents one item at a time.
+            // Its ordinal makes that rendered sequence available to
+            // VoiceOver (and proves a move-up/down changed the screen's
+            // order without relying on an ambiguous first matching row in
+            // UI tests).
+            name.accessibilityValue("Exercise \(ordinal) of \(viewModel.items.count)")
+        } else {
+            let _ = assertionFailure("Rendered exercise page is missing its visible ordinal")
+            name
         }
     }
 

@@ -83,9 +83,7 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(swapAction.waitForExistence(timeout: 5))
         swapAction.tap()
 
-        let benchPress = app.buttons["exercisePicker.row.Barbell Bench Press"]
-        XCTAssertTrue(benchPress.waitForExistence(timeout: 5), "Expected Barbell Bench Press in the swap picker")
-        benchPress.tap()
+        selectPickerExercise(named: "Barbell Bench Press", in: app)
 
         XCTAssertTrue(
             waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
@@ -226,9 +224,7 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(swapAction.waitForExistence(timeout: 5))
         swapAction.tap()
 
-        let benchPress = app.buttons["exercisePicker.row.Barbell Bench Press"]
-        XCTAssertTrue(benchPress.waitForExistence(timeout: 5), "Expected Barbell Bench Press in the swap picker")
-        benchPress.tap()
+        selectPickerExercise(named: "Barbell Bench Press", in: app)
 
         XCTAssertTrue(
             waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
@@ -409,6 +405,20 @@ final class LoggingScreenUITests: XCTestCase {
             app.swipeUp()
         }
         return element.exists
+    }
+
+    /// Picker lists are lazy on watchOS. Filtering reduces this to the one
+    /// uniquely named target, so its row is realized without relying on an
+    /// arbitrary scroll distance or the List's initial accessibility fold.
+    private func selectPickerExercise(named name: String, in app: XCUIApplication) {
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected search in the exercise picker")
+        searchField.tap()
+        searchField.typeText(name)
+
+        let exercise = app.buttons["exercisePicker.row.\(name)"]
+        XCTAssertTrue(exercise.waitForExistence(timeout: 5), "Expected \(name) in the exercise picker")
+        exercise.tap()
     }
 
     /// Polls `condition` for up to `timeout` seconds -- covers the small
