@@ -36,3 +36,33 @@ Run `swift test` from BurlyKit/ and confirm the count independently (engine
 claimed 757 passing, baseline main is 755 + 2 new ExerciseNamingTests). Then
 decide whether §6 #1/#5 need new xcui tests before the sim gate is meaningful.
 ```
+
+## 2026-08-13 — xcui coverage landed and test hooks pulled out of release UI
+
+Done: Verified the xcui round engine-blind — `swift test --disable-sandbox`
+gives 757 in 81 suites, exit 0, and the test diff is +89/−0, so nothing was
+weakened. Committed `c6b86c5`. Then found two rows that shipped test hooks to
+users (visible revision counter, raw HealthKit UUID); §6 says the edit marker
+is "one glyph — not a changelog", so that is a spec violation, not taste.
+Both are now `#if DEBUG` in `2f1d799`, identifiers byte-identical, no test
+file touched. Confirmed both schemes' TestAction is Debug and
+`acceptance-sim.sh` passes no `-configuration`, so the hooks exist in the
+build the UI tests run against.
+
+Deletion routing resolved: §6's "deleting a session deletes both" needs NO new
+task. `burly-m3-04` (Metadata linking + delete propagation, §4 acceptance #2,
+pending) already owns it — §4 states it outright and BACKLOG.md already routes
+the query-and-delete-by-ExternalUUID machinery to m3-03/m3-04. m5-03 is right
+to decline it; its acceptance is §6 #1/#4/#5 only.
+
+Next: The sim gate. The box is committed to the m2-04 round-7 acceptance cycle
+first (window 09:00–15:00), so m5-03's gate queues behind it. Nothing else
+blocks this task.
+
+Resume:
+```
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m5-03, branch task/burly-m5-03 at 2f1d799.
+Once the m2-04 gate releases the box, run Scripts/acceptance-sim.sh solo via
+xcode-build-slot.sh and check that testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink
+passes. That single test is the whole of §6 #1 and #5 evidence.
+```
