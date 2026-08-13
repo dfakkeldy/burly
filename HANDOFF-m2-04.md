@@ -49,3 +49,51 @@ Worktree /Users/dfakkeldy/Developer/worktrees/burly-m2-04, branch task/burly-m2-
 Next action: dispatch watch-UI diagnosis — dump app.debugDescription at LoggingScreenUITests.swift:415
 to establish whether the picker sheet presented, before touching selectPickerExercise.
 ```
+
+## 2026-08-13 — harness fixed and verified; a real crash found behind it
+
+Done:
+- Harness fix committed `050a468`, verified engine-blind by my own
+  `acceptance-sim.sh` run (run dir `20260813T062251Z`): **phone 8/8, watch
+  29/32**, up from 27/32. The implementer's own run executed zero tests and
+  said so, so nothing rested on its claim.
+- Both round-1 causes confirmed as harness by live accessibility inspection:
+  watchOS does not expose `.searchable` as an XCUI `searchField` (the picker
+  demonstrably *did* present), and full-screen `swipeUp()` skips lazy row 5.
+
+The three remaining failures are NOT harness. Classified with live evidence:
+
+1. **`:60` — PRODUCT DEFECT, a crash.** Skipping the only exercise kills the
+   app: `Fatal error: Rendered exercise page is missing its visible ordinal`,
+   `BurlyWatch/Session/ExercisePageView.swift:60`. Verified independently:
+   `renderedItemOrdinal` -> `unskippedItemIndex` -> `unskippedItems.firstIndex`
+   returns nil once the item is skipped, and the view treats nil as
+   `assertionFailure`. SwiftUI's TabView transiently keeps rendering the page it
+   just removed, so the assertion fires mid-transition. The assertion encodes
+   "every rendered page has an ordinal", which is false during a pager
+   transition. `assertionFailure` is compiled out under `-O`, so release never
+   trapped — but the accessibility value silently vanishes there instead.
+2. **`:86` — harness.** `app.swipeDown()` is routed by watchOS to the page's
+   inner scroll view; the same gesture aimed at the pager's
+   `PUICPageViewController_collectionView` moves correctly.
+3. **`:116` — harness.** The picker row tap is intermittently not accepted
+   while the lazy list is still settling after a scroll.
+
+Ruled out, with evidence: `SessionViewModel.swift:519`'s `try?` is NOT the
+cause of `:60` — the mutation had already succeeded, which is exactly why the
+ordinal went nil. It is already filed in `plan/tasks/BACKLOG.md`.
+`swift test --filter SessionMutatorTests` passes 26 tests covering skip,
+middle-skip routing, add and move — the engine is correct; the defect is
+confined to the watch view layer.
+
+Next:
+- Fix round in flight: product fix for the false assertion, plus the two
+  harness fixes. Then I re-run the acceptance sim.
+
+Resume:
+```
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m2-04, branch task/burly-m2-04.
+Next action: check `git status`; if the fix round landed changes, review them, then run
+`/Users/dfakkeldy/.claude/bin/xcode-build-slot.sh -- timeout -s TERM 2700 ./Scripts/acceptance-sim.sh`
+and read the xcresult bundles directly — do not trust any reported count.
+```
