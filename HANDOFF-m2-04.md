@@ -204,3 +204,64 @@ Next action: read scratchpad/m2-04-fix4.log; review the diff; then run
 `scratchpad/slot-retry.sh -- timeout -s TERM 2700 ./Scripts/acceptance-sim.sh`
 and read the xcresult bundles directly — do not trust any reported count.
 ```
+
+## 2026-08-13 — RETRACTION: every mutation lands; the render is stale
+
+Done:
+- Wasted a full sim cycle first: I captured Codex's probe diff, killed it,
+  then launched the sim without re-checking the tree AT LAUNCH. Codex had
+  reverted the instrumentation in between — doing what my own brief told it
+  to. The 06:05 build had zero probes, so that run just re-derived 29/32.
+  Rule now: assert the probe marker in the source at launch AND in the built
+  binary after the build. A missing-probe build and a probe-that-never-fires
+  are indistinguishable from the logs.
+- Re-applied the diff and ran a TARGETED 5-test run instead of the 32-test
+  acceptance sim — the right instrument for iterating a diagnosis. Verified
+  34 PROBE strings in `BurlyWatch.debug.dylib` before trusting anything.
+- Found the capture channel: the **host** unified log. Simulator apps are host
+  processes, so their `os_log` output never reaches the guest device log —
+  which is why my earlier four-place search came up empty.
+
+**The mutations all land. I had this exactly backwards.**
+Evidence, 30 lines at `scratchpad/m2-04-probe-evidence.txt`:
+
+      skip enter  items=1  current=DCD4F76E…
+      skip mutated items=0
+      skip exit   current=nil  items=0
+      add mutated items=2  new=D195E593…     (Barbell Bench Press)
+      add mutated items=3  new=A3C4EA2C…     (Pull-Up)
+
+Zero throws logged at any site, so `try?` was never swallowing anything.
+`SessionMutator`, `SessionEngine` and `SessionViewModel` are all CORRECT.
+After skip the model holds zero unskipped items and a nil `currentItemID`
+while the screen still shows `Back Squat / Exercise 1 of 1` and never renders
+the empty-session branch. **The defect is entirely view refresh.**
+
+This retracts the previous entry's central finding and everything under it.
+The ":88 swipeDown is innocent" verdict survives, but its reason was wrong:
+the add lands, and the swipe finds no middle page because the pager never
+re-rendered the second page.
+
+**It is intermittent.** `testMoveUpChangesTheRenderedPagerOrder` PASSES in the
+targeted run — 3 passed, 2 failed (`:60`, `:88`) — having failed in every
+full-suite run, with no product change. The probes show its add landing and
+the pager then correctly rendering `Exercise 2 of 2`. So observation usually
+delivers and sometimes does not, and the miss rate rises under full-suite
+load. Consequence: **a green targeted run proves nothing; only the full watch
+suite gates this.**
+
+Two-instance hypothesis refuted: the view model's `ObjectIdentifier` is stable
+across every mutation within each test process.
+
+Next:
+- Fix round on the view-refresh defect, with the corrected evidence.
+- Verify with the FULL acceptance sim, not the targeted run.
+
+Resume:
+```
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m2-04, branch task/burly-m2-04, tree clean.
+Probe instrumentation preserved at scratchpad/m2-04-codex-probe.diff; capture via
+`/usr/bin/log stream --predicate 'eventMessage CONTAINS "PROBE-M2-04"'` on the HOST.
+Next action: review the fix round's diff, then run the FULL acceptance sim via
+`scratchpad/slot-retry.sh -- timeout -s TERM 2700 ./Scripts/acceptance-sim.sh`.
+```
