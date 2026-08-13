@@ -5,6 +5,7 @@
 // Everything here is routing and presentation; every rule is
 // `SessionViewModel` calling into the already-tested BurlyCore engine.
 import SwiftUI
+import Dispatch
 import BurlyCore
 import BurlyPersistence
 
@@ -44,6 +45,7 @@ struct LoggingScreenView: View {
     }
 
     var body: some View {
+        let _ = timing("loggingScreen.body")
         Group {
             // m2-03 review findings 6-9: a blocking save failure takes
             // priority over everything else on screen -- the lifter cannot
@@ -160,6 +162,7 @@ struct LoggingScreenView: View {
 
     @ViewBuilder
     private var loggingBody: some View {
+        let _ = timing("loggingScreen.loggingBody")
         Group {
             if viewModel.pagerItemIDs.isEmpty {
                 emptySessionPlaceholder
@@ -245,5 +248,9 @@ struct LoggingScreenView: View {
             get: { viewModel.isShowingDiscardStepOne || viewModel.isShowingDiscardStepTwo },
             set: { if !$0 { viewModel.cancelDiscard() } }
         )
+    }
+
+    private func timing(_ event: String) {
+        print("TIMING-M204 \(DispatchTime.now().uptimeNanoseconds) \(event)")
     }
 }

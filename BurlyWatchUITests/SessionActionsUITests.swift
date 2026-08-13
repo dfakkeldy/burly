@@ -214,13 +214,10 @@ final class SessionActionsUITests: XCTestCase {
         return element.exists
     }
 
-    /// `XCUIApplication.swipeDown()` is too brief to page this watch
-    /// `PUICPageViewController`-backed vertical pager. Use the same
-    /// press-and-drag synthesis that reliably drives this app's scrolling.
+    /// The watch pager is crown-driven. A positive crown delta scrolls up
+    /// from the third page to the preceding middle page.
     private func swipeDownToPreviousPage(in app: XCUIApplication) {
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-        start.press(forDuration: 0.05, thenDragTo: end)
+        XCUIDevice.shared.rotateDigitalCrown(delta: 1.0)
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {

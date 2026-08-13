@@ -11,6 +11,7 @@
 // rest timer are each one shared value on the engine (§2/§3), not one per
 // item, so they are only meaningful on the page that is actually current.
 import SwiftUI
+import Dispatch
 import BurlyCore
 
 struct ExercisePageView: View {
@@ -20,6 +21,8 @@ struct ExercisePageView: View {
     private var isCurrent: Bool { item.id == viewModel.currentItemID }
 
     var body: some View {
+        let ordinal = (viewModel.pagerItemIDs.firstIndex(of: item.id) ?? -1) + 1
+        let _ = timing("exercisePage.body ordinal=\(ordinal) total=\(viewModel.pagerItemIDs.count)")
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 header
@@ -31,6 +34,10 @@ struct ExercisePageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 2)
         }
+    }
+
+    private func timing(_ event: String) {
+        print("TIMING-M204 \(DispatchTime.now().uptimeNanoseconds) \(event)")
     }
 
     private var header: some View {

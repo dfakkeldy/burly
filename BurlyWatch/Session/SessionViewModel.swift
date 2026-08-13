@@ -36,6 +36,7 @@
 // anywhere else in this type's state, because it was never committed to
 // `engine` in the first place.
 import Foundation
+import Dispatch
 import SwiftUI
 import Observation
 import BurlyCore
@@ -351,7 +352,7 @@ final class SessionViewModel {
     /// guarded weight control armed across an exercise change: presentation
     /// code must not suppress a state transition just to suppress a
     /// haptic.
-    private func applyCurrentItem(_ id: UUID?) {
+    private func applyCurrentItem(_ id: UUID?, timingEvent: String = "persist") {
         play(engine.pageAway())
         currentItemID = id
         // m2-06 review finding 1.1: record the page for Resume, in the
@@ -360,7 +361,7 @@ final class SessionViewModel {
         // could tear apart.
         engine.setCurrentItem(id)
         refreshPrefill()
-        persist()
+        persist(timingEvent: timingEvent)
     }
 
     /// Recomputes the scratch reps and seeds the weight control from the
@@ -535,17 +536,23 @@ final class SessionViewModel {
     }
 
     func skipCurrentExercise() {
+        timing("skip.entry")
         guard let id = currentItemID else { return }
         try? engine.skipExercise(itemID: id)
+        timing("skip.afterSessionEngine")
         refreshPagerItemIDs()
-        applyCurrentItem(engine.session.nextUnskippedItemID(after: id))
+        timing("skip.afterRefreshPagerItemIDs")
+        applyCurrentItem(engine.session.nextUnskippedItemID(after: id), timingEvent: "skip")
     }
 
     func moveCurrentUp() {
+        timing("moveUp.entry")
         guard let id = currentItemID else { return }
         try? engine.moveItemUp(itemID: id)
+        timing("moveUp.afterSessionEngine")
         refreshPagerItemIDs()
-        persist()
+        timing("moveUp.afterRefreshPagerItemIDs")
+        persist(timingEvent: "moveUp")
     }
 
     func moveCurrentDown() {
@@ -566,10 +573,13 @@ final class SessionViewModel {
 
     /// §2 "add exercise" from the catalog picker.
     func addExercise(_ exerciseID: UUID) {
+        timing("addExercise.entry")
         pickerContext = nil
         guard let newID = try? engine.addExercise(exerciseID: exerciseID) else { return }
+        timing("addExercise.afterSessionEngine")
         refreshPagerItemIDs()
-        applyCurrentItem(newID)
+        timing("addExercise.afterRefreshPagerItemIDs")
+        applyCurrentItem(newID, timingEvent: "addExercise")
     }
 
     /// §2 "add exercise" → "Custom (name later)": creates the `needsNaming`
@@ -753,7 +763,9 @@ final class SessionViewModel {
     /// placeholder creation use; the retry simply re-attempts the save,
     /// since the mutation that produced the current `engine.session` is
     /// already correct -- only the store write needs to happen again.
-    private func persist() {
+    private func persist(timingEvent: String = "persist") {
+        timing("\(timingEvent).persist.begin")
+        defer { timing("\(timingEvent).persist.end") }
         do {
             try store.saveActiveSession(engine.session)
             saveFailure = nil
@@ -764,6 +776,10 @@ final class SessionViewModel {
             saveFailure = String(describing: error)
             pendingRetry = { [weak self] in self?.persist() }
         }
+    }
+
+    private func timing(_ event: String) {
+        print("TIMING-M204 \(DispatchTime.now().uptimeNanoseconds) \(event)")
     }
 
     /// m2-06 review finding 3.1: `.sessionNoLongerInFlight` means the
