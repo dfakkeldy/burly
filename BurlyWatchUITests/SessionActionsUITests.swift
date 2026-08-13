@@ -198,24 +198,18 @@ final class SessionActionsUITests: XCTestCase {
         selectPickerExercise(named: name, in: app)
     }
 
-    /// Picker lists are lazy on watchOS. Filtering reduces this to the one
-    /// uniquely named target, so its row is realized without relying on an
-    /// arbitrary scroll distance or the List's initial accessibility fold.
-    private func selectPickerExercise(named name: String, in app: XCUIApplication) {
-        let searchField = app.searchFields.firstMatch
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected search in the exercise picker")
-        searchField.tap()
-        searchField.typeText(name)
-
-        let exercise = app.buttons["exercisePicker.row.\(name)"]
-        XCTAssertTrue(exercise.waitForExistence(timeout: 5), "Expected \(name) in the exercise picker")
-        exercise.tap()
-    }
-
-    private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 8) -> Bool {
+    /// Full-screen watch swipes jump from rows 1-4 to rows 6-9, so a lazy
+    /// row at position 5 is never realized. Move roughly one row per attempt
+    /// so every action passes through the accessibility fold.
+    private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 20) -> Bool {
         for _ in 0..<maxAttempts {
-            if element.exists { return true }
-            app.swipeUp()
+            if element.exists {
+                Thread.sleep(forTimeInterval: 0.4)
+                return true
+            }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+            start.press(forDuration: 0.05, thenDragTo: end)
         }
         return element.exists
     }

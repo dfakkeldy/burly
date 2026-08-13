@@ -150,3 +150,30 @@ final class BurlyWatchUITests: XCTestCase {
         add(attachment)
     }
 }
+
+extension XCTestCase {
+    /// watchOS exposes `.searchable` through its scribble/dictation UI, not
+    /// as an XCUI search field. Scroll the real picker list until the exact
+    /// identified row is both realized and tappable instead.
+    func selectPickerExercise(
+        named name: String,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let exercise = app.buttons["exercisePicker.row.\(name)"]
+
+        for _ in 0..<40 {
+            if exercise.exists && exercise.isHittable {
+                exercise.tap()
+                return
+            }
+
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+
+        XCTFail("Expected \(name) in the exercise picker", file: file, line: line)
+    }
+}

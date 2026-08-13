@@ -407,20 +407,6 @@ final class LoggingScreenUITests: XCTestCase {
         return element.exists
     }
 
-    /// Picker lists are lazy on watchOS. Filtering reduces this to the one
-    /// uniquely named target, so its row is realized without relying on an
-    /// arbitrary scroll distance or the List's initial accessibility fold.
-    private func selectPickerExercise(named name: String, in app: XCUIApplication) {
-        let searchField = app.searchFields.firstMatch
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected search in the exercise picker")
-        searchField.tap()
-        searchField.typeText(name)
-
-        let exercise = app.buttons["exercisePicker.row.\(name)"]
-        XCTAssertTrue(exercise.waitForExistence(timeout: 5), "Expected \(name) in the exercise picker")
-        exercise.tap()
-    }
-
     /// Polls `condition` for up to `timeout` seconds -- covers the small
     /// window between an action firing and `@Observable` propagating to
     /// the accessibility tree, without a fixed sleep.
