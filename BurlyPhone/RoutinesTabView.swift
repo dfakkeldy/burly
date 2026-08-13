@@ -404,6 +404,9 @@ private struct RoutineItemEditorRow: View {
             }
             .font(.subheadline)
         }
+        // Form's automatic button style can promote sibling controls to a
+        // shared row action. Keep set and move controls independently tappable.
+        .buttonStyle(.borderless)
         .padding(.vertical, 4)
     }
 
@@ -464,6 +467,8 @@ private struct CatalogBrowserView: View {
                         .accessibilityLabel("Archive \(exercise.name)")
                         .accessibilityIdentifier("catalog.archiveExercise.\(exercise.id.uuidString)")
                     }
+                    // Add and archive are separate actions in the same List row.
+                    .buttonStyle(.borderless)
                     .padding(.vertical, 3)
                     // No row-level .accessibilityIdentifier here (m2-03):
                     // stamping an identifier on this plain HStack container
