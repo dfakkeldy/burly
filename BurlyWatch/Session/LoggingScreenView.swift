@@ -160,32 +160,29 @@ struct LoggingScreenView: View {
 
     @ViewBuilder
     private var loggingBody: some View {
-        // This read is intentionally outside the TimelineView closure so
-        // add/skip/swap/reorder rebuild the pager's page set immediately.
-        // Unlike `viewModel.items`, this stored key path is never written by
-        // `tick()`, so the enclosing body does not acquire an `engine`
-        // dependency or restart `.periodic(from: .now, by: 1)` at CPU speed.
-        let pagerItemIDs = viewModel.pagerItemIDs
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            Group {
-                if pagerItemIDs.isEmpty {
-                    emptySessionPlaceholder
-                } else {
-                    TabView(selection: viewModel.pagingSelection) {
-                        ForEach(pagerItemIDs, id: \.self) { itemID in
-                            if let item = viewModel.pagerItem(for: itemID) {
-                                ExercisePageView(viewModel: viewModel, item: item)
-                                    .tag(item.id as UUID?)
-                            }
+        Group {
+            if viewModel.pagerItemIDs.isEmpty {
+                emptySessionPlaceholder
+            } else {
+                TabView(selection: viewModel.pagingSelection) {
+                    ForEach(viewModel.pagerItemIDs, id: \.self) { itemID in
+                        if let item = viewModel.pagerItem(for: itemID) {
+                            ExercisePageView(viewModel: viewModel, item: item)
+                                .tag(item.id as UUID?)
                         }
                     }
-                    .tabViewStyle(.verticalPage)
                 }
+                .tabViewStyle(.verticalPage)
             }
-            // §2 Always-On: "1 Hz TimelineView." The tick itself is the
-            // side effect hook, not the render -- see `SessionViewModel
-            // .tick()`'s doc.
-            .onChange(of: context.date) { _, _ in viewModel.tick() }
+        }
+        .background {
+            // §2 Always-On: this remains a 1 Hz TimelineView. It only hosts
+            // the tick side effect; pager structure is evaluated by the
+            // enclosing body rather than captured in this closure.
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Color.clear
+                    .onChange(of: context.date) { _, _ in viewModel.tick() }
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

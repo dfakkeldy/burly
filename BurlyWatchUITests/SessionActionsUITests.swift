@@ -82,7 +82,7 @@ final class SessionActionsUITests: XCTestCase {
         addExercise(named: "Pull-Up", in: app)
         XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Pull-Up" })
 
-        app.swipeDown()
+        swipeDownToPreviousPage(in: app)
         XCTAssertTrue(
             waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
             "Expected the middle page before skipping it"
@@ -212,6 +212,15 @@ final class SessionActionsUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: end)
         }
         return element.exists
+    }
+
+    /// `XCUIApplication.swipeDown()` is too brief to page this watch
+    /// `PUICPageViewController`-backed vertical pager. Use the same
+    /// press-and-drag synthesis that reliably drives this app's scrolling.
+    private func swipeDownToPreviousPage(in app: XCUIApplication) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+        start.press(forDuration: 0.05, thenDragTo: end)
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
