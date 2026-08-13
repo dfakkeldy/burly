@@ -46,11 +46,16 @@ public final class WorkoutController {
         let continuation: CheckedContinuation<Void, any Error>
     }
 
+    private struct CollectionWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
     private let factory: any WorkoutSessionCreating
     private let stopTimeout: any WorkoutStopTimeout
     private var resources: LiveWorkoutResources?
     private var collectionState: CollectionState = .notStarted
-    private var collectionWaiter: CheckedContinuation<Void, any Error>?
+    private var collectionWaiter: CollectionWaiter?
     private var terminationProgress: TerminationProgress?
     private var observedSessionState: WorkoutSessionState = .notStarted
     private var stoppedWaiter: StoppedWaiter?
@@ -98,6 +103,9 @@ public final class WorkoutController {
             try await resources.builder.beginCollection(at: date)
             guard isCurrent(resources) else {
                 throw WorkoutControllerError.noActiveWorkout
+            }
+            if case let .failed(error) = collectionState {
+                throw error
             }
             collectionState = .collecting
             resumeCollectionWaiter()
@@ -257,12 +265,20 @@ public final class WorkoutController {
             break
         }
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            guard collectionWaiter == nil else {
-                continuation.resume(throwing: WorkoutControllerError.terminationAlreadyInProgress)
-                return
+        let waiterID = UUID()
+        try Task.checkCancellation()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                guard collectionWaiter == nil else {
+                    continuation.resume(throwing: WorkoutControllerError.terminationAlreadyInProgress)
+                    return
+                }
+                collectionWaiter = CollectionWaiter(id: waiterID, continuation: continuation)
             }
-            collectionWaiter = continuation
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelCollectionWaiter(waiterID: waiterID)
+            }
         }
     }
 
@@ -276,9 +292,13 @@ public final class WorkoutController {
             resumeStoppedWaiter()
         case let .failed(error):
             let mappedError = mapHealthError(error)
+            if case .starting = collectionState {
+                collectionState = .failed(mappedError)
+            }
             if lifecycle != .ending {
                 lifecycle = .failed(mappedError)
             }
+            resumeCollectionWaiter(throwing: mappedError)
             resumeStoppedWaiter(throwing: mappedError)
         case .notStarted, .prepared, .running, .paused, .ended:
             break
@@ -291,6 +311,10 @@ public final class WorkoutController {
 
     private func cancelStoppedWaiter(waiterID: UUID) {
         resumeStoppedWaiter(waiterID: waiterID, throwing: CancellationError())
+    }
+
+    private func cancelCollectionWaiter(waiterID: UUID) {
+        resumeCollectionWaiter(waiterID: waiterID, throwing: CancellationError())
     }
 
     private func resumeStoppedWaiter(
@@ -309,13 +333,17 @@ public final class WorkoutController {
         }
     }
 
-    private func resumeCollectionWaiter(throwing error: (any Error)? = nil) {
+    private func resumeCollectionWaiter(
+        waiterID: UUID? = nil,
+        throwing error: (any Error)? = nil
+    ) {
         guard let collectionWaiter else { return }
+        guard waiterID == nil || collectionWaiter.id == waiterID else { return }
         self.collectionWaiter = nil
         if let error {
-            collectionWaiter.resume(throwing: error)
+            collectionWaiter.continuation.resume(throwing: error)
         } else {
-            collectionWaiter.resume()
+            collectionWaiter.continuation.resume()
         }
     }
 

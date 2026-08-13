@@ -166,6 +166,7 @@ struct WorkoutControllerTests {
             try await start.value
         }
 
+        try await requireTaskSettled(finish)
         await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
             try await finish.value
         }
@@ -205,6 +206,7 @@ struct WorkoutControllerTests {
         try await start.value
         try await waitUntil { harness.log.calls.contains(.stopActivity(endedAt)) }
         harness.session.emit(.stopped)
+        try await requireTaskSettled(finish)
         try await finish.value
 
         let beginIndex = try #require(
@@ -401,9 +403,67 @@ struct WorkoutControllerTests {
         await #expect(throws: WorkoutControllerError.terminationAlreadyInProgress) {
             try await harness.controller.discard(at: endedAt)
         }
+        try await requireTaskSettled(finish)
         await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
             try await finish.value
         }
+    }
+
+    @Test("session failure during collection startup releases a parked finish")
+    func sessionFailureDuringCollectionStartupReleasesFinish() async throws {
+        let beginCollection = OperationGate()
+        let harness = Harness(beginCollectionGate: beginCollection)
+
+        let start = Task { @MainActor in
+            try await harness.controller.start(at: startedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.beginCollection(startedAt)) }
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        harness.session.emit(.failed(.anotherWorkoutSessionStarted))
+
+        try await requireTaskSettled(finish)
+        await #expect(throws: WorkoutControllerError.anotherWorkoutSessionStarted) {
+            try await finish.value
+        }
+
+        beginCollection.succeedAll()
+        await #expect(throws: WorkoutControllerError.anotherWorkoutSessionStarted) {
+            try await start.value
+        }
+    }
+
+    @Test("finish cancellation releases the collection-start wait")
+    func cancellingFinishDuringCollectionStartupThrowsCancellation() async throws {
+        let beginCollection = OperationGate()
+        let harness = Harness(beginCollectionGate: beginCollection)
+
+        let start = Task { @MainActor in
+            try await harness.controller.start(at: startedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.beginCollection(startedAt)) }
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+        finish.cancel()
+
+        try await requireTaskSettled(finish)
+        await #expect(throws: CancellationError.self) {
+            try await finish.value
+        }
+
+        beginCollection.succeedAll()
+        try await start.value
     }
 
     @Test("a second termination is rejected while end collection is suspended")
@@ -581,6 +641,31 @@ struct WorkoutControllerTests {
         }
         try #require(condition(), "Asynchronous condition was not reached", sourceLocation: sourceLocation)
     }
+
+    private func requireTaskSettled<Success, Failure: Error>(
+        _ task: Task<Success, Failure>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let settled = TaskSettlementFlag()
+        let observer = Task { @MainActor in
+            _ = await task.result
+            settled.value = true
+        }
+        defer { observer.cancel() }
+
+        for _ in 0 ..< 30 where settled.value == false {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if settled.value == false {
+            task.cancel()
+        }
+        try #require(settled.value, "Task did not settle within three seconds", sourceLocation: sourceLocation)
+    }
+}
+
+@MainActor
+private final class TaskSettlementFlag {
+    var value = false
 }
 
 @MainActor
