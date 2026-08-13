@@ -4,6 +4,5 @@
 
 import BurlyCore
 
-public enum BurlyHealth {
-    public static let placeholder = "BurlyHealth"
-}
+/// Namespace marker for the HealthKit integration module.
+public enum BurlyHealth {}
