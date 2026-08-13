@@ -5,8 +5,8 @@
 // per-exercise last-performance entries the watch's ghost rows render, and
 // `ackedSessionIDs` — the sessions the phone has durably received, which the
 // watch may therefore prune. Before this round those halves could only be
-// applied through separate saves (`upsertLastPerformance` per entry, then
-// `pruneDeliveredSessions`), each committing on its own. A crash or a
+// applied through separate saves (last-performance upserts, then session
+// pruning), each committing on its own. A crash or a
 // throw between them leaves the watch having deleted history it no longer
 // holds while its replacement numbers are stale or missing — and because
 // application context is latest-wins, there is no redelivery to repair it.

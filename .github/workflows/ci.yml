@@ -33,6 +33,9 @@ jobs:
           sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
+      - name: Validate committed app icons
+        run: Scripts/test-app-icon.sh
+
       # The package suite runs as TWO processes, deliberately.
       #
       # The migration spike (BurlyKit/Tests/BurlyPersistenceTests/

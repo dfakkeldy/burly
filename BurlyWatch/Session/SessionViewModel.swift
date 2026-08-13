@@ -155,18 +155,39 @@ final class SessionViewModel {
     ///   SwiftUI constructs and discards during `State(initialValue:)`
     ///   diffing can no longer write to the store as a side effect of
     ///   existing.
+    ///
+    /// - Parameter startInSummary: m2-06's Resume flow. §2: "Declining
+    ///   resume = normal end-workout summary path" -- a lifter who declines
+    ///   the Resume offer (`ResumeSessionView`) lands on exactly the same
+    ///   Finish/Keep going/Discard preview "End workout" produces, not a
+    ///   separate screen with its own policy. `true` calls
+    ///   `requestEndWorkout()` once, before the pager is ever shown, so
+    ///   `LoggingScreenView.body` renders `endWorkoutPreview` on the very
+    ///   first frame; "Keep going" from there clears it and falls through
+    ///   to the ordinary pager -- i.e. resuming anyway -- exactly like
+    ///   declining-then-changing-your-mind should behave.
     init(
         engine: SessionEngine,
         store: BurlyStore,
         haptics: HapticPlaying = HapticPlayer(),
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        startInSummary: Bool = false
     ) {
         self.engine = engine
         self.store = store
         self.haptics = haptics
         self.now = now
-        self.currentItemID = engine.session.unskippedItems.first?.id
+        // m2-06 review round 2, finding "new defect": the page-selection
+        // policy itself now lives on `ActiveSession.initialPageItemID`
+        // (BurlyCore) -- see that property's doc for why, and for the
+        // full "prefer the restored page, else first-incomplete, else
+        // first" resolution order this used to duplicate here as a
+        // private static func.
+        self.currentItemID = engine.session.initialPageItemID
         refreshPrefill()
+        if startInSummary {
+            requestEndWorkout()
+        }
     }
 
     // MARK: - Reads
@@ -274,6 +295,11 @@ final class SessionViewModel {
     private func applyCurrentItem(_ id: UUID?) {
         play(engine.pageAway())
         currentItemID = id
+        // m2-06 review finding 1.1: record the page for Resume, in the
+        // same journaled record `persist()` is about to save -- one
+        // transaction, no separate write that a crash between the two
+        // could tear apart.
+        engine.setCurrentItem(id)
         refreshPrefill()
         persist()
     }
@@ -368,6 +394,8 @@ final class SessionViewModel {
             pendingRetry = nil
             play(outcome.haptics)
             refreshPrefill()
+        } catch BurlyStoreError.sessionNoLongerInFlight(_, _) {
+            resolveSessionNoLongerInFlight()
         } catch {
             saveFailure = String(describing: error)
             pendingRetry = { [weak self] in self?.attemptLog(itemID: itemID, reps: reps) }
@@ -570,6 +598,16 @@ final class SessionViewModel {
             finishedSummary = SessionSummaryBuilder.summarize(
                 engine.session, referenceDate: now(), lastPerformance: lastPerformance(for:)
             )
+        } catch BurlyStoreError.sessionNoLongerInFlight(_, _) {
+            // m2-06 review finding 3.1: the store already moved this
+            // session out of `.active` through some other legitimate
+            // writer -- retrying this exact save can never succeed
+            // (`saveActiveSession` refuses it every time), so the ordinary
+            // "stays true, offer Retry" contract above would wedge
+            // `isFinishing` forever with Keep going/Discard disabled and
+            // no working forward path. Resolve to the session's real
+            // terminal state instead, which also clears `isFinishing`.
+            resolveSessionNoLongerInFlight()
         } catch {
             // `isFinishing` stays true: the engine already committed
             // `.logged` in memory, so the summary screen must keep offering
@@ -649,9 +687,67 @@ final class SessionViewModel {
             try store.saveActiveSession(engine.session)
             saveFailure = nil
             pendingRetry = nil
+        } catch BurlyStoreError.sessionNoLongerInFlight(_, _) {
+            resolveSessionNoLongerInFlight()
         } catch {
             saveFailure = String(describing: error)
             pendingRetry = { [weak self] in self?.persist() }
+        }
+    }
+
+    /// m2-06 review finding 3.1: `.sessionNoLongerInFlight` means the
+    /// **store**, not this view, already moved the session out of
+    /// `.active` -- some other legitimate writer (a §6 phone edit, a
+    /// future sync apply) got there first while this view was still
+    /// attached to it. That is a terminal state transition, not a
+    /// transient save failure: this view's `engine.session` is stale
+    /// active state that `saveActiveSession` will refuse forever, so
+    /// installing the ordinary `pendingRetry`/`finishSaveError` closures
+    /// the other catch branches use would resubmit that same stale state
+    /// on every retry and wedge permanently -- worse than an ordinary
+    /// transient failure, because there, retrying eventually succeeds.
+    ///
+    /// Resolves by re-reading the session's *real* stored state and
+    /// routing there directly, exactly the way a normal Finish or Discard
+    /// would have looked from the outside:
+    ///
+    /// - Still stored (the common case -- some other writer finished it):
+    ///   renders through the same `finishedSummary` acknowledgement Finish
+    ///   itself produces. `plans: [:]` is safe here -- `SessionSummaryBuilder
+    ///   .summarize` never reads `ActiveSession.plans`/`.restTimer`, only
+    ///   `session.items`/`.startedAt`/`.endedAt` (see that type's doc).
+    /// - No longer stored at all (a §6 delete): dismisses through
+    ///   `didDiscard`, same as an ordinary successful Discard.
+    ///
+    /// Clears every blocking/retry flag this view can be in, including
+    /// `isFinishing` -- the specific gap m2-06 review finding 3.1 named:
+    /// without this, a Finish that hit this condition left `isFinishing ==
+    /// true` forever, disabling Keep going and Discard while Retry could
+    /// never succeed.
+    private func resolveSessionNoLongerInFlight() {
+        isFinishing = false
+        finishSaveError = nil
+        saveFailure = nil
+        pendingRetry = nil
+        pendingFinishHaptics = []
+        endWorkoutPreview = nil
+        do {
+            if let stored = try store.session(id: engine.session.id) {
+                finishedSummary = SessionSummaryBuilder.summarize(
+                    ActiveSession(session: stored, plans: [:]),
+                    referenceDate: now(),
+                    lastPerformance: lastPerformance(for:)
+                )
+            } else {
+                didDiscard = true
+            }
+        } catch {
+            // The re-read itself failed -- an honest blocking error rather
+            // than silently claiming resolution that may not have
+            // happened. Retrying redoes this same resolution, not the
+            // original (already-doomed) mutation.
+            saveFailure = String(describing: error)
+            pendingRetry = { [weak self] in self?.resolveSessionNoLongerInFlight() }
         }
     }
 

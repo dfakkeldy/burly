@@ -1,124 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // BurlyPhoneSync — PhoneSyncStatePersisting
 //
-// Binding contract item 5 (SyncMachineBinding.swift): "the state carrying a
-// new ack is persisted before (or atomically with) executing the
-// publishDigest it produced, so a crash between them re-publishes on the
-// next event instead of acking from a state that no longer exists." That
-// requires `PhoneSyncMachine.State` to actually survive a relaunch, not
-// merely persist "logically" for the duration of one process — and the
-// house rules for this task forbid a schema change, so this cannot be a new
-// `@Model` beside `BurlySchemaV1`.
+// Binding contract item 5 requires the state carrying a new ack to be
+// durable before its commands execute. Phone sync therefore uses one
+// append-only JSON-lines journal beside the SwiftData store. Every line is
+// `{seq, fullRuntimeState, checksum}`: a torn or corrupted append cannot
+// turn into a different valid state, and earlier complete lines remain
+// available.
 //
-// So it is a small, independent JSON file next to (not inside) the
-// SwiftData store: a plain `Codable` mirror of `PhoneSyncMachine.State`,
-// written atomically. `State`'s own stored properties are `fileprivate(set)`
-// (readable from anywhere, mutable only from within
-// `PhoneSyncMachine.swift`), but its memberwise initializer is public and
-// takes every field, so this file can read a full snapshot out and rebuild
-// an equal `State` back in without needing any access this module doesn't
-// already have.
+// `load()` takes the full runtime state from the newest checksum-valid line,
+// except for the two lifetime-monotonic identities. It takes
+// `latestSnapshotVersion` and `lastTransferGeneration` independently as the
+// maximum across every valid line. This is the journal's reason to exist:
+// losing the newest line must never reuse a transfer generation or regress
+// below a snapshot version the watch has already adopted.
 //
-// `lastDailyPushAt` rides along in the same file even though it is not part
-// of `PhoneSyncMachine.State` at all — it is `PhoneSyncCoordinator`'s own
-// bookkeeping for the §5 daily push trigger (see that type's doc), and
-// folding it into this one small save/load pair is simpler than a second,
-// parallel persistence mechanism for one `Date?`.
+// The file's existence is the complete recovery boundary. Absent means
+// first launch; present with no valid record is unrecoverable. Compaction
+// and an explicit re-pair reset both use the same atomic whole-file replace
+// with one checksum-valid full-state line. The former folds in the identity
+// maxima; the latter deliberately starts a new identity domain.
 //
-// ## Never reset a monotonic identity (m4-04 review round 1, blocker 1)
-//
-// `latestSnapshotVersion` and `lastTransferGeneration` are the two facts §5
-// requires to be strictly monotonic for the *lifetime of the phone*, not
-// just within one process: a repeated generation aliases a live transfer
-// with a stale one's late callback (`PhoneSyncMachine`'s own doc on
-// `.snapshotTransferFinished`), and a regressed snapshot version makes the
-// watch reject every push until enough catalog edits rebuild the line it
-// already had. The first version of this file treated the primary state
-// file like any other cache: unreadable or malformed → `try?` → fall back
-// to `State()`. That is a **fail-open reset** of exactly the two values §5
-// forbids resetting, and it is silent — nothing surfaces that it happened.
-//
-// The fix has two independent parts:
-//
-// 1. **A separate, append-only high-water-mark log** (`HighWaterMarkLog`
-//    below), holding only `(version, generation)`, written on every
-//    `save()` call — which always runs, per `PhoneSyncCoordinator.deliver
-//    (_:)`, before any command produced by the same event executes,
-//    including a `.transmitSnapshot` — so the log is durable *before* the
-//    identity it names is ever handed to a transport. Appended, not
-//    overwritten: if the latest line is torn by a crash mid-write, every
-//    complete line before it still contributes to the max on the next
-//    read, which a single overwritten record could not survive on its own.
-//    Its own corruption is tolerated the same way — a line that fails to
-//    parse, or parses to a negative value, is skipped rather than aborting
-//    the read (see `HighWaterMarkLog.currentHighWater()`).
-// 2. **Recovery is explicit, not silent.** When the primary state file is
-//    missing, unreadable, or semantically invalid, `load()` still returns a
-//    usable `PhoneSyncLoadResult` — every self-healing fact (acks, pending
-//    confirmations, daily-push timing) resets to empty, exactly as before,
-//    because the §5 protocol's own idempotency absorbs that loss — but
-//    `latestSnapshotVersion`/`lastTransferGeneration` are restored from the
-//    high-water log, never from a fresh zero, and `recoveredFromCorruption`
-//    is `true` so `PhoneSyncCoordinator` can surface the event rather than
-//    quietly proceeding as if nothing happened.
-//
-// ## Semantically-corrupt JSON is a thrown error, not a trap
-//
-// `PhoneSyncMachine.State.init` and `PendingIngest.init` use `precondition`
-// to state their invariants (non-negative versions/ages) — appropriate for
-// a machine whose own logic can never violate them, wrong for JSON read
-// back from disk, which can say anything. `try?` around a call that can
-// *trap* does not catch the trap; it terminates the process. `Snapshot
-// .makeRuntimeState()` below is therefore a **throwing** validator: it
-// checks every one of those invariants itself and throws
-// `PhoneSyncStateCorruptionError` on the first violation, so a hand-edited
-// or bit-flipped negative value is recoverable (falls into the same
-// high-water-preserving path as an unreadable file) instead of fatal.
-//
-// ## Round 2, finding 2: an upper bound, not just a lower one
-//
-// The round-1 validator above only ever checked `>= 0` — a syntactically
-// valid line/file carrying `Int.max` for `latestSnapshotVersion` or
-// `lastTransferGeneration` sailed through both `Snapshot.makeRuntimeState()`
-// and `HighWaterMarkLog.currentHighWater()`'s per-line check, and then
-// trapped on the very next `PhoneSyncMachine` `+= 1` (`.catalogChanged`'s
-// version bump, `replaceOutstandingTransfer`'s generation bump) — the exact
-// same class of hole `SessionData.maximumRevision` (m4-04 review round 1,
-// major 7) closed for wire/store revisions, just left open here.
-// `maximumPhoneSyncIdentity` below is that same "generous ceiling far below
-// `Int.max`" pattern, applied at BOTH deserialization boundaries this file
-// owns: the primary state's fields, and the high-water log's per-line
-// records.
-//
-// ## Round 2, finding 1: "both unreadable" must not degrade to zero
-//
-// Round 1's fix restores `latestSnapshotVersion`/`lastTransferGeneration`
-// from the high-water log whenever the *primary* is missing, unreadable, or
-// semantically invalid. It missed the case where the high-water log
-// *itself* cannot be trusted either — `HighWaterMarkLog`'s old
-// `currentHighWater()` returned the tuple `(0, 0)` both when the log file
-// had never been written (genuine first launch) AND when it existed but
-// every line failed to parse (a real prior install whose recovery record is
-// now gone) — two very different situations, silently conflated into the
-// same "safe to start from zero" answer. The fix distinguishes them
-// explicitly:
-//
-// - **Both files genuinely absent** (never written) — a true first launch.
-//   Zero is the correct, uncontroversial answer; `load()` returns `nil`.
-// - **Either file is *present* but unreadable/corrupt** — this phone has
-//   synced before, and least one of the two records of that fact cannot be
-//   trusted. If the OTHER one still holds a usable value, round 1's
-//   recovery already handles it. But if *neither* can produce a usable
-//   value, there is no true high-water left to recover, and reconstructing
-//   a state at zero here would reopen the exact "generation reuse aliases a
-//   live transfer" / "regressed version wedges the watch" hazard round 1
-//   closed for the single-file case. `load()` throws
-//   `PhoneSyncStateUnrecoverableError` instead — a typed, catchable signal
-//   `PhoneSyncCoordinator` surfaces as `syncStateUnrecoverable`, whose
-//   correct operator response is re-pairing/rebuilding the sync
-//   relationship from scratch, a deliberate and visible reset, not a
-//   runtime that quietly reused or lost identities without telling anyone.
+// A one-time migration can be configured with the legacy full-state and
+// high-water-log URLs. Only while the journal is absent, the legacy loader
+// reconstructs exactly the state the two-file implementation would have
+// loaded, seeds the journal atomically, and removes the legacy files.
 import Foundation
+import Darwin
 import BurlySync
 import BurlySyncMachine
 
@@ -127,12 +35,11 @@ import BurlySyncMachine
 /// `lastTransferGeneration`, enforced identically at every boundary this
 /// file owns:
 ///
-/// - **Read**: `Snapshot.makeRuntimeState()` (the primary state's fields)
-///   and `HighWaterMarkLog.read()`'s per-line validation both reject a
-///   value above it (round 2, finding 2).
+/// - **Read**: every checksum-valid journal record is also semantically
+///   validated by `Snapshot.makeRuntimeState()`.
 /// - **Write** (round 3, §2): `save(_:)` — in every conformer — throws
-///   `PhoneSyncIdentityOverflowError` *before* writing anything (including
-///   the high-water append) when the state to persist carries a value
+///   `PhoneSyncIdentityOverflowError` *before* appending anything when the
+///   state to persist carries a value
 ///   above it. Read-side-only enforcement left a one-relaunch window: a
 ///   state at exactly the ceiling incremented to ceiling+1, was persisted
 ///   AND transmitted, and only the *next* relaunch rejected it — restoring
@@ -164,10 +71,7 @@ public struct PhoneSyncRuntimeState: Sendable, Equatable {
 }
 
 /// The result of `PhoneSyncStatePersisting.load()`: the runtime state to
-/// resume with, and whether it is a **surfaced recovery** (blocker 1) — the
-/// primary state was missing/unreadable/invalid and had to be reconstructed
-/// from the high-water-mark log alone, rather than a clean load of what was
-/// last saved.
+/// resume with, and whether invalid journal data was skipped to recover it.
 public struct PhoneSyncLoadResult: Sendable, Equatable {
     public var runtimeState: PhoneSyncRuntimeState
     public var recoveredFromCorruption: Bool
@@ -197,9 +101,9 @@ public enum PhoneSyncStateCorruptionError: Error, Equatable {
 /// `maximumPhoneSyncIdentity`'s doc): the state to persist carries a
 /// monotonic identity outside `0...maximumPhoneSyncIdentity`. A domain
 /// error, not a trap, and thrown *before* any byte is written — neither
-/// the primary file nor the high-water log ever holds an out-of-range
-/// value, and `PhoneSyncCoordinator`'s persist-before-execute ordering
-/// means the transport never sees one either.
+/// no journal record ever holds an out-of-range value, and
+/// `PhoneSyncCoordinator`'s persist-before-execute ordering means the
+/// transport never sees one either.
 public enum PhoneSyncIdentityOverflowError: Error, Equatable {
     case snapshotVersionOutOfRange(Int)
     case transferGenerationOutOfRange(Int)
@@ -220,13 +124,8 @@ public func validatePhoneSyncIdentityBounds(_ state: PhoneSyncRuntimeState) thro
     }
 }
 
-/// Thrown by `load()` (m4-04 review round 2, finding 1 — see this file's
-/// header): neither the primary state file nor the high-water-mark log
-/// could produce a trustworthy identity. Deliberately distinct from
-/// `PhoneSyncStateCorruptionError` (which names one bad field inside an
-/// otherwise-readable source) — this means the *combination* of both
-/// sources this type relies on gives no usable answer at all, not that one
-/// of them named a specific violation.
+/// Thrown by `load()` when the journal exists but contains zero valid lines.
+/// This is deliberately distinct from first launch, where the file is absent.
 public struct PhoneSyncStateUnrecoverableError: Error, Equatable {
     public init() {}
 }
@@ -236,20 +135,15 @@ public struct PhoneSyncStateUnrecoverableError: Error, Equatable {
 /// through this on the main actor, but the type itself may be constructed
 /// and handed around freely.
 public protocol PhoneSyncStatePersisting: Sendable {
-    /// The last saved state, or `nil` on genuine first launch (nothing ever
-    /// saved, primary or high-water). See `PhoneSyncLoadResult`'s doc for
-    /// what a non-`nil`, `recoveredFromCorruption: true` result means.
+    /// The newest checksum-valid state, or `nil` when the journal is absent
+    /// on first launch. A present journal with no valid lines throws
+    /// `PhoneSyncStateUnrecoverableError`.
     func load() throws -> PhoneSyncLoadResult?
 
-    /// Durably writes `state`, replacing whatever primary state was saved
-    /// before. Must be atomic with respect to a crash mid-write — a torn
-    /// write must never read back as a *different*, valid-looking state;
-    /// failing to decode at all is the acceptable failure mode, silently
-    /// reading stale-but-plausible data is not. Conformances must also
-    /// durably record `state`'s monotonic identities (`latestSnapshotVersion`
-    /// / `lastTransferGeneration`) in a form that survives the primary
-    /// state becoming unreadable later (blocker 1) — see
-    /// `FileBackedPhoneSyncStatePersisting`'s high-water log.
+    /// Durably appends `state` as one checksum-protected full-state record.
+    /// A torn append must leave older valid records loadable. Loads take the
+    /// full state from the newest valid record and both monotonic identities
+    /// as the maxima across every valid record.
     ///
     /// Round 3, §2: conformances must **refuse** (throw
     /// `PhoneSyncIdentityOverflowError`, via
@@ -260,212 +154,382 @@ public protocol PhoneSyncStatePersisting: Sendable {
     /// persists before it transmits.
     func save(_ state: PhoneSyncRuntimeState) throws
 
-    /// Round 4, §2 — the domain-reset write, distinct from `save(_:)` on
-    /// purpose. `save` may keep durable redundancy in whatever incremental
-    /// form it likes (the file-backed conformer's append-only high-water
-    /// log), because ordinary saves only ever move identities UPWARD — a
-    /// partial write there is at worst an orphaned record naming an
-    /// identity at-or-above everything transmitted, which recovery treats
-    /// safely. A reset writes a **lower** identity (a fresh zero domain),
-    /// where a partial write is precisely the hazard: an orphaned zero
-    /// record from a reset that then failed could be "recovered" on the
-    /// next launch, silently clearing quiescence and reusing generations
-    /// from the lost domain.
-    ///
-    /// Contract: **all durable records commit, or none do.** On any thrown
-    /// error, the durable state must be indistinguishable from "this call
-    /// never happened" — in particular, no partial fresh-domain record may
-    /// ever become recoverable by `load()`. Conformances must also
-    /// validate the state via `validatePhoneSyncIdentityBounds(_:)` before
-    /// writing, like `save`.
+    /// Atomically replaces the journal with one record for a deliberately
+    /// fresh identity domain. This uses the same whole-file replacement
+    /// primitive as compaction. On failure, the old journal remains intact.
     func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws
 }
 
-/// The production conformer: one small JSON file for the full state,
-/// written with `Data.write(options: .atomic)`, plus a separate append-only
-/// high-water-mark log for the two identities that must never regress.
+/// The production conformer: one append-only checksum-protected JSON-lines
+/// journal containing the complete runtime state in every record.
 public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting, @unchecked Sendable {
     private let url: URL
     private let fileManager: FileManager
-    private let highWaterLog: HighWaterMarkLog
+    private let legacyStateURL: URL?
+    private let legacyHighWaterURL: URL?
+    private let lock = NSLock()
+    private let compactionLineLimit: Int
 
     /// - Parameters:
-    ///   - url: the primary state file.
-    ///   - highWaterURL: the append-only log; defaults to a sibling of
-    ///     `url` (same directory, `.highwater.jsonl` in place of `url`'s
-    ///     extension) so production call sites don't need to name a second
-    ///     path. Tests may override it explicitly to inspect or corrupt it
-    ///     directly.
-    ///   - fileManager: injected for testability, matching every other
-    ///     file-backed type in this package.
-    public init(url: URL, highWaterURL: URL? = nil, fileManager: FileManager = .default) {
+    ///   - url: the single journal file.
+    ///   - legacyStateURL: the old full-state sidecar, read only when the
+    ///     journal is absent and removed after successful migration.
+    ///   - legacyHighWaterURL: the old high-water log paired with
+    ///     `legacyStateURL`.
+    ///   - fileManager: injected for testability.
+    public init(
+        url: URL,
+        legacyStateURL: URL? = nil,
+        legacyHighWaterURL: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
         self.url = url
         self.fileManager = fileManager
-        let resolvedHighWaterURL = highWaterURL ?? url
-            .deletingPathExtension()
-            .appendingPathExtension("highwater.jsonl")
-        self.highWaterLog = HighWaterMarkLog(url: resolvedHighWaterURL, fileManager: fileManager)
+        self.legacyStateURL = legacyStateURL
+        self.legacyHighWaterURL = legacyHighWaterURL
+        self.compactionLineLimit = 200
     }
 
     public func load() throws -> PhoneSyncLoadResult? {
-        let primaryExists = fileManager.fileExists(atPath: url.path)
-        let highWaterOutcome = highWaterLog.read()
-
-        if primaryExists == false {
-            switch highWaterOutcome {
-            case .absent:
-                // m4-04 review round 2, finding 1: BOTH files are
-                // genuinely absent — the one combination where "nothing
-                // saved, start at zero" is actually correct, not a guess.
-                return nil
-            case .corrupt:
-                // The high-water log EXISTS (this phone has synced
-                // before) but nothing in it could be trusted, and the
-                // primary is simply gone. There is no true high-water
-                // left to recover; resetting to zero here is exactly the
-                // fail-open reset round 1 closed for "one file corrupt" —
-                // it must not reopen for "both."
-                throw PhoneSyncStateUnrecoverableError()
-            case let .value(version, generation):
-                // The primary was lost but the high-water log survived
-                // intact — round 1's fix, unchanged.
-                return PhoneSyncLoadResult(
-                    runtimeState: PhoneSyncRuntimeState(
-                        machineState: Self.stateRestoringHighWater((version, generation))
-                    ),
-                    recoveredFromCorruption: true
-                )
-            }
-        }
-
-        do {
-            let data = try Data(contentsOf: url)
-            let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
-            var runtime = try snapshot.makeRuntimeState()
-            if case let .value(version, generation) = highWaterOutcome {
-                // Defensive max-merge even on a clean decode: `save()`
-                // always writes the high-water log before the primary
-                // file (see this file's header), so the primary should
-                // already be at or above the log — this only ever matters
-                // if something wrote the primary file through a path
-                // other than `save()`. A `.corrupt`/`.absent` log
-                // alongside a primary that decoded fine is NOT this
-                // finding's scenario — the primary is trustworthy on its
-                // own here, so there is nothing to merge.
-                runtime.machineState = Self.mergingHighWater(into: runtime.machineState, (version, generation))
-            }
-            return PhoneSyncLoadResult(runtimeState: runtime, recoveredFromCorruption: false)
-        } catch {
-            // Primary EXISTS but is unreadable (I/O) or semantically
-            // invalid (`PhoneSyncStateCorruptionError` from
-            // `makeRuntimeState`).
-            switch highWaterOutcome {
-            case let .value(version, generation):
-                // A **surfaced** recovery: every self-healing fact resets
-                // to empty, but the monotonic identities are restored
-                // from the high-water log, never reused from zero.
-                return PhoneSyncLoadResult(
-                    runtimeState: PhoneSyncRuntimeState(
-                        machineState: Self.stateRestoringHighWater((version, generation))
-                    ),
-                    recoveredFromCorruption: true
-                )
-            case .absent, .corrupt:
-                // m4-04 review round 2, finding 1: the primary is present
-                // but untrustworthy AND the high-water log gives nothing
-                // to fall back on either — the exact "both unreadable"
-                // scenario that used to silently degrade to zero.
-                // Surfaced, not swallowed.
-                throw PhoneSyncStateUnrecoverableError()
-            }
-        }
+        lock.lock()
+        defer { lock.unlock() }
+        return try loadLocked()
     }
 
     public func save(_ state: PhoneSyncRuntimeState) throws {
-        // Round 3, §2: the write-path ceiling, checked before ANY byte is
-        // written — an out-of-range identity must not reach even the
-        // high-water log (where `read()` would skip it, but a value that
-        // should never exist should also never be written).
         try validatePhoneSyncIdentityBounds(state)
+        lock.lock()
+        defer { lock.unlock() }
 
-        // Blocker 1: written before the primary save, and — because
-        // `PhoneSyncCoordinator.deliver(_:)` always persists before
-        // executing the commands an event produced — before any transmit
-        // that could follow it. A crash between this line and the primary
-        // write below still leaves the high-water log naming the identity
-        // about to be used.
-        try highWaterLog.append(
-            version: state.machineState.latestSnapshotVersion,
-            generation: state.machineState.lastTransferGeneration
-        )
-
-        let data = try JSONEncoder().encode(Snapshot(state))
-        let directory = url.deletingLastPathComponent()
-        if fileManager.fileExists(atPath: directory.path) == false {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let read = try readJournal()
+        if read.fileExists, read.valid.isEmpty {
+            throw PhoneSyncStateUnrecoverableError()
         }
-        try data.write(to: url, options: .atomic)
+
+        let nextSequence: Int
+        if let maximumSequence = read.valid.map(\.record.seq).max(), maximumSequence < Int.max {
+            nextSequence = maximumSequence + 1
+        } else {
+            nextSequence = 0
+        }
+
+        if read.nonemptyLineCount >= compactionLineLimit || nextSequence == 0 && read.valid.isEmpty == false {
+            let compacted = Self.replacingIdentities(
+                in: state,
+                latestSnapshotVersion: max(
+                    state.machineState.latestSnapshotVersion,
+                    read.maximumSnapshotVersion
+                ),
+                lastTransferGeneration: max(
+                    state.machineState.lastTransferGeneration,
+                    read.maximumTransferGeneration
+                )
+            )
+            try replaceJournal(with: compacted)
+        } else {
+            try appendRecord(try Record(seq: nextSequence, runtimeState: state))
+        }
     }
 
-    /// Round 4, §2 — see the protocol requirement's doc. Write order is the
-    /// REVERSE of `save(_:)`, deliberately:
-    ///
-    /// - **Primary first, atomically.** Until that rename lands, nothing on
-    ///   disk has changed at all; if it throws, the old (corrupt) files
-    ///   remain exactly as they were — durably indistinguishable from
-    ///   "reset never happened", which keeps the next launch unrecoverable
-    ///   and quiescent rather than operational at a zero that was never
-    ///   committed. (`save`'s log-append-first order exists so a crash
-    ///   between its two writes leaves the log naming the *higher*
-    ///   identity about to be used — the safe direction for ordinary,
-    ///   upward saves. For a reset, that same order is exactly the
-    ///   laundering hazard: an orphaned LOWER record that a failed reset
-    ///   leaves behind for recovery to trust.)
-    /// - **Then the high-water log, atomically REPLACED, not appended.**
-    ///   The old log is the record of the old identity domain (or of its
-    ///   corruption); the fresh domain starts its own log with a single
-    ///   record. A crash between the two writes leaves a fully-valid
-    ///   primary beside the old unreadable log — `load()` treats a
-    ///   decodable primary as authoritative when the log yields nothing
-    ///   usable, so the reset is *committed* in that window, never
-    ///   half-recovered. (From the only state the coordinator calls this
-    ///   in — unrecoverable — the old log by definition holds zero valid
-    ///   records, so the defensive max-merge in `load()` has nothing to
-    ///   resurrect either.)
     public func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws {
         try validatePhoneSyncIdentityBounds(state)
+        lock.lock()
+        defer { lock.unlock() }
+        try replaceJournal(with: state)
+    }
 
-        let data = try JSONEncoder().encode(Snapshot(state))
+    private func loadLocked() throws -> PhoneSyncLoadResult? {
+        if fileManager.fileExists(atPath: url.path) == false {
+            return try migrateLegacyIfAvailable()
+        }
+
+        let read = try readJournal()
+        guard let newest = read.valid.max(by: {
+            $0.record.seq == $1.record.seq
+                ? $0.lineIndex < $1.lineIndex
+                : $0.record.seq < $1.record.seq
+        }) else {
+            throw PhoneSyncStateUnrecoverableError()
+        }
+        let runtime = Self.replacingIdentities(
+            in: newest.runtimeState,
+            latestSnapshotVersion: read.maximumSnapshotVersion,
+            lastTransferGeneration: read.maximumTransferGeneration
+        )
+        return PhoneSyncLoadResult(
+            runtimeState: runtime,
+            recoveredFromCorruption: read.newestNonemptyLineIsInvalid
+        )
+    }
+
+    private func migrateLegacyIfAvailable() throws -> PhoneSyncLoadResult? {
+        guard let legacyStateURL else { return nil }
+        let legacy = LegacyTwoFilePhoneSyncStateLoader(
+            stateURL: legacyStateURL,
+            highWaterURL: legacyHighWaterURL ?? legacyStateURL
+                .deletingPathExtension()
+                .appendingPathExtension("highwater.jsonl"),
+            fileManager: fileManager
+        )
+        guard let loaded = try legacy.load() else { return nil }
+        try replaceJournal(with: loaded.runtimeState)
+        if legacyStateURL != url { try? fileManager.removeItem(at: legacyStateURL) }
+        if let legacyHighWaterURL, legacyHighWaterURL != url {
+            try? fileManager.removeItem(at: legacyHighWaterURL)
+        } else {
+            let derived = legacyStateURL.deletingPathExtension().appendingPathExtension("highwater.jsonl")
+            if derived != url { try? fileManager.removeItem(at: derived) }
+        }
+        return loaded
+    }
+
+    private func appendRecord(_ record: Record) throws {
+        try createParentDirectoryIfNeeded()
+        var line = try Self.makeEncoder().encode(record)
+        line.append(UInt8(ascii: "\n"))
+        let descriptor = Darwin.open(url.path, O_RDWR | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(descriptor) }
+
+        let newline = Data([UInt8(ascii: "\n")])
+        if let lastByte = try lastByte(in: descriptor), lastByte != UInt8(ascii: "\n") {
+            try writeFully(newline, to: descriptor)
+        }
+        do {
+            try writeFully(line, to: descriptor)
+        } catch {
+            // A failed append must not let a later valid record fuse onto
+            // this record's partial bytes. Termination is best-effort when
+            // the underlying failure (for example ENOSPC) also prevents it.
+            try? writeFully(newline, to: descriptor)
+            _ = Darwin.fsync(descriptor)
+            throw error
+        }
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    private func lastByte(in descriptor: Int32) throws -> UInt8? {
+        let end = Darwin.lseek(descriptor, 0, SEEK_END)
+        guard end >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard end > 0 else { return nil }
+
+        var byte: UInt8 = 0
+        while true {
+            let result = withUnsafeMutableBytes(of: &byte) { bytes in
+                Darwin.pread(descriptor, bytes.baseAddress, 1, end - 1)
+            }
+            if result == 1 { return byte }
+            if result < 0, errno == EINTR { continue }
+            if result < 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            throw POSIXError(.EIO)
+        }
+    }
+
+    private func writeFully(_ data: Data, to descriptor: Int32) throws {
+        try data.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let result = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    bytes.count - offset
+                )
+                if result > 0 {
+                    offset += result
+                } else if result == 0 {
+                    throw POSIXError(.ENOSPC)
+                } else if errno != EINTR {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            }
+        }
+    }
+
+    /// Shared by compaction and reset: a single atomic whole-file replace.
+    private func replaceJournal(with state: PhoneSyncRuntimeState) throws {
+        try createParentDirectoryIfNeeded()
+        var line = try Self.makeEncoder().encode(Record(seq: 0, runtimeState: state))
+        line.append(UInt8(ascii: "\n"))
+        try line.write(to: url, options: .atomic)
+    }
+
+    private func createParentDirectoryIfNeeded() throws {
         let directory = url.deletingLastPathComponent()
         if fileManager.fileExists(atPath: directory.path) == false {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
-        try data.write(to: url, options: .atomic)
+    }
 
-        try highWaterLog.replace(
-            version: state.machineState.latestSnapshotVersion,
-            generation: state.machineState.lastTransferGeneration
+    private struct ValidRecord {
+        var record: Record
+        var runtimeState: PhoneSyncRuntimeState
+        var lineIndex: Int
+    }
+
+    private struct JournalRead {
+        var fileExists: Bool
+        var valid: [ValidRecord]
+        var nonemptyLineCount: Int
+        var newestNonemptyLineIsInvalid: Bool
+
+        var maximumSnapshotVersion: Int {
+            valid.map(\.runtimeState.machineState.latestSnapshotVersion).max() ?? 0
+        }
+
+        var maximumTransferGeneration: Int {
+            valid.map(\.runtimeState.machineState.lastTransferGeneration).max() ?? 0
+        }
+    }
+
+    private func readJournal() throws -> JournalRead {
+        guard fileManager.fileExists(atPath: url.path) else {
+            return JournalRead(
+                fileExists: false,
+                valid: [],
+                nonemptyLineCount: 0,
+                newestNonemptyLineIsInvalid: false
+            )
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw PhoneSyncStateUnrecoverableError()
+        }
+        let lines = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+        var valid: [ValidRecord] = []
+        var nonemptyLineCount = 0
+        var newestNonemptyLineIsInvalid = false
+        for (index, line) in lines.enumerated() where line.isEmpty == false {
+            nonemptyLineCount += 1
+            guard
+                let record = try? JSONDecoder().decode(Record.self, from: Data(line)),
+                record.seq >= 0,
+                record.hasValidChecksum,
+                let runtime = try? record.fullRuntimeState.makeRuntimeState()
+            else {
+                newestNonemptyLineIsInvalid = true
+                continue
+            }
+            valid.append(ValidRecord(record: record, runtimeState: runtime, lineIndex: index))
+            newestNonemptyLineIsInvalid = false
+        }
+        return JournalRead(
+            fileExists: true,
+            valid: valid,
+            nonemptyLineCount: nonemptyLineCount,
+            newestNonemptyLineIsInvalid: newestNonemptyLineIsInvalid
         )
     }
 
-    private static func stateRestoringHighWater(
-        _ highWater: (version: Int, generation: Int)
-    ) -> BurlyPhoneSyncMachine.State {
-        mergingHighWater(into: BurlyPhoneSyncMachine.State(), highWater)
+    private static func replacingIdentities(
+        in runtime: PhoneSyncRuntimeState,
+        latestSnapshotVersion: Int,
+        lastTransferGeneration: Int
+    ) -> PhoneSyncRuntimeState {
+        let state = runtime.machineState
+        return PhoneSyncRuntimeState(
+            machineState: BurlyPhoneSyncMachine.State(
+                ackAge: state.ackAge,
+                lastObservedNow: state.lastObservedNow,
+                pendingStoreConfirmations: state.pendingStoreConfirmations,
+                latestSnapshotVersion: latestSnapshotVersion,
+                lastTransferGeneration: lastTransferGeneration,
+                outstandingSnapshot: state.outstandingSnapshot
+            ),
+            lastDailyPushAt: runtime.lastDailyPushAt
+        )
     }
 
-    private static func mergingHighWater(
-        into state: BurlyPhoneSyncMachine.State,
-        _ highWater: (version: Int, generation: Int)
-    ) -> BurlyPhoneSyncMachine.State {
-        BurlyPhoneSyncMachine.State(
-            ackAge: state.ackAge,
-            lastObservedNow: state.lastObservedNow,
-            pendingStoreConfirmations: state.pendingStoreConfirmations,
-            latestSnapshotVersion: max(state.latestSnapshotVersion, highWater.version),
-            lastTransferGeneration: max(state.lastTransferGeneration, highWater.generation),
-            outstandingSnapshot: state.outstandingSnapshot
-        )
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    struct Record: Codable {
+        var seq: Int
+        var fullRuntimeState: Snapshot
+        var checksum: String
+
+        init(seq: Int, runtimeState: PhoneSyncRuntimeState) throws {
+            let snapshot = Snapshot(runtimeState)
+            self.seq = seq
+            self.fullRuntimeState = snapshot
+            self.checksum = try Self.checksum(seq: seq, snapshot: snapshot)
+        }
+
+        var hasValidChecksum: Bool {
+            guard let expected = try? Self.checksum(seq: seq, snapshot: fullRuntimeState) else {
+                return false
+            }
+            return checksum == expected
+        }
+
+        private struct ChecksumPayload: Encodable {
+            var seq: Int
+            var fullRuntimeState: ChecksumSnapshot
+        }
+
+        /// JSON represents dictionaries keyed by UUID as alternating-value
+        /// arrays, whose iteration order is not stable after a decode. The
+        /// checksum therefore uses an explicitly UUID-sorted mirror rather
+        /// than re-encoding `Snapshot`'s dictionaries in hash-table order.
+        private struct ChecksumSnapshot: Encodable {
+            struct AgeEntry: Encodable {
+                var id: String
+                var age: TimeInterval
+            }
+
+            struct RevisionEntry: Encodable {
+                var id: String
+                var revision: Int
+            }
+
+            var ackAge: [AgeEntry]
+            var lastObservedNow: Date?
+            var pendingRevisions: [RevisionEntry]
+            var pendingAges: [AgeEntry]
+            var latestSnapshotVersion: Int
+            var lastTransferGeneration: Int
+            var outstandingSnapshotVersion: Int?
+            var outstandingSnapshotGeneration: Int?
+            var lastDailyPushAt: Date?
+
+            init(_ snapshot: Snapshot) {
+                ackAge = snapshot.ackAge
+                    .map { AgeEntry(id: $0.key.uuidString, age: $0.value) }
+                    .sorted { $0.id < $1.id }
+                lastObservedNow = snapshot.lastObservedNow
+                pendingRevisions = snapshot.pendingRevisions
+                    .map { RevisionEntry(id: $0.key.uuidString, revision: $0.value) }
+                    .sorted { $0.id < $1.id }
+                pendingAges = snapshot.pendingAges
+                    .map { AgeEntry(id: $0.key.uuidString, age: $0.value) }
+                    .sorted { $0.id < $1.id }
+                latestSnapshotVersion = snapshot.latestSnapshotVersion
+                lastTransferGeneration = snapshot.lastTransferGeneration
+                outstandingSnapshotVersion = snapshot.outstandingSnapshotVersion
+                outstandingSnapshotGeneration = snapshot.outstandingSnapshotGeneration
+                lastDailyPushAt = snapshot.lastDailyPushAt
+            }
+        }
+
+        private static func checksum(seq: Int, snapshot: Snapshot) throws -> String {
+            let bytes = try FileBackedPhoneSyncStatePersisting.makeEncoder().encode(
+                ChecksumPayload(seq: seq, fullRuntimeState: ChecksumSnapshot(snapshot))
+            )
+            var hash: UInt64 = 14_695_981_039_346_656_037
+            for byte in bytes {
+                hash ^= UInt64(byte)
+                hash &*= 1_099_511_628_211
+            }
+            let value = String(hash, radix: 16)
+            return String(repeating: "0", count: 16 - value.count) + value
+        }
     }
 
     /// The wire shape. Deliberately flat (two parallel dictionaries for
@@ -479,8 +543,7 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
     /// `internal`, not `private`/`fileprivate` — a deliberate test seam
     /// (`@testable import`) so `PhoneSyncStatePersistingTests` can drive
     /// `makeRuntimeState()`'s throwing validation directly, per corrupt
-    /// field, without going through a full `load()` + high-water-recovery
-    /// round trip for each one.
+    /// field without constructing a checksum-valid hostile journal record.
     struct Snapshot: Codable {
         var ackAge: [UUID: TimeInterval]
         var lastObservedNow: Date?
@@ -590,67 +653,79 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
     }
 }
 
-/// `HighWaterMarkLog.read()`'s result (m4-04 review round 2, finding 1):
-/// distinguishes "this log was never written" from "this log exists but
-/// nothing in it can be trusted" — two situations round 1's `(0, 0)`-tuple
-/// return conflated into the same answer, which is exactly the gap that let
-/// "primary absent, log corrupt" (a real prior install, not a first launch)
-/// silently degrade to zero.
-enum HighWaterReadOutcome: Equatable {
-    /// The log file does not exist on disk at all.
-    case absent
-    /// The log file exists, but no line in it yielded a trustworthy record
-    /// (parse failure, a negative field, or a field above
-    /// `maximumPhoneSyncIdentity` — round 2, finding 2).
-    case corrupt
-    /// At least one line parsed to a valid, in-range record; this is the
-    /// max across every such line.
-    case value(version: Int, generation: Int)
-}
-
-/// The append-only high-water-mark log (blocker 1): one line per `save()`
-/// call, `{"version":N,"generation":M}\n`, appended via `FileHandle` rather
-/// than read-modify-rewrite — a crash mid-append can only corrupt the last
-/// line, never an earlier one, which is the whole point (a single
-/// atomically-overwritten record has no earlier line to fall back on if
-/// *its* one write is the one that's damaged).
-///
-/// `read()` tolerates the log's own corruption: a line that fails to parse,
-/// or parses to a field that is negative or above `maximumPhoneSyncIdentity`
-/// (round 2, finding 2), is skipped rather than aborting the read, and the
-/// result is the max of every field across every line that *did* parse. If
-/// every line is corrupt (a double failure far rarer than either file
-/// corrupting alone), this reports `.corrupt`, not a silent `(0, 0)` — see
-/// `HighWaterReadOutcome`'s doc and this file's header for why that
-/// distinction is now load-bearing.
-///
-/// Compacted opportunistically once the line count crosses a small bound,
-/// via the same atomic-write guarantee the primary state file uses, so the
-/// log never grows without limit across years of real usage.
-private struct HighWaterMarkLog {
-    private let url: URL
+/// Read-only copy of m4-04's two-file loader. It exists solely to migrate
+/// already-installed state when the new journal is absent; no save path can
+/// create or update the legacy files.
+private struct LegacyTwoFilePhoneSyncStateLoader {
+    private let stateURL: URL
+    private let highWaterURL: URL
     private let fileManager: FileManager
-    private let compactionThreshold = 200
 
-    private struct Record: Codable {
+    private struct HighWaterRecord: Codable {
         var version: Int
         var generation: Int
     }
 
-    init(url: URL, fileManager: FileManager) {
-        self.url = url
+    private enum HighWaterOutcome {
+        case absent
+        case corrupt
+        case value(version: Int, generation: Int)
+    }
+
+    init(stateURL: URL, highWaterURL: URL, fileManager: FileManager) {
+        self.stateURL = stateURL
+        self.highWaterURL = highWaterURL
         self.fileManager = fileManager
     }
 
-    func read() -> HighWaterReadOutcome {
-        guard fileManager.fileExists(atPath: url.path) else { return .absent }
-        guard let data = try? Data(contentsOf: url), data.isEmpty == false else { return .corrupt }
+    func load() throws -> PhoneSyncLoadResult? {
+        let stateExists = fileManager.fileExists(atPath: stateURL.path)
+        let highWater = readHighWater()
+
+        if stateExists == false {
+            switch highWater {
+            case .absent:
+                return nil
+            case .corrupt:
+                throw PhoneSyncStateUnrecoverableError()
+            case let .value(version, generation):
+                return PhoneSyncLoadResult(
+                    runtimeState: restoringHighWater(version: version, generation: generation),
+                    recoveredFromCorruption: true
+                )
+            }
+        }
+
+        do {
+            let snapshot = try JSONDecoder().decode(
+                FileBackedPhoneSyncStatePersisting.Snapshot.self,
+                from: Data(contentsOf: stateURL)
+            )
+            var runtime = try snapshot.makeRuntimeState()
+            if case let .value(version, generation) = highWater {
+                runtime = mergingHighWater(into: runtime, version: version, generation: generation)
+            }
+            return PhoneSyncLoadResult(runtimeState: runtime, recoveredFromCorruption: false)
+        } catch {
+            if case let .value(version, generation) = highWater {
+                return PhoneSyncLoadResult(
+                    runtimeState: restoringHighWater(version: version, generation: generation),
+                    recoveredFromCorruption: true
+                )
+            }
+            throw PhoneSyncStateUnrecoverableError()
+        }
+    }
+
+    private func readHighWater() -> HighWaterOutcome {
+        guard fileManager.fileExists(atPath: highWaterURL.path) else { return .absent }
+        guard let data = try? Data(contentsOf: highWaterURL), data.isEmpty == false else { return .corrupt }
 
         var maxVersion: Int?
         var maxGeneration: Int?
         for line in data.split(separator: UInt8(ascii: "\n")) {
             guard
-                let record = try? JSONDecoder().decode(Record.self, from: Data(line)),
+                let record = try? JSONDecoder().decode(HighWaterRecord.self, from: Data(line)),
                 record.version >= 0, record.version <= maximumPhoneSyncIdentity,
                 record.generation >= 0, record.generation <= maximumPhoneSyncIdentity
             else { continue }
@@ -661,74 +736,27 @@ private struct HighWaterMarkLog {
         return .value(version: version, generation: generation)
     }
 
-    /// A plain-tuple convenience for `append`'s own compaction step, which
-    /// only ever needs "what's the max to fold in" for a write already in
-    /// progress — never a signal to surface to a caller — so
-    /// `.absent`/`.corrupt` collapsing to `(0, 0)` here costs nothing
-    /// `read()`'s callers care about (see `HighWaterReadOutcome`'s doc for
-    /// why that collapse is exactly the thing `load()` itself must NOT do).
-    private func currentHighWater() -> (version: Int, generation: Int) {
-        if case let .value(version, generation) = read() {
-            return (version, generation)
-        }
-        return (0, 0)
+    private func restoringHighWater(version: Int, generation: Int) -> PhoneSyncRuntimeState {
+        mergingHighWater(into: PhoneSyncRuntimeState(), version: version, generation: generation)
     }
 
-    func append(version: Int, generation: Int) throws {
-        let directory = url.deletingLastPathComponent()
-        if fileManager.fileExists(atPath: directory.path) == false {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-
-        let lineCount = currentLineCount()
-        if lineCount >= compactionThreshold {
-            // Compact first: one line carrying the max seen so far
-            // (including this call's own values), written atomically —
-            // the same non-torn guarantee the primary state file uses.
-            // Worst case on a crash mid-compaction is the old, larger file
-            // surviving intact; never a torn one.
-            let current = currentHighWater()
-            let compacted = Record(
-                version: max(current.version, version),
-                generation: max(current.generation, generation)
-            )
-            var line = try JSONEncoder().encode(compacted)
-            line.append(UInt8(ascii: "\n"))
-            try line.write(to: url, options: .atomic)
-            return
-        }
-
-        if fileManager.fileExists(atPath: url.path) == false {
-            fileManager.createFile(atPath: url.path, contents: nil)
-        }
-        var line = try JSONEncoder().encode(Record(version: version, generation: generation))
-        line.append(UInt8(ascii: "\n"))
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        try handle.write(contentsOf: line)
-    }
-
-    private func currentLineCount() -> Int {
-        guard let data = try? Data(contentsOf: url) else { return 0 }
-        return data.count(where: { $0 == UInt8(ascii: "\n") })
-    }
-
-    /// Round 4, §2: atomically REPLACES the entire log with a single
-    /// record — the domain-reset write. Append-only is the right shape for
-    /// ordinary saves (identities only move upward, so a torn append is
-    /// harmlessly high), but a reset writes a LOWER identity, where any
-    /// partial record is the laundering hazard §2 names — so the whole
-    /// file changes in one rename or not at all, using the same atomic
-    /// write the compaction path already relies on.
-    func replace(version: Int, generation: Int) throws {
-        let directory = url.deletingLastPathComponent()
-        if fileManager.fileExists(atPath: directory.path) == false {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-        var line = try JSONEncoder().encode(Record(version: version, generation: generation))
-        line.append(UInt8(ascii: "\n"))
-        try line.write(to: url, options: .atomic)
+    private func mergingHighWater(
+        into runtime: PhoneSyncRuntimeState,
+        version: Int,
+        generation: Int
+    ) -> PhoneSyncRuntimeState {
+        let state = runtime.machineState
+        return PhoneSyncRuntimeState(
+            machineState: BurlyPhoneSyncMachine.State(
+                ackAge: state.ackAge,
+                lastObservedNow: state.lastObservedNow,
+                pendingStoreConfirmations: state.pendingStoreConfirmations,
+                latestSnapshotVersion: max(state.latestSnapshotVersion, version),
+                lastTransferGeneration: max(state.lastTransferGeneration, generation),
+                outstandingSnapshot: state.outstandingSnapshot
+            ),
+            lastDailyPushAt: runtime.lastDailyPushAt
+        )
     }
 }
 
@@ -755,9 +783,7 @@ public final class InMemoryPhoneSyncStatePersisting: PhoneSyncStatePersisting, @
     }
 
     public func replaceWithFreshIdentityDomain(_ state: PhoneSyncRuntimeState) throws {
-        // A single in-memory assignment is inherently all-or-nothing —
-        // the two-file atomicity concern (round 4, §2) has no analogue
-        // here beyond the shared bound check.
+        // A single in-memory assignment is inherently all-or-nothing.
         try validatePhoneSyncIdentityBounds(state)
         stored = state
     }

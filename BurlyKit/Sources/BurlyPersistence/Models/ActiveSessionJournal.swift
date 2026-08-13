@@ -103,9 +103,19 @@ extension BurlySchemaV1 {
 struct ActiveSessionScaffolding: Codable, Equatable {
     var plans: [UUID: ItemPlan]
     var restTimer: RestTimerState?
+    /// m2-06 review finding 1.1: rides along so Resume can restore the
+    /// exact item the lifter was viewing, not just the first one with
+    /// something left to log. `Optional`, so the synthesized `Decodable`
+    /// already treats a payload written before this field existed as
+    /// simply absent (`nil`) rather than failing to decode -- no custom
+    /// `init(from:)` needed for backward compatibility, unlike
+    /// `RestTimerState`'s clamp (which has to *repair* an out-of-range
+    /// value, not just tolerate a missing key).
+    var currentItemID: UUID?
 
     init(_ active: ActiveSession) {
         self.plans = active.plans
         self.restTimer = active.restTimer
+        self.currentItemID = active.currentItemID
     }
 }

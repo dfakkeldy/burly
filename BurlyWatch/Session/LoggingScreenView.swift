@@ -35,8 +35,12 @@ struct LoggingScreenView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
-    init(engine: SessionEngine, store: BurlyStore) {
-        _viewModel = State(initialValue: SessionViewModel(engine: engine, store: store))
+    /// - Parameter startInSummary: threaded straight through to
+    ///   `SessionViewModel.init` -- see its doc. m2-06's Resume-decline path
+    ///   (`SessionEntryView`'s `.resume(sessionID:enterSummary: true)`)
+    ///   is the only caller that passes `true`.
+    init(engine: SessionEngine, store: BurlyStore, startInSummary: Bool = false) {
+        _viewModel = State(initialValue: SessionViewModel(engine: engine, store: store, startInSummary: startInSummary))
     }
 
     var body: some View {

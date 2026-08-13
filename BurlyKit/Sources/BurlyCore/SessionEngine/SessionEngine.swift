@@ -185,6 +185,18 @@ public struct SessionEngine: Sendable {
         weightEdit.prefill(weight)
     }
 
+    /// The item the watch UI is currently showing (m2-06 review finding
+    /// 1.1) -- see `ActiveSession.currentItemID`'s doc. Pure bookkeeping:
+    /// this enforces no rule of its own (no validation that `itemID` names
+    /// a real, unskipped item), the same way `prefillWeight` above sets a
+    /// value without judging it. The caller (`SessionViewModel`) is the
+    /// only thing that knows "which page is on screen," and this is just
+    /// where that fact rides along so it gets journaled with everything
+    /// else `saveActiveSession` persists in one transaction.
+    public mutating func setCurrentItem(_ itemID: UUID?) {
+        session.currentItemID = itemID
+    }
+
     /// The pager moved to another exercise: §2 auto-locks the weight.
     @discardableResult
     public mutating func pageAway() -> [HapticEvent] {
