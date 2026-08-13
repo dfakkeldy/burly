@@ -66,3 +66,26 @@ Once the m2-04 gate releases the box, run Scripts/acceptance-sim.sh solo via
 xcode-build-slot.sh and check that testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink
 passes. That single test is the whole of §6 #1 and #5 evidence.
 ```
+
+## 2026-08-13 — watch target made to compile again; first real gate in flight
+
+Done: The branch never compiled the watch target. `9b43ad2` added
+`namePlaceholderExercise` / `mergePlaceholderExercise` to `BurlyStore` and
+left `FaultInjectingStore` (BurlyWatch/WatchDemoSeed.swift:424) behind, so
+the gate died in `EmitSwiftModule` after 76s. Fixed in `ee57e15`: two plain
+forwarding methods, no `Fault` case, matching `archiveExercise`. The green
+check on PR #4 was package tests only — SwiftPM does not compile the watch
+target and ci.yml:82 makes the sim job main-only.
+
+Next: gate is queued second in `gate-chain.sh` (behind the m2-04 probe run).
+On green, take PR #4 out of draft. The gate additionally asserts
+`testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink` actually appears
+in a result bundle — §6 #1/#5 are unproven if it does not, even on a green
+suite.
+
+Resume:
+```
+Read /private/tmp/claude-501/-Users-dfakkeldy-Developer-health-apps/6797db06-aea3-4cdc-acde-97a45503f65e/scratchpad/gate-m5-03.log.
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m5-03, branch task/burly-m5-03 at ee57e15.
+If PRE-FLIGHT OK and the suite is green with the §6 test present, push and take PR #4 out of draft.
+```
