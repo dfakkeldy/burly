@@ -381,27 +381,41 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertTrue(archiveRoutineButton.waitForExistence(timeout: 5))
         XCTAssertTrue(archiveRoutineButton.isHittable)
         archiveRoutineButton.tap()
-        let confirmArchiveRoutineButton = app.buttons["routineEditor.confirmArchiveButton"]
+        // iOS 26 exposes a confirmation-dialog action as a semantic Button
+        // containing its native action Button. Select the semantic parent
+        // deliberately instead of requiring the identifier query to be unique.
+        let confirmArchiveRoutineButton = app.sheets["Archive this routine?"]
+            .buttons.matching(identifier: "routineEditor.confirmArchiveButton")
+            .firstMatch
         XCTAssertTrue(confirmArchiveRoutineButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(confirmArchiveRoutineButton.isHittable)
         confirmArchiveRoutineButton.tap()
         XCTAssertTrue(app.staticTexts["routinesTab.emptyState.heading"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts[routineName].exists)
 
         // Archive the custom exercise through its catalog lifecycle too.
-        app.buttons["routinesTab.catalogButton"].tap()
+        let reopenCatalogButton = app.buttons["routinesTab.catalogButton"]
+        XCTAssertTrue(reopenCatalogButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(reopenCatalogButton.isHittable)
+        reopenCatalogButton.tap()
         let archiveSearch = app.searchFields["Search exercises"]
         XCTAssertTrue(archiveSearch.waitForExistence(timeout: 5))
+        XCTAssertTrue(archiveSearch.isHittable)
         archiveSearch.tap()
         archiveSearch.typeText(customName)
-        XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 5))
+        let customExerciseRow = app.staticTexts["catalog.exerciseName.\(customExerciseID)"]
+        XCTAssertTrue(customExerciseRow.waitForExistence(timeout: 5))
         let archiveButton = app.buttons["catalog.archiveExercise.\(customExerciseID)"]
         XCTAssertTrue(archiveButton.waitForExistence(timeout: 5))
         XCTAssertTrue(archiveButton.isHittable)
         archiveButton.tap()
-        let confirmArchiveExerciseButton = app.buttons["catalog.confirmArchiveButton"]
+        let confirmArchiveExerciseButton = app.sheets["Archive \(customName)?"]
+            .buttons.matching(identifier: "catalog.confirmArchiveButton")
+            .firstMatch
         XCTAssertTrue(confirmArchiveExerciseButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(confirmArchiveExerciseButton.isHittable)
         confirmArchiveExerciseButton.tap()
-        XCTAssertTrue(app.staticTexts[customName].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(customExerciseRow.waitForNonExistence(timeout: 10))
 
         attachScreenshot(from: app, name: "BurlyPhone-routineBuilderCatalog")
     }
