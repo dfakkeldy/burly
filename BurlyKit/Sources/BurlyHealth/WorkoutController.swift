@@ -99,8 +99,10 @@ public final class WorkoutController {
         lifecycle = .active
         resources.session.startActivity(at: date)
 
+        var didBeginCollection = false
         do {
             try await resources.builder.beginCollection(at: date)
+            didBeginCollection = true
             guard isCurrent(resources) else {
                 throw WorkoutControllerError.noActiveWorkout
             }
@@ -118,6 +120,9 @@ public final class WorkoutController {
             resumeCollectionWaiter(throwing: mappedError)
             resumeStoppedWaiter(throwing: mappedError)
             resources.session.stateHandler = nil
+            if didBeginCollection {
+                resources.builder.discardWorkout()
+            }
             resources.session.end()
             clearWorkoutState()
             throw mappedError

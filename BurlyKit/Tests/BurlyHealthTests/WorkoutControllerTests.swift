@@ -171,6 +171,12 @@ struct WorkoutControllerTests {
             try await finish.value
         }
         #expect(harness.controller.lifecycle == .idle)
+        #expect(harness.log == [
+            .makeSession(.init(activity: .traditionalStrengthTraining, location: .indoor)),
+            .startActivity(startedAt),
+            .beginCollection(startedAt),
+            .endSession
+        ])
 
         try await harness.controller.start(at: startedAt.addingTimeInterval(120))
         let secondFinish = Task { @MainActor in
@@ -437,6 +443,34 @@ struct WorkoutControllerTests {
         await #expect(throws: WorkoutControllerError.anotherWorkoutSessionStarted) {
             try await start.value
         }
+    }
+
+    @Test("session failure after collection starts discards the builder before ending the session")
+    func sessionFailureAfterCollectionStartsDiscardsBuilderBeforeEndingSession() async throws {
+        let beginCollection = OperationGate()
+        let harness = Harness(beginCollectionGate: beginCollection)
+
+        let start = Task { @MainActor in
+            try await harness.controller.start(at: startedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.beginCollection(startedAt)) }
+
+        harness.session.emit(.failed(.anotherWorkoutSessionStarted))
+        await Task.yield()
+        beginCollection.succeedAll()
+
+        try await requireTaskSettled(start)
+        await #expect(throws: WorkoutControllerError.anotherWorkoutSessionStarted) {
+            try await start.value
+        }
+        #expect(harness.log == [
+            .makeSession(.init(activity: .traditionalStrengthTraining, location: .indoor)),
+            .startActivity(startedAt),
+            .beginCollection(startedAt),
+            .delegateState(.failed(.anotherWorkoutSessionStarted)),
+            .discardWorkout,
+            .endSession
+        ])
     }
 
     @Test("finish cancellation releases the collection-start wait")
