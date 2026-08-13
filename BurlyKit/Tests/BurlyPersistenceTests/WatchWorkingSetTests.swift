@@ -100,6 +100,84 @@ struct WatchWorkingSetTests {
         #expect(try store.routine(id: retained.id)?.items.map(\.id) == [reusedItemID])
     }
 
+    @Test("a rejected working-set replacement cannot commit an omitted routine deletion through a later save")
+    /// Guards F1's pending-mutation data-loss class: rejection must leave no
+    /// staged deletion for an omitted routine that an unrelated later save can commit.
+    func rejectedReplacementDoesNotLeakAnOmittedRoutineDeletionIntoALaterSave() throws {
+        let store = try makeStore(.watch)
+        let exercise = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let removed = Fixture.routine(name: "A", over: [exercise])
+        let retained = Fixture.routine(name: "B", over: [exercise])
+        try store.createExercise(exercise)
+        try store.createRoutine(removed)
+        try store.createRoutine(retained)
+
+        // A is omitted (and would be deleted by a mutate-before-preflight
+        // implementation), while B makes this payload reject independently.
+        let rejected = BurlySnapshotPayloadDTO(version: 1, exercises: [], routines: [retained])
+        #expect(throws: BurlyStoreError.missingExercise(exercise.id)) {
+            try store.replaceWatchWorkingSet(rejected)
+        }
+
+        // This successful, unrelated save is what exposes a leaked pending mutation.
+        try store.createExercise(Fixture.exercise(name: "Curl", muscleGroups: [.biceps]))
+
+        #expect(try store.routine(id: removed.id) != nil)
+        #expect(try store.routine(id: retained.id) != nil)
+        #expect(try store.watchSyncState().lastAppliedSnapshotVersion == nil)
+    }
+
+    @Test("a duplicate routine-item id rejection cannot commit an omitted routine deletion through a later save")
+    /// Guards F1's pending-mutation data-loss class at the deepest pre-mutation
+    /// rejection. This uses the duplicate-id arm because it is the last rejection
+    /// before the first staged mutation, so it constrains ordering; do not
+    /// de-duplicate it with the earlier missing-exercise guard.
+    func duplicateItemIDReplacementDoesNotLeakAnOmittedRoutineDeletionIntoALaterSave() throws {
+        let store = try makeStore(.watch)
+        let exercise = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let removed = Fixture.routine(name: "A", over: [exercise])
+        let retained = Fixture.routine(name: "B", over: [exercise])
+        let retainedOwner = Fixture.routine(name: "C", over: [exercise])
+        try store.createExercise(exercise)
+        try store.createRoutine(removed)
+        try store.createRoutine(retained)
+        try store.createRoutine(retainedOwner)
+
+        // A is omitted (and would be deleted by a mutate-before-preflight
+        // implementation). B reuses C's retained item ID, so that ID has not
+        // been released and preflightRoutineItems must reject it as a duplicate.
+        let reusedItemID = try #require(retainedOwner.items.first?.id)
+        let rejectedRetained = RoutineData(
+            id: retained.id,
+            name: retained.name,
+            orderIndex: retained.orderIndex,
+            items: [RoutineItemData(
+                id: reusedItemID,
+                exerciseID: exercise.id,
+                order: 0,
+                defaultSetCount: 3
+            )],
+            updatedAt: retained.updatedAt,
+            archivedAt: retained.archivedAt
+        )
+        let rejected = BurlySnapshotPayloadDTO(
+            version: 1,
+            exercises: [exercise],
+            routines: [rejectedRetained, retainedOwner]
+        )
+        #expect(throws: BurlyStoreError.duplicateID(reusedItemID)) {
+            try store.replaceWatchWorkingSet(rejected)
+        }
+
+        // This successful, unrelated save is what exposes a leaked pending mutation.
+        try store.createExercise(Fixture.exercise(name: "Curl", muscleGroups: [.biceps]))
+
+        #expect(try store.routine(id: removed.id) != nil)
+        #expect(try store.routine(id: retained.id) != nil)
+        #expect(try store.routine(id: retainedOwner.id) != nil)
+        #expect(try store.watchSyncState().lastAppliedSnapshotVersion == nil)
+    }
+
     @Test("a replacement into an empty watch store resolves a payload-introduced exercise")
     func replacementResolvesPayloadIntroducedExercise() throws {
         let store = try makeStore(.watch)
