@@ -295,3 +295,42 @@ Scripts/acceptance-sim.sh wrapped in scratchpad/slot-retry.sh. Gate is 32/32
 watch + 8/8 phone with zero test edits. Verify the fix is in the shipped
 BurlyWatch.debug.dylib before trusting any result.
 ```
+
+## 2026-08-13 — round 9 committed, gate queued behind stage 1
+
+Done: Stopped guessing and measured. A probe run dumped the settled
+accessibility tree at all three failure points (phone 8/8, watch 30/32) and
+split them into three different kinds of finding: testMoveUp now passes but
+only because the probe doubled the window to 10s, so that is a LATENCY
+reading and not a fix; line 86 is a harness defect (the pager was correctly
+at page 3 of 3 and app.swipeDown() just does not move a crown-driven
+PUICPageViewController); line 60 is the real product defect, where the view
+never re-rendered at all. Root cause of findings 1 and 3: loggingBody read
+pagerItemIDs outside the closure correctly, but the value was captured INTO
+the TimelineView content closure, so the page set was frozen at the last body
+evaluation while the 1 Hz tick re-rendered the stale snapshot. Round 9
+(b474443) moves the pager into the enclosing body and demotes the timeline to
+a background that only drives tick(). All 16 source invariants re-verified by
+the dispatcher, not taken from the engine's report.
+
+Next: gate-round9.sh runs after the three-gate chain finishes (stage-2
+follower is already waiting on the chain PID; nothing to launch by hand). Its
+pre-flight inverts round 7's expectations on purpose -- pagerItemIDs must now
+be read TWICE in the body and TabView must appear ZERO times inside the
+timeline -- and it fails the run if either assertion in the middle-exercise
+test goes missing or any XCTSkip appears.
+
+Resume:
+
+```
+The m2-04 round-9 gate result is in scratchpad/gate-round9.log. Read the
+failure TEXT before the exit code -- an infrastructure wedge is inconclusive,
+not red -- and pull exact failing lines from the EXACT FAILING LINES section,
+never from the xcresult summary, which has no line numbers. If green, open the
+PR from /Users/dfakkeldy/Developer/worktrees/burly-m2-04 on task/burly-m2-04
+and have it delete HANDOFF-m2-04.md. Do not commit into that worktree while
+its gate is running.
+```
+
+Do not read accessibility text as a live model read. It is a snapshot of the
+last render. This task paid for that lesson twice.
