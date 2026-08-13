@@ -1,5 +1,6 @@
+<!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
-## 2026-08-13 — The phone-sync journal trades one redundancy for one boundary, knowingly
+## 2026-08-12 — The phone-sync journal trades one redundancy for one boundary, knowingly
 
 The two-file phone-sync persistence (authoritative sidecar + high-water log) was
 replaced with a single append-only journal because the two-file design's
