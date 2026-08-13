@@ -11,6 +11,7 @@
 // never hydrated just to draw the shell. Failures render in this tab's own
 // domain state (finding 4) with a visible Retry.
 
+import BurlyCore
 import SwiftUI
 
 @MainActor
@@ -18,8 +19,10 @@ struct HistoryTabView: View {
     let viewModel: PhoneHomeViewModel
 
     var body: some View {
-        content
-            .navigationTitle("History")
+        NavigationStack {
+            content
+                .navigationTitle("History")
+        }
             // Rows only when the tab is shown (finding 3).
             .task { viewModel.loadSessionsForDisplay() }
     }
@@ -50,19 +53,110 @@ struct HistoryTabView: View {
                 // load) haven't landed yet.
                 ProgressView()
             } else {
-                List(viewModel.sessionRows) { session in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.routineName ?? "Workout")
-                            .font(.headline)
-                        Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                List {
+                    if let placeholder = viewModel.namingQueue.first {
+                        NavigationLink {
+                            NamingQueueView(viewModel: viewModel, placeholder: placeholder)
+                        } label: {
+                            Label("Name your custom exercise", systemImage: "tag")
+                        }
+                        .accessibilityIdentifier("historyTab.namingQueueBanner")
                     }
-                    .padding(.vertical, 4)
-                    .accessibilityIdentifier("historyTab.sessionRow.\(session.id.uuidString)")
+                    ForEach(weekGroups) { group in
+                        Section(group.title) {
+                            ForEach(group.sessions) { session in
+                                NavigationLink {
+                                    HistorySessionDetailView(viewModel: viewModel, session: session)
+                                } label: {
+                                    HistorySessionRow(session: session, hasPersonalRecord: prSessionIDs.contains(session.id))
+                                }
+                                .accessibilityIdentifier("historyTab.sessionRow.\(session.id.uuidString)")
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private var weekGroups: [HistoryWeekGroup] {
+        HistoryWeekGroup.groups(from: viewModel.sessionRows)
+    }
+
+    /// A row earns the lightweight history badge only when one of its working
+    /// sets exceeds every earlier logged set for the same exercise. The Stats
+    /// projection remains the detailed PR authority; this keeps the list
+    /// honest without adding a second persistence surface.
+    private var prSessionIDs: Set<UUID> {
+        var bestWeightByExercise: [UUID: Double] = [:]
+        var records = Set<UUID>()
+        for session in viewModel.sessionRows.sorted(by: { $0.startedAt < $1.startedAt }) {
+            var isRecord = false
+            for item in session.items {
+                guard let exerciseID = item.exerciseID else { continue }
+                for set in item.sets where !set.isWarmup {
+                    if set.weightKg > bestWeightByExercise[exerciseID, default: -.infinity] {
+                        isRecord = true
+                        bestWeightByExercise[exerciseID] = set.weightKg
+                    }
+                }
+            }
+            if isRecord { records.insert(session.id) }
+        }
+        return records
+    }
+}
+
+private struct HistoryWeekGroup: Identifiable {
+    let start: Date
+    let sessions: [SessionData]
+    var id: Date { start }
+    var title: String { start.formatted(.dateTime.month(.wide).day().year()) }
+
+    static func groups(from sessions: [SessionData], calendar: Calendar = .autoupdatingCurrent) -> [Self] {
+        Dictionary(grouping: sessions) { calendar.dateInterval(of: .weekOfYear, for: $0.startedAt)?.start ?? $0.startedAt }
+            .map { Self(start: $0.key, sessions: $0.value) }
+            .sorted { $0.start > $1.start }
+    }
+}
+
+private struct HistorySessionRow: View {
+    let session: SessionData
+    let hasPersonalRecord: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(session.routineName ?? "Workout").font(.headline)
+                if session.revision > 1 {
+                    Image(systemName: "pencil.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Edited")
+                        .accessibilityIdentifier("historyTab.editedGlyph.\(session.id.uuidString)")
+                }
+                Spacer()
+                if hasPersonalRecord {
+                    Text("PR").font(.caption.weight(.bold)).foregroundStyle(.tint)
+                        .accessibilityIdentifier("historyTab.prBadge.\(session.id.uuidString)")
+                }
+            }
+            Text(session.startedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+            Text("\(durationText) · \(volumeText)").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var durationText: String {
+        let seconds = (session.endedAt ?? session.startedAt).timeIntervalSince(session.startedAt)
+        return Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
+    }
+    private var volumeText: String {
+        let workingSets = session.items.flatMap { $0.sets }.filter { !$0.isWarmup }
+        let volume = workingSets.reduce(0.0) { partial, set in
+            partial + set.weightKg * Double(set.reps)
+        }
+        return "\(Int(volume.rounded())) kg"
     }
 }
 

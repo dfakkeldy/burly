@@ -142,6 +142,33 @@ public final class SwiftDataStore: BurlyStore {
         try commit()
     }
 
+    public func namePlaceholderExercise(id: UUID, name: String) throws {
+        guard let exercise = try model(Exercise.self, id: id) else {
+            throw BurlyStoreError.notFound(id)
+        }
+        exercise.name = name
+        exercise.needsNaming = false
+        try commit()
+    }
+
+    public func mergePlaceholderExercise(id placeholderID: UUID, into exerciseID: UUID, at date: Date) throws {
+        guard let placeholder = try model(Exercise.self, id: placeholderID) else {
+            throw BurlyStoreError.notFound(placeholderID)
+        }
+        guard let destination = try model(Exercise.self, id: exerciseID) else {
+            throw BurlyStoreError.notFound(exerciseID)
+        }
+
+        // SessionItem is the only cross-time reference the naming queue
+        // changes. Session metadata — most importantly revision and the
+        // HealthKit workout linkage — is intentionally never rewritten.
+        for item in placeholder.sessionItems {
+            item.exercise = destination
+        }
+        placeholder.archivedAt = date
+        try commit()
+    }
+
     // MARK: - Routines
 
     public func createRoutine(_ routine: RoutineData) throws {
