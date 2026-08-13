@@ -19,6 +19,7 @@ struct HistorySessionDetailView: View {
 
     var body: some View {
         List {
+            #if DEBUG
             Text("Revision \(session.revision)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -29,6 +30,7 @@ struct HistorySessionDetailView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("historyDetail.healthKitWorkout.\(healthKitWorkoutID.uuidString)")
             }
+            #endif
             Section("Exercises") {
                 ForEach(session.items.sorted { $0.order < $1.order }) { item in
                     Section {
