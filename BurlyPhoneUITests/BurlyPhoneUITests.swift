@@ -233,7 +233,8 @@ final class BurlyPhoneUITests: XCTestCase {
         // History (default tab) shows the seeded logged session, keyed by
         // its id — the id is a PhoneDemoSeed.SeededIDs literal, matched
         // verbatim here (the UI test target cannot share code with the app).
-        let sessionRow = app.staticTexts["historyTab.sessionRow.6F4E2C1A-0000-4000-8000-000000000003"]
+        // The query is type-agnostic because the row is navigable and therefore carries the button trait.
+        let sessionRow = anyElement(app, identifier: "historyTab.sessionRow.6F4E2C1A-0000-4000-8000-000000000003")
         XCTAssertTrue(
             sessionRow.waitForExistence(timeout: 15),
             "Expected the seeded logged session to render as a History row"
