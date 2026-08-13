@@ -43,7 +43,9 @@ struct ExercisePageView: View {
                 // to VoiceOver (and proves a move-up/down changed the
                 // screen's order without relying on an ambiguous first
                 // matching row in UI tests).
-                .accessibilityValue("Exercise \(item.order + 1) of \(viewModel.items.count)")
+                .accessibilityValue(
+                    "Exercise \(viewModel.renderedItemOrdinal(for: item.id) ?? 0) of \(viewModel.items.count)"
+                )
                 .accessibilityIdentifier(currentIdentifier("exercisePage.name"))
             Text(setCounterText)
                 .font(.caption)

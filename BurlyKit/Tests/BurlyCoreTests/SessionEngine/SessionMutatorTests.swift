@@ -193,6 +193,21 @@ struct SessionMutatorTests {
         #expect(active.isWellFormed)
     }
 
+    @Test("skipping a middle item keeps pager ordinals dense and advances to the next visible item")
+    func skippingMiddleItemKeepsPagerOrderAndAdvances() throws {
+        var active = try startedSession().session
+        let first = active.items[0].id
+        let middle = active.items[1].id
+        let last = active.items[2].id
+
+        try SessionMutator.skipExercise(itemID: middle, in: &active)
+
+        #expect(active.unskippedItemIndex(of: first) == 0)
+        #expect(active.unskippedItemIndex(of: last) == 1)
+        #expect(active.nextUnskippedItemID(after: middle) == last)
+        #expect(active.nextUnskippedItemID(after: last) == first)
+    }
+
     // MARK: - Swap
 
     @Test("swap with nothing logged yet replaces the exercise in place")

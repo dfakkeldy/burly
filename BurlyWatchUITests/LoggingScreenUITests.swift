@@ -83,16 +83,13 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(swapAction.waitForExistence(timeout: 5))
         swapAction.tap()
 
-        let firstCatalogRow = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH 'exercisePicker.row.'")
-        ).element(boundBy: 0)
-        XCTAssertTrue(firstCatalogRow.waitForExistence(timeout: 5), "Expected at least one catalog exercise in the swap picker")
-        let swappedToName = firstCatalogRow.label
-        firstCatalogRow.tap()
+        let benchPress = app.buttons["exercisePicker.row.Barbell Bench Press"]
+        XCTAssertTrue(benchPress.waitForExistence(timeout: 5), "Expected Barbell Bench Press in the swap picker")
+        benchPress.tap()
 
         XCTAssertTrue(
-            waitFor { exerciseName.exists && exerciseName.label == swappedToName },
-            "Expected the logging screen to route to the swapped-in exercise"
+            waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
+            "Expected the logging screen to route to Barbell Bench Press after the swap"
         )
 
         // §2 Finish: "End workout" -> summary -> Finish. The actions sheet
@@ -229,13 +226,14 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(swapAction.waitForExistence(timeout: 5))
         swapAction.tap()
 
-        let firstCatalogRow = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH 'exercisePicker.row.'")
-        ).element(boundBy: 0)
-        XCTAssertTrue(firstCatalogRow.waitForExistence(timeout: 5), "Expected at least one catalog exercise in the swap picker")
-        firstCatalogRow.tap()
+        let benchPress = app.buttons["exercisePicker.row.Barbell Bench Press"]
+        XCTAssertTrue(benchPress.waitForExistence(timeout: 5), "Expected Barbell Bench Press in the swap picker")
+        benchPress.tap()
 
-        XCTAssertTrue(waitFor { exerciseName.exists }, "Expected the swap to land on a new exercise page")
+        XCTAssertTrue(
+            waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
+            "Expected the swap to land on Barbell Bench Press"
+        )
         XCTAssertTrue(
             waitFor { (weightControl.value as? String)?.contains("locked") == true },
             "Expected the swapped-in exercise to require a fresh arm, not carry the previous armed state"

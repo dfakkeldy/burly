@@ -74,6 +74,35 @@ final class SessionActionsUITests: XCTestCase {
         XCTAssertFalse(skippedAction.isEnabled, "Skip must be disabled when currentItemID is nil")
     }
 
+    func testSkippingMiddleExerciseAdvancesAndKeepsRenderedOrdinalsDense() throws {
+        let app = launchLegDay(in: "routines")
+        let exerciseName = app.staticTexts["exercisePage.name"]
+
+        addExercise(named: "Barbell Bench Press", in: app)
+        addExercise(named: "Pull-Up", in: app)
+        XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Pull-Up" })
+
+        app.swipeDown()
+        XCTAssertTrue(
+            waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
+            "Expected the middle page before skipping it"
+        )
+
+        openActions(in: app)
+        let skip = app.buttons["sessionActions.skipExercise"]
+        XCTAssertTrue(scrollUntilExists(app, skip))
+        skip.tap()
+
+        XCTAssertTrue(
+            waitFor { exerciseName.exists && exerciseName.label == "Pull-Up" },
+            "Skipping the middle exercise must advance to the next visible exercise, not restart the workout"
+        )
+        XCTAssertTrue(
+            waitFor { (exerciseName.value as? String) == "Exercise 2 of 2" },
+            "After skipping the middle of three, the final visible page must be Exercise 2 of 2, never Exercise 3 of 2"
+        )
+    }
+
     func testMoveUpChangesTheRenderedPagerOrder() throws {
         let app = launchLegDay(in: "routines")
         let exerciseName = app.staticTexts["exercisePage.name"]
@@ -160,6 +189,17 @@ final class SessionActionsUITests: XCTestCase {
         let ellipsis = anyElement(app, identifier: "ellipsisMenu")
         XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
         ellipsis.tap()
+    }
+
+    private func addExercise(named name: String, in app: XCUIApplication) {
+        openActions(in: app)
+        let addExercise = app.buttons["sessionActions.addExercise"]
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        addExercise.tap()
+
+        let exercise = app.buttons["exercisePicker.row.\(name)"]
+        XCTAssertTrue(exercise.waitForExistence(timeout: 5), "Expected \(name) in the exercise picker")
+        exercise.tap()
     }
 
     private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 8) -> Bool {

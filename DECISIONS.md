@@ -1,4 +1,14 @@
 
+## 2026-08-13 — Skipping advances to the next visible exercise
+
+§2 specifies that an exercise can be skipped, but does not specify the page
+shown afterwards. The logging screen now selects the next unskipped item after
+the skipped item in the full session order; if there is none, it wraps to the
+first unskipped item, and shows the empty-session state only when no items
+remain. This avoids sending a lifter mid-workout back to the start while keeping
+the policy isolated in `ActiveSession.nextUnskippedItemID(after:)` for an easy
+future reversal.
+
 ## 2026-08-13 — The phone-sync journal trades one redundancy for one boundary, knowingly
 
 The two-file phone-sync persistence (authoritative sidecar + high-water log) was

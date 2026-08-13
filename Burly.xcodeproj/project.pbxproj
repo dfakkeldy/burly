@@ -55,6 +55,7 @@
 		C80FEEA23F2F8943C8BB8B67 /* SessionEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2286BD8A86090FA0513B7F1 /* SessionEntryView.swift */; };
 		4A1B953F6A0433F27660DBA3 /* SessionActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC7E7CF84E5ADC6B1A4C052 /* SessionActionsView.swift */; };
 		A28975AC8C65BABB4B67CF00 /* LoggingScreenUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1213880A20DF51DDFF1862F /* LoggingScreenUITests.swift */; };
+		A45D1902B74E4DDDB5192C8E /* SessionActionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B3E650AA4D3485CA23DCEF1 /* SessionActionsUITests.swift */; };
 		164D74CD15B34339B54B7F48 /* SaveFailureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B641EB6C948444B08FDD2331 /* SaveFailureView.swift */; };
 		60FCDFEFC0C645BDA6503182 /* SessionConflictView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22C291D15334F85B094E9BF /* SessionConflictView.swift */; };
 		A723D09FE5094492AB79CEEB /* DiscardConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 254F57FE913F4F9BA160CEB6 /* DiscardConfirmView.swift */; };
@@ -149,6 +150,7 @@
 		B2286BD8A86090FA0513B7F1 /* SessionEntryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionEntryView.swift; sourceTree = "<group>"; };
 		CEC7E7CF84E5ADC6B1A4C052 /* SessionActionsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionActionsView.swift; sourceTree = "<group>"; };
 		E1213880A20DF51DDFF1862F /* LoggingScreenUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LoggingScreenUITests.swift; sourceTree = "<group>"; };
+		7B3E650AA4D3485CA23DCEF1 /* SessionActionsUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionActionsUITests.swift; sourceTree = "<group>"; };
 		B641EB6C948444B08FDD2331 /* SaveFailureView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SaveFailureView.swift; sourceTree = "<group>"; };
 		F22C291D15334F85B094E9BF /* SessionConflictView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionConflictView.swift; sourceTree = "<group>"; };
 		254F57FE913F4F9BA160CEB6 /* DiscardConfirmView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscardConfirmView.swift; sourceTree = "<group>"; };
@@ -232,6 +234,7 @@
 			children = (
 				A722E5A7BD2346D4FE675592 /* BurlyWatchUITests.swift */,
 				E1213880A20DF51DDFF1862F /* LoggingScreenUITests.swift */,
+				7B3E650AA4D3485CA23DCEF1 /* SessionActionsUITests.swift */,
 				8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */,
 				8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */,
 				18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */,
@@ -525,6 +528,7 @@
 			files = (
 				92518C4DC5535C2B24926FF6 /* BurlyWatchUITests.swift in Sources */,
 				A28975AC8C65BABB4B67CF00 /* LoggingScreenUITests.swift in Sources */,
+				A45D1902B74E4DDDB5192C8E /* SessionActionsUITests.swift in Sources */,
 				20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */,
 				CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */,
 				921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */,

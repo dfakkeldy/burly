@@ -147,6 +147,7 @@ final class SessionViewModel {
     /// spec requirement (§2 acceptance #5), not just a happy-path default.
     private var digestCache: [UUID: ExerciseLastPerformanceData?] = [:]
     private var exerciseNameCache: [UUID: String] = [:]
+    private static let recentExerciseLimit = 8
 
     /// - Note: does **not** persist anything (m2-03 review finding 2).
     ///   `engine` arrives already durably saved -- `SessionEntryView
@@ -194,6 +195,10 @@ final class SessionViewModel {
 
     var items: [SessionItemData] { engine.session.unskippedItems }
 
+    func renderedItemOrdinal(for itemID: UUID) -> Int? {
+        engine.session.unskippedItemIndex(of: itemID).map { $0 + 1 }
+    }
+
     var currentItem: SessionItemData? {
         currentItemID.flatMap { engine.session.item($0) }
     }
@@ -236,15 +241,23 @@ final class SessionViewModel {
     /// "add exercise"). Its deliberate order is recents, then the bundled
     /// curated catalog, then customs. A last-performance digest is the
     /// watch's durable "recently used" fact, and its `performedAt` supplies
-    /// a useful newest-first order within the first group. Exercises without
-    /// a digest remain alphabetized inside their origin group.
+    /// a useful newest-first order within the capped recent group. Exercises
+    /// outside that head remain alphabetized inside their origin group.
     func availableExercises() -> [ExerciseData] {
         let exercises = (try? store.exercises(includingArchived: false)) ?? []
-        let recentDates = Dictionary(
+        let digestDates = Dictionary(
             uniqueKeysWithValues: exercises.compactMap { exercise in
-                guard let digest = try? store.lastPerformance(exerciseID: exercise.id) else { return nil }
-                return (exercise.id, digest.performedAt)
+                lastPerformance(for: exercise.id).map { (exercise.id, $0.performedAt) }
             }
+        )
+        let recentDates = Dictionary(
+            uniqueKeysWithValues: digestDates
+                .sorted { lhs, rhs in
+                    lhs.value == rhs.value
+                        ? lhs.key.uuidString < rhs.key.uuidString
+                        : lhs.value > rhs.value
+                }
+                .prefix(Self.recentExerciseLimit)
         )
 
         return exercises.sorted { lhs, rhs in
@@ -503,7 +516,7 @@ final class SessionViewModel {
     func skipCurrentExercise() {
         guard let id = currentItemID else { return }
         try? engine.skipExercise(itemID: id)
-        applyCurrentItem(engine.session.unskippedItems.first?.id)
+        applyCurrentItem(engine.session.nextUnskippedItemID(after: id))
     }
 
     func moveCurrentUp() {

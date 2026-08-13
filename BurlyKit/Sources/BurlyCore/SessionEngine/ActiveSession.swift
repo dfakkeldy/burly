@@ -175,6 +175,24 @@ public struct ActiveSession: Sendable, Equatable, Codable, Identifiable {
         session.items.filter { plans[$0.id]?.isSkipped != true }
     }
 
+    /// The zero-based index of an item in the pager's visible sequence.
+    /// This deliberately differs from `SessionItemData.order` after a
+    /// skipped item, because skip preserves the full session order.
+    public func unskippedItemIndex(of itemID: UUID) -> Int? {
+        unskippedItems.firstIndex { $0.id == itemID }
+    }
+
+    /// The item to show after skipping `itemID`: prefer the next visible
+    /// item in the full session order, then wrap to the first visible item.
+    /// `nil` means every item is skipped.
+    public func nextUnskippedItemID(after itemID: UUID) -> UUID? {
+        guard let index = index(ofItem: itemID) else { return unskippedItems.first?.id }
+        if let next = session.items.dropFirst(index + 1).first(where: { plans[$0.id]?.isSkipped != true }) {
+            return next.id
+        }
+        return unskippedItems.first?.id
+    }
+
     /// The item a session-viewing UI should land on when it first shows
     /// this session -- for a fresh Start and for Resume alike (m2-06
     /// review finding 1.1; relocated from `SessionViewModel`'s own private
