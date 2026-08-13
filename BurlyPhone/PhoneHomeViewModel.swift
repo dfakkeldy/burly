@@ -113,7 +113,7 @@ final class PhoneHomeViewModel {
     /// policy the store deliberately leaves open: dense manual indices.
     @discardableResult
     func createRoutine(named rawName: String) throws -> RoutineData {
-        let name = try validatedName(rawName, kind: "routine")
+        let name = try validatedName(rawName, kind: .routine)
         let current = try store.routines(includingArchived: false)
         let draft = RoutineData(
             name: name,
@@ -140,7 +140,7 @@ final class PhoneHomeViewModel {
         name rawName: String,
         items: [RoutineItemData]
     ) throws {
-        let name = try validatedName(rawName, kind: "routine")
+        let name = try validatedName(rawName, kind: .routine)
         guard var routine = try store.routine(id: id) else {
             throw PhoneRoutineError.routineMissing
         }
@@ -240,7 +240,7 @@ final class PhoneHomeViewModel {
 
     @discardableResult
     func createCustomExercise(named rawName: String, muscleGroups: [MuscleGroup]) throws -> ExerciseData {
-        let name = try validatedName(rawName, kind: "exercise")
+        let name = try validatedName(rawName, kind: .exercise)
         guard !muscleGroups.isEmpty else {
             throw PhoneRoutineError.noMuscleGroups
         }
@@ -279,7 +279,7 @@ final class PhoneHomeViewModel {
         }
     }
 
-    private func validatedName(_ rawName: String, kind: String) throws -> String {
+    private func validatedName(_ rawName: String, kind: PhoneRoutineError.NameKind) throws -> String {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw PhoneRoutineError.emptyName(kind: kind) }
         return name
@@ -421,7 +421,22 @@ final class PhoneHomeViewModel {
 /// intent into store operations, rather than being scattered among buttons
 /// and sheets. The messages are safe to show in the editor's error alert.
 enum PhoneRoutineError: LocalizedError {
-    case emptyName(kind: String)
+    /// The two authoring contexts that can reject an empty name. Each case
+    /// owns its complete alert sentence, so the indefinite article is fixed
+    /// by construction and can never disagree with the noun.
+    enum NameKind {
+        case routine
+        case exercise
+
+        var message: String {
+            switch self {
+            case .routine: "Enter a routine name."
+            case .exercise: "Enter an exercise name."
+            }
+        }
+    }
+
+    case emptyName(kind: NameKind)
     case noMuscleGroups
     case routineMissing
     case createdRoutineMissing
@@ -429,7 +444,7 @@ enum PhoneRoutineError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName(let kind): "Enter a \(kind) name."
+        case .emptyName(let kind): kind.message
         case .noMuscleGroups: "Choose at least one muscle group."
         case .routineMissing: "This routine is no longer available."
         case .createdRoutineMissing: "The new routine could not be reloaded."
