@@ -23,6 +23,12 @@ struct HistorySessionDetailView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("historyDetail.revision.\(session.revision)")
+            if let healthKitWorkoutID = session.healthKitWorkoutID {
+                Text("HealthKit workout \(healthKitWorkoutID.uuidString)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("historyDetail.healthKitWorkout.\(healthKitWorkoutID.uuidString)")
+            }
             Section("Exercises") {
                 ForEach(session.items.sorted { $0.order < $1.order }) { item in
                     Section {
