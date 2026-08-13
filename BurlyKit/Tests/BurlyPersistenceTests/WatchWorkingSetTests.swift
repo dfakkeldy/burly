@@ -43,8 +43,8 @@ struct WatchWorkingSetTests {
         #expect(try store.watchSyncState().schemaVersion == 1)
     }
 
-    @Test("a future watch journal schema is rejected without resetting its snapshot watermark")
-    func futureJournalSchemaIsNotTreatedAsCorruptCache() throws {
+    @Test("a future watch journal schema recovers without overwriting the stored journal")
+    func futureJournalSchemaRecoversAsRebuildableMetadata() throws {
         let container = try BurlyContainer.make(.watch, at: .inMemory)
         let seedContext = ModelContext(container)
         let payload = try JSONEncoder().encode(WatchSyncStateData(
@@ -55,9 +55,14 @@ struct WatchWorkingSetTests {
         try seedContext.save()
 
         let store = SwiftDataStore(container: container)
-        #expect(throws: WatchSyncStateDecodingError.unsupportedSchemaVersion(2)) {
-            try store.watchSyncState()
-        }
+        #expect(try store.watchSyncState() == WatchSyncStateData())
+
+        // The fallback is read-only: a newer writer's journal remains intact
+        // until an otherwise valid watch transaction replaces it.
+        let readbackContext = ModelContext(container)
+        let journal = try #require(try readbackContext.fetch(FetchDescriptor<WatchSyncJournal>()).first)
+        let stored = try #require(try JSONSerialization.jsonObject(with: journal.payload) as? [String: Any])
+        #expect(stored["lastAppliedSnapshotVersion"] as? Int == 99)
     }
 
     @Test("a working-set replacement can move an item from a dropped routine to a retained routine")
@@ -274,6 +279,7 @@ struct WatchWorkingSetTests {
 
         let survivor = try #require(try store.session(id: active.id))
         #expect(survivor.state == .active)
+        #expect(try store.watchSyncState().lastAckedSessionIDs.isEmpty)
     }
 
     @Test("applyDigest ignores an acknowledgement that names no session")

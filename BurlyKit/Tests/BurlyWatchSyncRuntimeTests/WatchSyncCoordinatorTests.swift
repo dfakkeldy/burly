@@ -109,6 +109,97 @@ struct WatchSyncCoordinatorTests {
         #expect(first.needsNamingExercises.map(\.id) == [low.id, high.id])
         #expect(second.needsNamingExercises == first.needsNamingExercises)
     }
+
+    @Test("a failed snapshot apply leaves its version eligible for the next receive attempt")
+    @MainActor
+    func failedSnapshotApplyDoesNotAdvanceTheInMemoryWatermark() throws {
+        let store = SnapshotStore(replaceOutcomes: [.throwsError, .applies])
+        let coordinator = try WatchSyncCoordinator(store: store)
+        let snapshot = BurlySnapshotPayloadDTO(version: 7, exercises: [], routines: [])
+        let data = try BurlySyncEnvelope(payload: .snapshot(snapshot)).encodedData()
+
+        #expect(throws: SnapshotStoreError.applyFailed) {
+            try coordinator.receive(data)
+        }
+        #expect(try coordinator.receive(data) == .appliedSnapshot(version: 7))
+        #expect(store.replacedVersions == [7, 7])
+    }
+
+    @Test("a rejected snapshot apply resyncs the in-memory watermark to durable state")
+    @MainActor
+    func rejectedSnapshotApplyResyncsTheInMemoryWatermark() throws {
+        let durable = WatchSyncStateData(lastAppliedSnapshotVersion: 9)
+        let store = SnapshotStore(replaceOutcomes: [.isAlreadyDurable(durable)])
+        let coordinator = try WatchSyncCoordinator(store: store)
+        let snapshot = BurlySnapshotPayloadDTO(version: 7, exercises: [], routines: [])
+        let data = try BurlySyncEnvelope(payload: .snapshot(snapshot)).encodedData()
+
+        #expect(try coordinator.receive(data) == .ignoredStaleSnapshot)
+        #expect(try coordinator.receive(data) == .ignoredStaleSnapshot)
+        #expect(store.replacedVersions == [7])
+    }
+
+    @Test("an acknowledgement of an active session does not suppress its later completion")
+    @MainActor
+    func acknowledgementOfActiveSessionDoesNotMakeLaterCompletionStale() throws {
+        let store = try SwiftDataStore(kind: .watch, at: .inMemory)
+        let exercise = ExerciseData(name: "Custom", muscleGroups: [], origin: .custom)
+        let routine = RoutineData(name: "R", orderIndex: 0, items: [RoutineItemData(exerciseID: exercise.id, order: 0, defaultSetCount: 1)], updatedAt: .now)
+        try store.createExercise(exercise)
+        try store.createRoutine(routine)
+        var active = SessionBuilder.session(from: routine, clock: SystemWallClock())
+        try store.saveActiveSession(active)
+        let coordinator = try WatchSyncCoordinator(store: store)
+
+        let digest = BurlySyncEnvelope(payload: .digest(BurlyDigestPayloadDTO(snapshotVersion: 0, lastPerformance: [], ackedSessionIDs: [active.id])))
+        #expect(try coordinator.receive(digest.encodedData()) == .appliedDigest)
+        #expect(try store.watchSyncState().lastAckedSessionIDs.isEmpty)
+
+        try SessionMutator.finish(&active, clock: SystemWallClock())
+        try store.saveActiveSession(active)
+        let completed = try coordinator.completedSession(id: active.id)
+        #expect(completed.outbound.map(\.id) == [active.id])
+    }
+}
+
+@MainActor
+private final class SnapshotStore: WatchSyncStore {
+    enum ReplaceOutcome {
+        case throwsError
+        case isAlreadyDurable(WatchSyncStateData)
+        case applies
+    }
+
+    private var state = WatchSyncStateData()
+    private var replaceOutcomes: [ReplaceOutcome]
+    private(set) var replacedVersions: [Int] = []
+
+    init(replaceOutcomes: [ReplaceOutcome]) {
+        self.replaceOutcomes = replaceOutcomes
+    }
+
+    func watchSyncState() throws -> WatchSyncStateData { state }
+    func loggedSessionsAwaitingAck() throws -> [SessionData] { [] }
+    func applyWatchDigest(_: BurlyDigestPayloadDTO) throws {}
+    func watchOutboxPayload(sessionID _: UUID) throws -> BurlySessionPayloadDTO? { nil }
+
+    func replaceWatchWorkingSet(_ payload: BurlySnapshotPayloadDTO) throws -> Bool {
+        replacedVersions.append(payload.version)
+        switch replaceOutcomes.removeFirst() {
+        case .throwsError:
+            throw SnapshotStoreError.applyFailed
+        case let .isAlreadyDurable(durable):
+            state = durable
+            return false
+        case .applies:
+            state.lastAppliedSnapshotVersion = payload.version
+            return true
+        }
+    }
+}
+
+private enum SnapshotStoreError: Error, Equatable {
+    case applyFailed
 }
 
 private extension BurlySyncDecodeResult {

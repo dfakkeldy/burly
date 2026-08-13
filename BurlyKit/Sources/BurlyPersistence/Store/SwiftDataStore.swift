@@ -1529,9 +1529,8 @@ public final class SwiftDataStore: BurlyStore {
 extension SwiftDataStore: WatchSyncStore {
     public func watchSyncState() throws -> WatchSyncStateData {
         guard kind == .watch else { throw BurlyStoreError.operationRequiresWatchStore }
-        // This journal is rebuildable metadata on corruption, but a future
-        // schema is not corruption: an older binary must refuse it rather
-        // than erase its snapshot watermark and accept stale replacements.
+        // The journal is rebuildable metadata. Both corruption and an
+        // unrecognised future schema recover as an empty local cache.
         return try recoveredWatchSyncState(from: try watchSyncJournal())
     }
 
@@ -1738,12 +1737,12 @@ extension SwiftDataStore: WatchSyncStore {
         guard let journal else { return WatchSyncStateData() }
         do {
             return try JSONDecoder().decode(WatchSyncStateData.self, from: journal.payload)
-        } catch let error as WatchSyncStateDecodingError {
-            // A newer protocol journal must not be reset to `nil`: doing so
-            // would re-admit snapshots the future writer had already applied.
-            throw error
         } catch {
-            // Corrupt local cache remains rebuildable from the phone.
+            // A corrupt or newer-schema cache must not brick the channel.
+            // WatchSyncMachine.swift, “State is the persistable value” (§5)
+            // establishes that whole-replace application is idempotent, so a
+            // reset costs at most one redundant re-apply. Refusing recovery
+            // would block every snapshot and digest forever.
             return WatchSyncStateData()
         }
     }
