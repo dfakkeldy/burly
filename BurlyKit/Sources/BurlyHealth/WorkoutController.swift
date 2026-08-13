@@ -10,11 +10,42 @@ import Foundation
 public final class WorkoutController {
     public private(set) var lifecycle: WorkoutLifecycle = .idle
 
+    private enum CollectionState {
+        case notStarted
+        case starting
+        case collecting
+        case failed(WorkoutControllerError)
+    }
+
+    private enum TerminationProgress {
+        case collecting
+        case stopping(Date)
+        case stopped(Date)
+        case collectionEnded(Date)
+        case sessionEnded(Date)
+
+        var endDate: Date? {
+            switch self {
+            case .collecting: nil
+            case let .stopping(date), let .stopped(date), let .collectionEnded(date),
+                 let .sessionEnded(date): date
+            }
+        }
+    }
+
+    private struct StoppedWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
     private let factory: any WorkoutSessionCreating
     private let stopTimeout: any WorkoutStopTimeout
     private var resources: LiveWorkoutResources?
+    private var collectionState: CollectionState = .notStarted
+    private var collectionWaiter: CheckedContinuation<Void, any Error>?
+    private var terminationProgress: TerminationProgress?
     private var observedSessionState: WorkoutSessionState = .notStarted
-    private var stoppedWaiter: CheckedContinuation<Void, any Error>?
+    private var stoppedWaiter: StoppedWaiter?
     private var timeoutTask: Task<Void, Never>?
 
     public init(
@@ -36,16 +67,13 @@ public final class WorkoutController {
                 activity: .traditionalStrengthTraining,
                 location: .indoor
             ))
-        } catch let error as WorkoutHealthError {
-            if error == .anotherWorkoutSessionStarted {
-                throw WorkoutControllerError.anotherWorkoutSessionStarted
-            }
-            throw WorkoutControllerError.healthOperationFailed(error)
         } catch {
-            throw WorkoutControllerError.healthOperationFailed(.operationFailed(String(describing: error)))
+            throw mapHealthError(error)
         }
 
         self.resources = resources
+        collectionState = .starting
+        terminationProgress = .collecting
         observedSessionState = .notStarted
         resources.session.stateHandler = { [weak self] state in
             self?.receive(state)
@@ -55,25 +83,35 @@ public final class WorkoutController {
 
         do {
             try await resources.builder.beginCollection(at: date)
+            guard isCurrent(resources) else { return }
+            collectionState = .collecting
+            resumeCollectionWaiter()
         } catch {
+            let mappedError = mapHealthError(error)
+            collectionState = .failed(mappedError)
+            resumeCollectionWaiter(throwing: mappedError)
+            resumeStoppedWaiter(throwing: mappedError)
             resources.session.stateHandler = nil
             resources.session.end()
-            self.resources = nil
-            lifecycle = .idle
-            throw mapHealthError(error)
+            if isCurrent(resources) {
+                clearWorkoutState()
+            }
+            throw mappedError
         }
     }
 
     public func finish(at date: Date, metadata: WorkoutMetadata = [:]) async throws {
         let resources = try beginTermination()
         do {
-            try await stopActivityIfNeeded(resources.session, at: date)
-            try await resources.builder.endCollection(at: date)
+            try await prepareBuilderForTermination(resources, at: date)
             try await resources.builder.finishWorkout(metadata: metadata)
-            resources.session.end()
+            endSessionIfNeeded(resources.session)
             clearCompletedWorkout(resources.session)
         } catch {
-            lifecycle = .active
+            handleTerminationFailure(resources, error: error)
+            if error is CancellationError {
+                throw error
+            }
             throw mapHealthError(error)
         }
     }
@@ -81,13 +119,15 @@ public final class WorkoutController {
     public func discard(at date: Date) async throws {
         let resources = try beginTermination()
         do {
-            try await stopActivityIfNeeded(resources.session, at: date)
-            try await resources.builder.endCollection(at: date)
+            try await prepareBuilderForTermination(resources, at: date)
             resources.builder.discardWorkout()
-            resources.session.end()
+            endSessionIfNeeded(resources.session)
             clearCompletedWorkout(resources.session)
         } catch {
-            lifecycle = .active
+            handleTerminationFailure(resources, error: error)
+            if error is CancellationError {
+                throw error
+            }
             throw mapHealthError(error)
         }
     }
@@ -98,7 +138,7 @@ public final class WorkoutController {
             throw WorkoutControllerError.noActiveWorkout
         case .ending:
             throw WorkoutControllerError.terminationAlreadyInProgress
-        case .active:
+        case .active, .failed:
             break
         }
         guard let resources else {
@@ -108,26 +148,107 @@ public final class WorkoutController {
         return resources
     }
 
+    private func prepareBuilderForTermination(
+        _ resources: LiveWorkoutResources,
+        at date: Date
+    ) async throws {
+        try await stopActivityIfNeeded(resources.session, at: date)
+        try await waitForCollectionToStart()
+
+        switch terminationProgress {
+        case .collectionEnded, .sessionEnded:
+            return
+        case .collecting, .stopping, .stopped, .none:
+            let endDate = terminationProgress?.endDate ?? date
+            try await resources.builder.endCollection(at: endDate)
+            terminationProgress = .collectionEnded(endDate)
+        }
+    }
+
     private func stopActivityIfNeeded(
         _ session: any WorkoutSessionProtocol,
         at date: Date
     ) async throws {
-        guard observedSessionState != .stopped else { return }
+        if case .failed = observedSessionState {
+            recordStoppedIfNeeded(at: date)
+            return
+        }
 
-        // Never proceed out of order when HealthKit loses a delegate callback.
-        // Five seconds is short enough for a watch interaction, while timeout
-        // leaves the workout active so the caller can retry after a late state.
-        try await withCheckedThrowingContinuation { continuation in
-            stoppedWaiter = continuation
-            timeoutTask = Task { [weak self, stopTimeout] in
-                do {
-                    try await stopTimeout.wait()
-                } catch {
+        guard observedSessionState != .stopped else {
+            recordStoppedIfNeeded(at: date)
+            return
+        }
+
+        let endDate = terminationProgress?.endDate ?? date
+        let shouldStopActivity: Bool
+        switch terminationProgress {
+        case .collectionEnded, .sessionEnded:
+            return
+        case .stopping:
+            shouldStopActivity = false
+        case .collecting, .stopped, .none:
+            terminationProgress = .stopping(endDate)
+            shouldStopActivity = true
+        }
+
+        let waiterID = UUID()
+        try Task.checkCancellation()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                guard stoppedWaiter == nil else {
+                    continuation.resume(throwing: WorkoutControllerError.terminationAlreadyInProgress)
                     return
                 }
-                self?.stoppedStateTimedOut()
+
+                timeoutTask?.cancel()
+                timeoutTask = nil
+                stoppedWaiter = StoppedWaiter(id: waiterID, continuation: continuation)
+                timeoutTask = Task { [weak self, stopTimeout] in
+                    do {
+                        try await stopTimeout.wait()
+                    } catch {
+                        return
+                    }
+                    self?.stoppedStateTimedOut(waiterID: waiterID)
+                }
+                if shouldStopActivity {
+                    session.stopActivity(at: endDate)
+                }
             }
-            session.stopActivity(at: date)
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelStoppedWaiter(waiterID: waiterID)
+            }
+        }
+    }
+
+    private func recordStoppedIfNeeded(at date: Date) {
+        switch terminationProgress {
+        case .collectionEnded, .sessionEnded:
+            break
+        case .collecting, .stopping, .stopped, .none:
+            terminationProgress = .stopped(terminationProgress?.endDate ?? date)
+        }
+    }
+
+    private func waitForCollectionToStart() async throws {
+        switch collectionState {
+        case .collecting:
+            return
+        case let .failed(error):
+            throw error
+        case .notStarted:
+            throw WorkoutControllerError.noActiveWorkout
+        case .starting:
+            break
+        }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            guard collectionWaiter == nil else {
+                continuation.resume(throwing: WorkoutControllerError.terminationAlreadyInProgress)
+                return
+            }
+            collectionWaiter = continuation
         }
     }
 
@@ -135,35 +256,95 @@ public final class WorkoutController {
         observedSessionState = state
         switch state {
         case .stopped:
+            if case let .stopping(date) = terminationProgress {
+                terminationProgress = .stopped(date)
+            }
             resumeStoppedWaiter()
         case let .failed(error):
-            resumeStoppedWaiter(throwing: WorkoutControllerError.healthOperationFailed(error))
+            let mappedError = mapHealthError(error)
+            if lifecycle != .ending {
+                lifecycle = .failed(mappedError)
+            }
+            resumeStoppedWaiter(throwing: mappedError)
         case .notStarted, .prepared, .running, .paused, .ended:
             break
         }
     }
 
-    private func stoppedStateTimedOut() {
-        resumeStoppedWaiter(throwing: WorkoutControllerError.stoppedStateTimedOut)
+    private func stoppedStateTimedOut(waiterID: UUID) {
+        resumeStoppedWaiter(waiterID: waiterID, throwing: WorkoutControllerError.stoppedStateTimedOut)
     }
 
-    private func resumeStoppedWaiter(throwing error: (any Error)? = nil) {
+    private func cancelStoppedWaiter(waiterID: UUID) {
+        resumeStoppedWaiter(waiterID: waiterID, throwing: CancellationError())
+    }
+
+    private func resumeStoppedWaiter(
+        waiterID: UUID? = nil,
+        throwing error: (any Error)? = nil
+    ) {
         guard let stoppedWaiter else { return }
+        guard waiterID == nil || stoppedWaiter.id == waiterID else { return }
         self.stoppedWaiter = nil
         timeoutTask?.cancel()
         timeoutTask = nil
         if let error {
-            stoppedWaiter.resume(throwing: error)
+            stoppedWaiter.continuation.resume(throwing: error)
         } else {
-            stoppedWaiter.resume()
+            stoppedWaiter.continuation.resume()
         }
+    }
+
+    private func resumeCollectionWaiter(throwing error: (any Error)? = nil) {
+        guard let collectionWaiter else { return }
+        self.collectionWaiter = nil
+        if let error {
+            collectionWaiter.resume(throwing: error)
+        } else {
+            collectionWaiter.resume()
+        }
+    }
+
+    private func handleTerminationFailure(
+        _ resources: LiveWorkoutResources,
+        error: any Error
+    ) {
+        guard isCurrent(resources) else { return }
+        if case .collectionEnded = terminationProgress {
+            endSessionIfNeeded(resources.session)
+        }
+        if case let .failed(healthError) = observedSessionState {
+            lifecycle = .failed(mapHealthError(healthError))
+        } else {
+            lifecycle = .active
+        }
+    }
+
+    private func endSessionIfNeeded(_ session: any WorkoutSessionProtocol) {
+        guard case let .collectionEnded(date) = terminationProgress else { return }
+        session.end()
+        terminationProgress = .sessionEnded(date)
     }
 
     private func clearCompletedWorkout(_ session: any WorkoutSessionProtocol) {
         session.stateHandler = nil
+        clearWorkoutState()
+    }
+
+    private func clearWorkoutState() {
+        timeoutTask?.cancel()
+        timeoutTask = nil
         resources = nil
+        collectionState = .notStarted
+        collectionWaiter = nil
+        terminationProgress = nil
         observedSessionState = .notStarted
         lifecycle = .idle
+    }
+
+    private func isCurrent(_ candidate: LiveWorkoutResources) -> Bool {
+        guard let resources else { return false }
+        return resources.session === candidate.session && resources.builder === candidate.builder
     }
 
     private func mapHealthError(_ error: any Error) -> WorkoutControllerError {

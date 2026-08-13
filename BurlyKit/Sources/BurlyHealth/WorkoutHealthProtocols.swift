@@ -44,9 +44,19 @@ public struct LiveWorkoutResources {
 }
 
 public struct FiveSecondWorkoutStopTimeout: WorkoutStopTimeout {
-    public init() {}
+    private let sleep: @Sendable (Duration) async throws -> Void
+
+    public init() {
+        sleep = { duration in
+            try await Task.sleep(for: duration)
+        }
+    }
+
+    init(sleep: @escaping @Sendable (Duration) async throws -> Void) {
+        self.sleep = sleep
+    }
 
     public func wait() async throws {
-        try await Task.sleep(for: .seconds(5))
+        try await sleep(.seconds(5))
     }
 }

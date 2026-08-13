@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#if canImport(HealthKit) && (os(iOS) || os(watchOS))
+#if canImport(HealthKit) && (os(iOS) || os(watchOS)) && !targetEnvironment(macCatalyst)
 import Foundation
 import HealthKit
 
@@ -42,11 +42,26 @@ private final class HealthKitWorkoutSessionAdapter: NSObject, WorkoutSessionProt
 {
     var stateHandler: (@MainActor @Sendable (WorkoutSessionState) -> Void)?
     private let session: HKWorkoutSession
+    private let eventContinuation: AsyncStream<WorkoutSessionState>.Continuation
+    private var eventTask: Task<Void, Never>?
 
     init(session: HKWorkoutSession) {
         self.session = session
+        let (events, continuation) = AsyncStream.makeStream(of: WorkoutSessionState.self)
+        eventContinuation = continuation
         super.init()
         session.delegate = self
+        eventTask = Task { @MainActor [weak self] in
+            for await state in events {
+                guard let self else { return }
+                stateHandler?(state)
+            }
+        }
+    }
+
+    isolated deinit {
+        eventContinuation.finish()
+        eventTask?.cancel()
     }
 
     func startActivity(at date: Date) {
@@ -67,17 +82,11 @@ private final class HealthKitWorkoutSessionAdapter: NSObject, WorkoutSessionProt
         from _: HKWorkoutSessionState,
         date _: Date
     ) {
-        let state = WorkoutSessionState(healthKitState: toState)
-        Task { @MainActor [weak self] in
-            self?.stateHandler?(state)
-        }
+        eventContinuation.yield(WorkoutSessionState(healthKitState: toState))
     }
 
     nonisolated func workoutSession(_: HKWorkoutSession, didFailWithError error: any Error) {
-        let failure = WorkoutHealthError(healthKitError: error)
-        Task { @MainActor [weak self] in
-            self?.stateHandler?(.failed(failure))
-        }
+        eventContinuation.yield(.failed(WorkoutHealthError(healthKitError: error)))
     }
 }
 

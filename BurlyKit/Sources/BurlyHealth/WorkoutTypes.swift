@@ -41,6 +41,7 @@ public enum WorkoutLifecycle: Sendable, Equatable {
     case idle
     case active
     case ending
+    case failed(WorkoutControllerError)
 }
 
 public enum WorkoutControllerError: Error, Sendable, Equatable {

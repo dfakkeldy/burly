@@ -35,7 +35,7 @@ struct WorkoutControllerTests {
                 metadata: ["externalUUID": "workout-123"]
             )
         }
-        await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
 
         // Pin the asynchronous dependency independently: none of the builder
         // calls is legal merely because stopActivity returned.
@@ -62,7 +62,11 @@ struct WorkoutControllerTests {
         let discard = Task { @MainActor in
             try await harness.controller.discard(at: endedAt)
         }
-        await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+
+        // As with finish, collection must still be untouched while discard is
+        // waiting for the session's stopped state.
+        #expect(harness.log == [.stopActivity(endedAt)])
         harness.session.emit(.stopped)
         try await discard.value
 
@@ -116,12 +120,376 @@ struct WorkoutControllerTests {
         #expect(harness.controller.lifecycle == .idle)
     }
 
+    @Test("begin-collection failure releases a finish already waiting for stopped")
+    func beginCollectionFailureReleasesParkedFinish() async throws {
+        let beginCollection = OperationGate()
+        let timeout = ManualStopTimeout()
+        let failure = WorkoutHealthError.operationFailed("begin collection failed")
+        let harness = Harness(timeout: timeout, beginCollectionGate: beginCollection)
+
+        let start = Task { @MainActor in
+            try await harness.controller.start(at: startedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.beginCollection(startedAt)) }
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.stopActivity(endedAt)) }
+
+        beginCollection.fail(with: failure)
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await start.value
+        }
+
+        // On the broken implementation this is the only way to keep the test
+        // from hanging; the wrong timeout error proves start stranded finish.
+        await timeout.fireNextWhenReady()
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await finish.value
+        }
+        #expect(harness.controller.lifecycle == .idle)
+
+        try await harness.controller.start(at: startedAt.addingTimeInterval(120))
+        let secondFinish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt.addingTimeInterval(120))
+        }
+        try await waitUntil {
+            harness.log.calls.contains(.stopActivity(endedAt.addingTimeInterval(120)))
+        }
+        harness.session.emit(.stopped)
+        try await secondFinish.value
+        await timeout.fireNextWhenReady()
+        #expect(harness.controller.lifecycle == .idle)
+    }
+
+    @Test("finish retry resumes after collection already ended")
+    func finishRetryDoesNotEndCollectionTwice() async throws {
+        let failure = WorkoutHealthError.operationFailed("finish failed")
+        let harness = Harness(finishFailures: [failure])
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let firstFinish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        harness.session.emit(.stopped)
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await firstFinish.value
+        }
+
+        let retryDate = endedAt.addingTimeInterval(30)
+        try await harness.controller.finish(at: retryDate)
+
+        #expect(harness.log == [
+            .stopActivity(endedAt),
+            .delegateState(.stopped),
+            .endCollection(endedAt),
+            .finishWorkout([:]),
+            .endSession,
+            .finishWorkout([:])
+        ])
+        #expect(harness.controller.lifecycle == .idle)
+    }
+
+    @Test("discard remains an escape hatch after collection ended")
+    func discardAfterFinishFailureDoesNotEndCollectionTwice() async throws {
+        let failure = WorkoutHealthError.operationFailed("finish failed")
+        let harness = Harness(finishFailures: [failure])
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        harness.session.emit(.stopped)
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await finish.value
+        }
+
+        let retryDate = endedAt.addingTimeInterval(30)
+        let retry = Task { @MainActor in
+            try await harness.controller.discard(at: retryDate)
+        }
+        try await waitUntil {
+            harness.log.calls.last == .stopActivity(retryDate)
+                || harness.log.calls.last == .endSession
+        }
+        if harness.log.calls.last == .stopActivity(retryDate) {
+            harness.session.emit(.stopped)
+        }
+        try await retry.value
+
+        #expect(harness.log == [
+            .stopActivity(endedAt),
+            .delegateState(.stopped),
+            .endCollection(endedAt),
+            .finishWorkout([:]),
+            .endSession,
+            .discardWorkout
+        ])
+        #expect(harness.controller.lifecycle == .idle)
+    }
+
+    @Test("retry after end-collection failure keeps the original end date and does not stop twice")
+    func endCollectionRetryUsesOriginalEndDate() async throws {
+        let failure = WorkoutHealthError.operationFailed("end collection failed")
+        let harness = Harness(endCollectionFailures: [failure])
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let firstFinish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        harness.session.emit(.stopped)
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await firstFinish.value
+        }
+
+        let retryDate = endedAt.addingTimeInterval(30)
+        let retry = Task { @MainActor in
+            try await harness.controller.finish(at: retryDate)
+        }
+        try await waitUntil {
+            harness.log.calls.last == .stopActivity(retryDate)
+                || harness.log.calls.last == .endSession
+        }
+        if harness.log.calls.last == .stopActivity(retryDate) {
+            harness.session.emit(.stopped)
+        }
+        try await retry.value
+
+        #expect(harness.log == [
+            .stopActivity(endedAt),
+            .delegateState(.stopped),
+            .endCollection(endedAt),
+            .endCollection(endedAt),
+            .finishWorkout([:]),
+            .endSession
+        ])
+    }
+
+    @Test("discard retry after end-collection failure keeps the original end date")
+    func discardRetriesEndCollectionWithoutStoppingTwice() async throws {
+        let failure = WorkoutHealthError.operationFailed("end collection failed")
+        let harness = Harness(endCollectionFailures: [failure])
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let firstDiscard = Task { @MainActor in
+            try await harness.controller.discard(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        harness.session.emit(.stopped)
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await firstDiscard.value
+        }
+
+        let retryDate = endedAt.addingTimeInterval(30)
+        let retry = Task { @MainActor in
+            try await harness.controller.discard(at: retryDate)
+        }
+        try await waitUntil {
+            harness.log.calls.last == .stopActivity(retryDate)
+                || harness.log.calls.last == .endSession
+        }
+        if harness.log.calls.last == .stopActivity(retryDate) {
+            harness.session.emit(.stopped)
+        }
+        try await retry.value
+
+        #expect(harness.log == [
+            .stopActivity(endedAt),
+            .delegateState(.stopped),
+            .endCollection(endedAt),
+            .endCollection(endedAt),
+            .discardWorkout,
+            .endSession
+        ])
+        #expect(harness.controller.lifecycle == .idle)
+    }
+
+    @Test("a second termination cannot replace a live stopped-state waiter")
+    func concurrentTerminationDoesNotReplaceStoppedWaiter() async throws {
+        let harness = Harness()
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let firstFinish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+
+        await #expect(throws: WorkoutControllerError.terminationAlreadyInProgress) {
+            try await harness.controller.discard(at: endedAt)
+        }
+        #expect(harness.log == [.stopActivity(endedAt)])
+
+        harness.session.emit(.stopped)
+        try await firstFinish.value
+    }
+
+    @Test("a second termination is rejected while end collection is suspended")
+    func endingLifecycleRejectsASecondTermination() async throws {
+        let endCollection = OperationGate()
+        let harness = Harness(endCollectionGate: endCollection)
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let firstFinish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        harness.session.emit(.stopped)
+        try await waitUntil { harness.log.calls.contains(.endCollection(endedAt)) }
+
+        let secondTermination = Task { @MainActor in
+            try await harness.controller.discard(at: endedAt)
+        }
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+        let endCollectionCount = harness.log.calls.filter { $0 == .endCollection(endedAt) }.count
+        endCollection.succeedAll()
+        await #expect(throws: WorkoutControllerError.terminationAlreadyInProgress) {
+            try await secondTermination.value
+        }
+        #expect(endCollectionCount == 1)
+        try await firstFinish.value
+    }
+
+    @Test("completed workout detaches its old session delegate")
+    func completedWorkoutIgnoresLateSessionFailure() async throws {
+        let harness = Harness()
+        try await harness.controller.start(at: startedAt)
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.stopActivity(endedAt)) }
+        harness.session.emit(.stopped)
+        try await finish.value
+
+        harness.session.emit(.failed(.operationFailed("late failure")))
+
+        #expect(harness.controller.lifecycle == .idle)
+    }
+
+    @Test("finish cancellation releases the stopped wait")
+    func cancellingFinishThrowsCancellation() async throws {
+        let timeout = ManualStopTimeout()
+        let harness = Harness(timeout: timeout)
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+        finish.cancel()
+        await timeout.fireNextWhenReady()
+
+        await #expect(throws: CancellationError.self) {
+            try await finish.value
+        }
+        #expect(harness.controller.lifecycle == .active)
+    }
+
+    @Test("finish and discard report no active workout while idle")
+    func idleTerminationReportsNoActiveWorkout() async {
+        let harness = Harness()
+
+        await #expect(throws: WorkoutControllerError.noActiveWorkout) {
+            try await harness.controller.finish(at: endedAt)
+        }
+        await #expect(throws: WorkoutControllerError.noActiveWorkout) {
+            try await harness.controller.discard(at: endedAt)
+        }
+    }
+
+    @Test("a failed session becomes observable and discard remains reachable")
+    func failedSessionCanBeDiscardedWithoutWaitingForStopped() async throws {
+        let timeout = ManualStopTimeout()
+        let harness = Harness(timeout: timeout)
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        harness.session.emit(.failed(.anotherWorkoutSessionStarted))
+        #expect(harness.controller.lifecycle == .failed(.anotherWorkoutSessionStarted))
+
+        let discard = Task { @MainActor in
+            try await harness.controller.discard(at: endedAt)
+        }
+        try await waitUntil {
+            harness.log.calls.last == .stopActivity(endedAt)
+                || harness.log.calls.last == .endSession
+        }
+        if harness.log.calls.last == .stopActivity(endedAt) {
+            await timeout.fireNextWhenReady()
+        }
+        try await discard.value
+
+        #expect(harness.log == [
+            .delegateState(.failed(.anotherWorkoutSessionStarted)),
+            .endCollection(endedAt),
+            .discardWorkout,
+            .endSession
+        ])
+        #expect(harness.controller.lifecycle == .idle)
+    }
+
+    @Test("the production stopped-state policy waits exactly five seconds")
+    func defaultStopTimeoutUsesFiveSeconds() async throws {
+        let recorder = DurationRecorder()
+        let timeout = FiveSecondWorkoutStopTimeout { duration in
+            await recorder.record(duration)
+        }
+
+        try await timeout.wait()
+
+        #expect(await recorder.durations == [.seconds(5)])
+    }
+
+    @Test("resuming the stopped waiter cancels its timeout task")
+    func stoppedCallbackCancelsTimeoutTask() async throws {
+        let timeout = CancellationRecordingTimeout()
+        let harness = Harness(timeout: timeout)
+        try await harness.controller.start(at: startedAt)
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.stopActivity(endedAt)) }
+        harness.session.emit(.stopped)
+        try await finish.value
+
+        let observedCancellation = await eventually {
+            await timeout.cancellationObserved
+        }
+        await timeout.release()
+        #expect(observedCancellation)
+    }
+
+    private func eventually(
+        _ condition: @escaping @Sendable () async -> Bool
+    ) async -> Bool {
+        for _ in 0 ..< 1_000 {
+            if await condition() { return true }
+            await Task.yield()
+        }
+        return false
+    }
+
     private func waitUntil(
-        _ condition: @escaping @MainActor () -> Bool
-    ) async {
+        _ condition: @escaping @MainActor () -> Bool,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
         for _ in 0 ..< 100 where !condition() {
             await Task.yield()
         }
+        try #require(condition(), "Asynchronous condition was not reached", sourceLocation: sourceLocation)
     }
 }
 
@@ -134,11 +502,21 @@ private final class Harness {
 
     init(
         timeout: any WorkoutStopTimeout = NeverStopTimeout(),
-        factoryFailure: WorkoutHealthError? = nil
+        factoryFailure: WorkoutHealthError? = nil,
+        beginCollectionGate: OperationGate? = nil,
+        endCollectionGate: OperationGate? = nil,
+        endCollectionFailures: [WorkoutHealthError] = [],
+        finishFailures: [WorkoutHealthError] = []
     ) {
         let log = CallLog()
         let session = FakeWorkoutSession(log: log)
-        let builder = FakeWorkoutBuilder(log: log)
+        let builder = FakeWorkoutBuilder(
+            log: log,
+            beginCollectionGate: beginCollectionGate,
+            endCollectionGate: endCollectionGate,
+            endCollectionFailures: endCollectionFailures,
+            finishFailures: finishFailures
+        )
         let factory = FakeWorkoutFactory(
             log: log,
             resources: .init(session: session, builder: builder),
@@ -225,21 +603,43 @@ private final class FakeWorkoutSession: WorkoutSessionProtocol {
 @MainActor
 private final class FakeWorkoutBuilder: LiveWorkoutBuilding {
     private let log: CallLog
+    private let beginCollectionGate: OperationGate?
+    private let endCollectionGate: OperationGate?
+    private var endCollectionFailures: [WorkoutHealthError]
+    private var finishFailures: [WorkoutHealthError]
 
-    init(log: CallLog) {
+    init(
+        log: CallLog,
+        beginCollectionGate: OperationGate? = nil,
+        endCollectionGate: OperationGate? = nil,
+        endCollectionFailures: [WorkoutHealthError] = [],
+        finishFailures: [WorkoutHealthError] = []
+    ) {
         self.log = log
+        self.beginCollectionGate = beginCollectionGate
+        self.endCollectionGate = endCollectionGate
+        self.endCollectionFailures = endCollectionFailures
+        self.finishFailures = finishFailures
     }
 
     func beginCollection(at date: Date) async throws {
         log.calls.append(.beginCollection(date))
+        try await beginCollectionGate?.wait()
     }
 
     func endCollection(at date: Date) async throws {
         log.calls.append(.endCollection(date))
+        try await endCollectionGate?.wait()
+        if !endCollectionFailures.isEmpty {
+            throw endCollectionFailures.removeFirst()
+        }
     }
 
     func finishWorkout(metadata: WorkoutMetadata) async throws {
         log.calls.append(.finishWorkout(metadata))
+        if !finishFailures.isEmpty {
+            throw finishFailures.removeFirst()
+        }
     }
 
     func discardWorkout() {
@@ -255,4 +655,77 @@ private struct NeverStopTimeout: WorkoutStopTimeout {
 
 private struct ImmediateStopTimeout: WorkoutStopTimeout {
     func wait() async throws {}
+}
+
+@MainActor
+private final class OperationGate {
+    private var continuations: [CheckedContinuation<Void, any Error>] = []
+    private var isOpen = false
+
+    func wait() async throws {
+        if isOpen { return }
+        try await withCheckedThrowingContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func fail(with error: any Error) {
+        guard !continuations.isEmpty else { return }
+        isOpen = true
+        continuations.removeFirst().resume(throwing: error)
+    }
+
+    func succeedAll() {
+        isOpen = true
+        let pending = continuations
+        continuations.removeAll()
+        for continuation in pending {
+            continuation.resume()
+        }
+    }
+}
+
+private actor ManualStopTimeout: WorkoutStopTimeout {
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async throws {
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+        try Task.checkCancellation()
+    }
+
+    func fireNextWhenReady() async {
+        while continuations.isEmpty {
+            await Task.yield()
+        }
+        continuations.removeFirst().resume()
+    }
+}
+
+private actor DurationRecorder {
+    private(set) var durations: [Duration] = []
+
+    func record(_ duration: Duration) {
+        durations.append(duration)
+    }
+}
+
+private actor CancellationRecordingTimeout: WorkoutStopTimeout {
+    private(set) var cancellationObserved = false
+    private var released = false
+
+    func wait() async throws {
+        while !Task.isCancelled && !released {
+            await Task.yield()
+        }
+        if Task.isCancelled {
+            cancellationObserved = true
+            throw CancellationError()
+        }
+    }
+
+    func release() {
+        released = true
+    }
 }
