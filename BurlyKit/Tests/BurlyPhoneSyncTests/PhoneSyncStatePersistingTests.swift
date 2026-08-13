@@ -39,6 +39,57 @@ struct PhoneSyncStatePersistingTests {
         #expect(reloaded?.recoveredFromCorruption == false)
     }
 
+    @Test("a save after a newline-less torn tail remains a separate round-trippable record")
+    func saveAfterNewlineLessTailRoundTrips() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        try persisting.save(.init(machineState: .init(
+            latestSnapshotVersion: 1, lastTransferGeneration: 1
+        )))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"seq":1,"fullRuntimeState":{"la"#.utf8))
+        try handle.close()
+
+        let expected = PhoneSyncRuntimeState(machineState: .init(
+            latestSnapshotVersion: 2, lastTransferGeneration: 2
+        ))
+        try persisting.save(expected)
+
+        let loaded = try #require(try persisting.load())
+        #expect(loaded.runtimeState == expected)
+    }
+
+    @Test("a coordinator commit after a newline-less tail survives relaunch")
+    func coordinatorCommitAfterNewlineLessTailSurvivesRelaunch() async throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        try persisting.save(.init(machineState: .init(
+            latestSnapshotVersion: 1, lastTransferGeneration: 1
+        )))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("{torn".utf8))
+        try handle.close()
+
+        let coordinator = PhoneSyncCoordinator(
+            store: try makePhoneStore(), transport: FakeTransport(), digestPublisher: FakeDigestPublisher(),
+            statePersisting: persisting, clock: TestClock(), scheduler: ManualTriggerScheduler()
+        )
+        try await coordinator.applicationDidLaunch()
+        #expect(coordinator.currentMachineState.lastTransferGeneration == 2)
+
+        let relaunched = PhoneSyncCoordinator(
+            store: try makePhoneStore(), transport: FakeTransport(), digestPublisher: FakeDigestPublisher(),
+            statePersisting: FileBackedPhoneSyncStatePersisting(url: url),
+            clock: TestClock(), scheduler: ManualTriggerScheduler()
+        )
+        #expect(relaunched.syncStateUnrecoverable == false)
+        #expect(relaunched.currentMachineState.lastTransferGeneration == 2)
+    }
+
     @Test("empty collections and optional fields round-trip")
     func emptyCollectionsRoundTrip() throws {
         let url = makeTemporaryURL()
@@ -248,6 +299,31 @@ struct PhoneSyncStatePersistingTests {
         #expect(coordinator.currentMachineState == BurlyPhoneSyncMachine.State())
     }
 
+    @Test("an existing unreadable journal is unrecoverable and quiesces the coordinator")
+    func unreadableExistingJournalIsUnrecoverable() throws {
+        let url = makeTemporaryURL()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+        }
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        try persisting.save(.init(machineState: .init(
+            latestSnapshotVersion: 900, lastTransferGeneration: 900
+        )))
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: url.path)
+
+        #expect(throws: PhoneSyncStateUnrecoverableError()) {
+            _ = try persisting.load()
+        }
+        let coordinator = PhoneSyncCoordinator(
+            store: try makePhoneStore(), transport: FakeTransport(), digestPublisher: FakeDigestPublisher(),
+            statePersisting: FileBackedPhoneSyncStatePersisting(url: url),
+            clock: TestClock(), scheduler: ManualTriggerScheduler()
+        )
+        #expect(coordinator.syncStateUnrecoverable)
+        #expect(coordinator.currentMachineState == BurlyPhoneSyncMachine.State())
+    }
+
     @Test("a valid older record keeps identity progression monotonic across a corrupt append and relaunch")
     func identityNeverRegressesAcrossACorruptionAndRelaunch() async throws {
         let url = makeTemporaryURL()
@@ -265,6 +341,10 @@ struct PhoneSyncStatePersistingTests {
             try await coordinator.applicationDidLaunch()
             lastGeneration = coordinator.currentMachineState.lastTransferGeneration
         }
+        #expect(lastGeneration == 3)
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        try persisting.save(.init(machineState: .init(lastTransferGeneration: lastGeneration)))
+        try persisting.save(.init(machineState: .init(lastTransferGeneration: 1)))
         let handle = try FileHandle(forWritingTo: url)
         try handle.seekToEnd()
         try handle.write(contentsOf: Data("{torn".utf8))

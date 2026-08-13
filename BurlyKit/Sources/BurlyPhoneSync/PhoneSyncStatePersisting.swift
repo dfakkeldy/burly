@@ -258,7 +258,7 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
         )
         return PhoneSyncLoadResult(
             runtimeState: runtime,
-            recoveredFromCorruption: read.invalidLineCount > 0
+            recoveredFromCorruption: read.newestNonemptyLineIsInvalid
         )
     }
 
@@ -287,18 +287,64 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
         try createParentDirectoryIfNeeded()
         var line = try Self.makeEncoder().encode(record)
         line.append(UInt8(ascii: "\n"))
-        let descriptor = Darwin.open(url.path, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
+        let descriptor = Darwin.open(url.path, O_RDWR | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { Darwin.close(descriptor) }
-        let written = try line.withUnsafeBytes { bytes -> Int in
-            guard let baseAddress = bytes.baseAddress else { return 0 }
-            let result = Darwin.write(descriptor, baseAddress, bytes.count)
-            guard result >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-            return result
+
+        let newline = Data([UInt8(ascii: "\n")])
+        if let lastByte = try lastByte(in: descriptor), lastByte != UInt8(ascii: "\n") {
+            try writeFully(newline, to: descriptor)
         }
-        guard written == line.count else { throw POSIXError(.ENOSPC) }
+        do {
+            try writeFully(line, to: descriptor)
+        } catch {
+            // A failed append must not let a later valid record fuse onto
+            // this record's partial bytes. Termination is best-effort when
+            // the underlying failure (for example ENOSPC) also prevents it.
+            try? writeFully(newline, to: descriptor)
+            _ = Darwin.fsync(descriptor)
+            throw error
+        }
         guard Darwin.fsync(descriptor) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    private func lastByte(in descriptor: Int32) throws -> UInt8? {
+        let end = Darwin.lseek(descriptor, 0, SEEK_END)
+        guard end >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard end > 0 else { return nil }
+
+        var byte: UInt8 = 0
+        while true {
+            let result = withUnsafeMutableBytes(of: &byte) { bytes in
+                Darwin.pread(descriptor, bytes.baseAddress, 1, end - 1)
+            }
+            if result == 1 { return byte }
+            if result < 0, errno == EINTR { continue }
+            if result < 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            throw POSIXError(.EIO)
+        }
+    }
+
+    private func writeFully(_ data: Data, to descriptor: Int32) throws {
+        try data.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let result = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    bytes.count - offset
+                )
+                if result > 0 {
+                    offset += result
+                } else if result == 0 {
+                    throw POSIXError(.ENOSPC)
+                } else if errno != EINTR {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            }
         }
     }
 
@@ -326,8 +372,8 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
     private struct JournalRead {
         var fileExists: Bool
         var valid: [ValidRecord]
-        var invalidLineCount: Int
         var nonemptyLineCount: Int
+        var newestNonemptyLineIsInvalid: Bool
 
         var maximumSnapshotVersion: Int {
             valid.map(\.runtimeState.machineState.latestSnapshotVersion).max() ?? 0
@@ -340,13 +386,23 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
 
     private func readJournal() throws -> JournalRead {
         guard fileManager.fileExists(atPath: url.path) else {
-            return JournalRead(fileExists: false, valid: [], invalidLineCount: 0, nonemptyLineCount: 0)
+            return JournalRead(
+                fileExists: false,
+                valid: [],
+                nonemptyLineCount: 0,
+                newestNonemptyLineIsInvalid: false
+            )
         }
-        let data = try Data(contentsOf: url)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw PhoneSyncStateUnrecoverableError()
+        }
         let lines = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
         var valid: [ValidRecord] = []
-        var invalidLineCount = 0
         var nonemptyLineCount = 0
+        var newestNonemptyLineIsInvalid = false
         for (index, line) in lines.enumerated() where line.isEmpty == false {
             nonemptyLineCount += 1
             guard
@@ -355,16 +411,17 @@ public final class FileBackedPhoneSyncStatePersisting: PhoneSyncStatePersisting,
                 record.hasValidChecksum,
                 let runtime = try? record.fullRuntimeState.makeRuntimeState()
             else {
-                invalidLineCount += 1
+                newestNonemptyLineIsInvalid = true
                 continue
             }
             valid.append(ValidRecord(record: record, runtimeState: runtime, lineIndex: index))
+            newestNonemptyLineIsInvalid = false
         }
         return JournalRead(
             fileExists: true,
             valid: valid,
-            invalidLineCount: invalidLineCount,
-            nonemptyLineCount: nonemptyLineCount
+            nonemptyLineCount: nonemptyLineCount,
+            newestNonemptyLineIsInvalid: newestNonemptyLineIsInvalid
         )
     }
 

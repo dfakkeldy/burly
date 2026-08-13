@@ -87,6 +87,31 @@ struct PhoneSyncJournalCorruptionMatrixTests {
         #expect(loaded.recoveredFromCorruption)
     }
 
+    @Test("a historical invalid line does not mark a later clean load as recovered")
+    func historicalInvalidLineDoesNotRemainSticky() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        try persisting.save(.init(machineState: .init(
+            latestSnapshotVersion: 1, lastTransferGeneration: 1
+        )))
+        var journal = try Data(contentsOf: url)
+        journal.append(Data("invalid historical line\n".utf8))
+        journal.append(try JSONEncoder().encode(FileBackedPhoneSyncStatePersisting.Record(
+            seq: 2,
+            runtimeState: .init(machineState: .init(
+                latestSnapshotVersion: 2, lastTransferGeneration: 2
+            ))
+        )))
+        journal.append(UInt8(ascii: "\n"))
+        try journal.write(to: url)
+
+        let loaded = try #require(try persisting.load())
+        #expect(loaded.runtimeState.machineState.latestSnapshotVersion == 2)
+        #expect(loaded.runtimeState.machineState.lastTransferGeneration == 2)
+        #expect(loaded.recoveredFromCorruption == false)
+    }
+
     @Test("a checksum-corrupt newest line falls back to the newest valid full state without losing valid identity maxima")
     func corruptNewestLinePreservesValidMaxima() throws {
         let url = makeTemporaryURL()
@@ -119,6 +144,32 @@ struct PhoneSyncJournalCorruptionMatrixTests {
         let loaded = try #require(try persisting.load())
         #expect(loaded.runtimeState.machineState.ackAge == [secondID: 2])
         #expect(loaded.runtimeState.machineState.latestSnapshotVersion == 9)
+        #expect(loaded.runtimeState.machineState.lastTransferGeneration == 8)
+        #expect(loaded.recoveredFromCorruption)
+    }
+
+    @Test("a checksum-valid Int.max record is skipped and cannot win either identity maximum")
+    func intMaxRecordIsSkippedNotRestored() throws {
+        let url = makeTemporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
+        try persisting.save(.init(machineState: .init(
+            latestSnapshotVersion: 7, lastTransferGeneration: 8
+        )))
+        let hostile = try JSONEncoder().encode(FileBackedPhoneSyncStatePersisting.Record(
+            seq: 1,
+            runtimeState: .init(machineState: .init(
+                latestSnapshotVersion: Int.max, lastTransferGeneration: Int.max
+            ))
+        ))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: hostile)
+        try handle.write(contentsOf: Data([UInt8(ascii: "\n")]))
+        try handle.close()
+
+        let loaded = try #require(try persisting.load())
+        #expect(loaded.runtimeState.machineState.latestSnapshotVersion == 7)
         #expect(loaded.runtimeState.machineState.lastTransferGeneration == 8)
         #expect(loaded.recoveredFromCorruption)
     }
