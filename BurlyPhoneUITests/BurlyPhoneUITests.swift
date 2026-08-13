@@ -304,8 +304,13 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertTrue(catalogSearch.waitForExistence(timeout: 5))
         catalogSearch.tap()
         catalogSearch.typeText(customName)
-        XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 10))
+        let customExercise = app.staticTexts[customName]
+        XCTAssertTrue(customExercise.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Biceps · Forearms"].exists)
+        let customExerciseIdentifierPrefix = "catalog.exerciseName."
+        let customExerciseID = try XCTUnwrap(
+            identifierSuffix(of: customExercise, prefix: customExerciseIdentifierPrefix)
+        )
 
         // The toolbar's Done button is unreachable while search is active:
         // SwiftUI replaces the whole toolbar (Done + Custom exercise) with
@@ -343,22 +348,27 @@ final class BurlyPhoneUITests: XCTestCase {
 
         // The first inserted row is Bench Press. Change both independent
         // item fields and assert their displayed values before saving.
-        let setCount = firstElement(app, identifierPrefix: "routineEditor.itemSetCount.")
-        XCTAssertTrue(setCount.waitForExistence(timeout: 5))
+        let itemSetCountIdentifierPrefix = "routineEditor.itemSetCount."
+        let firstSetCount = firstElement(app, identifierPrefix: itemSetCountIdentifierPrefix)
+        XCTAssertTrue(firstSetCount.waitForExistence(timeout: 5))
+        let benchItemID = try XCTUnwrap(
+            identifierSuffix(of: firstSetCount, prefix: itemSetCountIdentifierPrefix)
+        )
+        let setCount = app.staticTexts["\(itemSetCountIdentifierPrefix)\(benchItemID)"]
         XCTAssertEqual(setCount.label, "3 sets")
-        let increment = firstElement(app, identifierPrefix: "routineEditor.increaseSetCount.")
+        let increment = app.buttons["routineEditor.increaseSetCount.\(benchItemID)"]
         increment.tap()
         XCTAssertEqual(setCount.label, "4 sets")
 
-        let restMenu = firstElement(app, identifierPrefix: "routineEditor.restMenu.")
+        let restMenu = app.buttons["routineEditor.restMenu.\(benchItemID)"]
         restMenu.tap()
         app.buttons["90 sec"].tap()
-        XCTAssertTrue(firstElement(app, identifierPrefix: "routineEditor.restMenu.").label.contains("90 sec"))
+        XCTAssertTrue(restMenu.label.contains("90 sec"))
 
         // Explicit move controls are available alongside List edit-mode
         // reordering for VoiceOver/Dynamic Type. The frame assertion proves
         // the rendered order changed, not merely that the control existed.
-        firstElement(app, identifierPrefix: "routineEditor.moveDown.").tap()
+        app.buttons["routineEditor.moveDown.\(benchItemID)"].tap()
         let bench = app.staticTexts["Barbell Bench Press"]
         let squat = app.staticTexts["Back Squat"]
         XCTAssertTrue(bench.waitForExistence(timeout: 5))
@@ -366,7 +376,7 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertGreaterThan(bench.frame.minY, squat.frame.minY)
 
         app.buttons["routineEditor.saveButton"].tap()
-        XCTAssertTrue(firstElement(app, identifierPrefix: "routineEditor.itemSetCount.").label.contains("4"))
+        XCTAssertEqual(setCount.label, "4 sets")
         app.buttons["routineEditor.archiveButton"].tap()
         app.buttons["Archive routine"].tap()
         XCTAssertTrue(app.staticTexts["routinesTab.emptyState.heading"].waitForExistence(timeout: 10))
@@ -379,7 +389,7 @@ final class BurlyPhoneUITests: XCTestCase {
         archiveSearch.tap()
         archiveSearch.typeText(customName)
         XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 5))
-        let archiveButton = firstElement(app, identifierPrefix: "catalog.archiveExercise.")
+        let archiveButton = app.buttons["catalog.archiveExercise.\(customExerciseID)"]
         archiveButton.tap()
         app.buttons["Archive exercise"].tap()
         XCTAssertFalse(app.staticTexts[customName].exists)
@@ -485,6 +495,11 @@ final class BurlyPhoneUITests: XCTestCase {
         app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", identifierPrefix))
             .firstMatch
+    }
+
+    private func identifierSuffix(of element: XCUIElement, prefix: String) -> String? {
+        guard element.identifier.hasPrefix(prefix) else { return nil }
+        return String(element.identifier.dropFirst(prefix.count))
     }
 
     private func attachScreenshot(from app: XCUIApplication, name: String) {
