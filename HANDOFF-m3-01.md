@@ -32,3 +32,28 @@ Worktree /Users/dfakkeldy/Developer/worktrees/burly-m3-01, branch task/burly-m3-
 Next action: check `tail -5 <scratchpad>/sim-driver-v3.log`. If m3-01 ran, adjudicate the
 result; if still deferred, the blocker is host memory, not the task — report and move on.
 ```
+
+## 2026-08-13 — simulator acceptance PASSED; task complete
+
+Done:
+- `Scripts/acceptance-sim.sh` green at `985362d`, run dir
+  `Scripts/output/runs/20260813T060053Z`.
+- **Phone 8/8, watch 27/27, zero failures.** Both result bundles present,
+  33 screenshots.
+- This is the proof the previous entry said was still outstanding.
+  `HealthKitWorkoutAdapters.swift` had never been compiled across four rounds
+  and 780 unit tests — it is preprocessed out on the macOS test host and had
+  only been typechecked standalone. The watchOS build compiles BurlyKit with
+  `canImport(HealthKit)` active, so this run built it for real and ran it in an
+  app.
+- No build-gate override was used at any point.
+
+Next:
+- Nothing blocking. m3-01 is implementation- and simulator-complete.
+- Push and PR remain Dan's call.
+
+Resume:
+```
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m3-01, branch task/burly-m3-01 at 985362d, tree clean.
+Next action: none required — task is done pending Dan's decision to push/PR.
+```
