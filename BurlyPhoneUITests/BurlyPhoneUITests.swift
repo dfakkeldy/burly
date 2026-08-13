@@ -38,6 +38,15 @@ final class BurlyPhoneUITests: XCTestCase {
     /// `testUnrecognizedScenarioFailsClosedToStorageError`.
     private static let scenarioUnrecognized = "definitelyNotARealScenario"
 
+    // These fixture values are intentionally repeated from
+    // PhoneDemoSeed.SeededIDs: the UI-test bundle cannot import the app
+    // target. They make the edit targets and linked-workout assertion
+    // deterministic rather than depending on SwiftData-generated UUIDs.
+    private static let loggedSessionID = "6F4E2C1A-0000-4000-8000-000000000003"
+    private static let squatWorkingSetID = "6F4E2C1A-0000-4000-8000-000000000006"
+    private static let addableExerciseID = "6F4E2C1A-0000-4000-8000-00000000000A"
+    private static let healthKitWorkoutID = "6F4E2C1A-0000-4000-8000-00000000000B"
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -260,6 +269,64 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-populatedRows")
     }
 
+    /// §6 acceptance #1 and #5: each real edit through History's detail
+    /// surface advances the persisted revision exactly once. The weight and
+    /// reps, warmup label, and added exercise name are content assertions,
+    /// so a screen that merely presents the controls cannot satisfy this.
+    ///
+    /// The seeded session starts linked to a known HKWorkout. Its exact UUID
+    /// remains exposed after both set edits, proving the phone UI's real
+    /// edit path retains that link rather than silently dropping it.
+    func testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        XCTAssertTrue(
+            anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").waitForExistence(timeout: 15),
+            "Expected the deterministic linked session in History"
+        )
+        anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").tap()
+
+        assertRevision(1, in: app)
+        assertHealthKitLink(in: app)
+
+        // One save changes the working set's weight and reps. This catches
+        // either field being ignored as well as an absent revision bump.
+        anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").tap()
+        replaceText(in: app.textFields["historyDetail.setWeight"], with: "82.5", app: app)
+        replaceText(in: app.textFields["historyDetail.setReps"], with: "12", app: app)
+        app.buttons["historyDetail.saveSet"].tap()
+        assertRevision(2, in: app)
+        XCTAssertTrue(app.staticTexts["82.5 kg × 12"].waitForExistence(timeout: 5), "Expected the saved set values to render")
+        assertHealthKitLink(in: app)
+
+        // Warmup is a separate edit and therefore must produce its own
+        // one-step revision increment.
+        anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").tap()
+        anyElement(app, identifier: "historyDetail.setWarmup").tap()
+        app.buttons["historyDetail.saveSet"].tap()
+        assertRevision(3, in: app)
+        XCTAssertTrue(app.staticTexts["Warmup"].waitForExistence(timeout: 5), "Expected the set to render as a warmup after saving")
+        assertHealthKitLink(in: app)
+
+        // Add and remove an exercise independently; each is a real store
+        // write and gets a distinct revision assertion.
+        app.buttons["historyDetail.addExercise"].tap()
+        anyElement(app, identifier: "historyDetail.exercisePicker.\(Self.addableExerciseID)").tap()
+        assertRevision(4, in: app)
+        XCTAssertTrue(app.staticTexts["UI Test Added Exercise"].waitForExistence(timeout: 5), "Expected the selected exercise to appear in the session")
+
+        let removeButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "historyDetail.removeExercise."))
+        XCTAssertEqual(removeButtons.count, 5, "Expected the four seeded exercises plus the newly added exercise")
+        removeButtons.element(boundBy: 4).tap()
+        assertRevision(5, in: app)
+        XCTAssertFalse(app.staticTexts["UI Test Added Exercise"].exists, "Expected removing the added exercise to update the session content")
+
+        attachScreenshot(from: app, name: "BurlyPhone-historyEdits")
+    }
+
     /// Spec §7 acceptance #3, empty side: each independently meaningful
     /// chart has a genuine empty state on a deterministic empty history.
     /// This catches both crashes during chart construction and a misleading
@@ -349,6 +416,28 @@ final class BurlyPhoneUITests: XCTestCase {
     /// isn't part of the contract either.
     private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    private func assertRevision(_ revision: Int, in app: XCUIApplication) {
+        XCTAssertTrue(
+            app.staticTexts["historyDetail.revision.\(revision)"].waitForExistence(timeout: 5),
+            "Expected edit to persist exactly revision \(revision)"
+        )
+    }
+
+    private func assertHealthKitLink(in app: XCUIApplication) {
+        XCTAssertTrue(
+            anyElement(app, identifier: "historyDetail.healthKitWorkout.\(Self.healthKitWorkoutID)").waitForExistence(timeout: 5),
+            "Expected the seeded HealthKit workout UUID to survive the phone edit path"
+        )
+    }
+
+    private func replaceText(in field: XCUIElement, with value: String, app: XCUIApplication) {
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Expected editable text field")
+        field.tap()
+        field.press(forDuration: 1.1)
+        app.menuItems["Select All"].tap()
+        field.typeText(value)
     }
 
     private func attachScreenshot(from app: XCUIApplication, name: String) {

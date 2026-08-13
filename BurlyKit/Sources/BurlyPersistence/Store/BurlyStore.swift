@@ -96,6 +96,15 @@ public protocol BurlyStore: AnyObject {
     /// from pickers while keeping them alive for history (§1).
     func exercises(includingArchived: Bool) throws -> [ExerciseData]
     func archiveExercise(id: UUID, at date: Date) throws
+    /// Resolves a watch-created naming placeholder without changing its
+    /// identity, so every existing history reference continues to point to
+    /// the now-named exercise.
+    func namePlaceholderExercise(id: UUID, name: String) throws
+    /// Resolves a placeholder by moving its history references to an existing
+    /// exercise, then archiving the placeholder. This deliberately changes no
+    /// Session fields other than the item exercise references, so revisions
+    /// and linked HealthKit workout identifiers remain untouched.
+    func mergePlaceholderExercise(id placeholderID: UUID, into exerciseID: UUID, at date: Date) throws
 
     // MARK: - Routines
 

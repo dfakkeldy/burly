@@ -33,6 +33,7 @@
 		F8EE48CBF8C843AA97BE0128 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0597FDE626764989A1D8D4B8 /* ContentView.swift */; };
 		E5B86DA8387E32F218411F01 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 387E32F218411F016C5DC66F /* EmptyStateView.swift */; };
 		0F3F419C1D6847CCE772834C /* HistoryTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D6847CCE772834C378273DB /* HistoryTabView.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* HistorySessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */; };
 		4BC4E73D83CC915FA4EF9183 /* ImportPlaceholderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CC915FA4EF91835BBAFA53 /* ImportPlaceholderView.swift */; };
 		7B5B07CEFD61D9C852F1778D /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD61D9C852F1778D202ABC7B /* MainTabView.swift */; };
 		9D5EDA057CE92FF9FDE83EEC /* PhoneHomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE92FF9FDE83EEC09FBD238 /* PhoneHomeViewModel.swift */; };
@@ -127,6 +128,7 @@
 		FBDC83D66EF664D4A4BA3657 /* SessionStartStubView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionStartStubView.swift; sourceTree = "<group>"; };
 		387E32F218411F016C5DC66F /* EmptyStateView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
 		1D6847CCE772834C378273DB /* HistoryTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryTabView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistorySessionDetailView.swift; sourceTree = "<group>"; };
 		83CC915FA4EF91835BBAFA53 /* ImportPlaceholderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImportPlaceholderView.swift; sourceTree = "<group>"; };
 		FD61D9C852F1778D202ABC7B /* MainTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		7CE92FF9FDE83EEC09FBD238 /* PhoneHomeViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneHomeViewModel.swift; sourceTree = "<group>"; };
@@ -259,6 +261,7 @@
 				0597FDE626764989A1D8D4B8 /* ContentView.swift */,
 				387E32F218411F016C5DC66F /* EmptyStateView.swift */,
 				1D6847CCE772834C378273DB /* HistoryTabView.swift */,
+				A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */,
 				83CC915FA4EF91835BBAFA53 /* ImportPlaceholderView.swift */,
 				FD61D9C852F1778D202ABC7B /* MainTabView.swift */,
 				7CE92FF9FDE83EEC09FBD238 /* PhoneHomeViewModel.swift */,
@@ -548,6 +551,7 @@
 				5C4D02B0B27345809E2FBFD1 /* BurlyPhoneApp.swift in Sources */,
 				E5B86DA8387E32F218411F01 /* EmptyStateView.swift in Sources */,
 				0F3F419C1D6847CCE772834C /* HistoryTabView.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* HistorySessionDetailView.swift in Sources */,
 				4BC4E73D83CC915FA4EF9183 /* ImportPlaceholderView.swift in Sources */,
 				7B5B07CEFD61D9C852F1778D /* MainTabView.swift in Sources */,
 				9D5EDA057CE92FF9FDE83EEC /* PhoneHomeViewModel.swift in Sources */,
