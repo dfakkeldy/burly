@@ -116,6 +116,11 @@ enum PhoneDemoSeed {
         let store = try SwiftDataStore(kind: .phone, at: .inMemory)
         if scenario == .populated {
             try seedPopulated(into: store)
+        } else {
+            // The routine-builder's empty scenario still needs the real
+            // curated catalog. "Empty" means no user routines or history,
+            // not an unrealistically catalog-less install.
+            _ = try SeedLoader.applyBundled(to: store)
         }
         return store
     }
