@@ -38,8 +38,8 @@
 // the sessions the phone has received — so a public method that applies
 // one half in its own save is a crash window with an API in front of it.
 // `applyDigest(lastPerformance:ackedSessionIDs:)` is the whole payload, in
-// one transaction; the halves survive as module-internal helpers it is
-// built from.
+// one transaction; performance validation and row mutation remain private
+// implementation details of that transaction.
 //
 // `deleteRoutine` *does* exist: §1 archives routines "once referenced", but
 // a Session references its routine only by denormalized `routineID` /
@@ -511,13 +511,13 @@ public protocol BurlyStore: AnyObject {
     /// reaches the store — see `Weight`'s doc for why every construction
     /// path is already closed at that boundary.
     ///
-    /// **This is the whole payload, and the only public way to apply any of
-    /// it** (m1-06 review round D). The single-entry upsert and the bare
-    /// prune are module-internal helpers now: a transport that could reach
-    /// either one on its own could commit the ack without the entries it
-    /// arrived with, which is the crash window this method exists to close.
-    /// The transport-facing shape is BurlySync's `SessionDigestReceipt`,
-    /// which cannot be constructed with only one half.
+    /// **This is the whole payload, and the only public way to apply it.**
+    /// Its watch implementation also persists the durable ack replay guard
+    /// in this same transaction. The single-entry upsert and bare prune are
+    /// module-internal helpers: reaching either one independently could
+    /// commit an ack without the entries it arrived with. The transport-facing
+    /// shape is BurlySync's `SessionDigestReceipt`, which cannot be built with
+    /// only one half.
     ///
     /// **The entries are trusted, not checked against the prune** (m1-06
     /// review round F, reverting round E). It is tempting to validate them:

@@ -36,7 +36,7 @@
 // transformation. Everything else is copied from v1 verbatim.
 //
 // And copied is the point: a `VersionedSchema` is a complete snapshot, not
-// a diff, so v2 re-declares all nine models rather than reaching back for
+// a diff, so v2 re-declares all ten models rather than reaching back for
 // `BurlySchemaV1.Exercise`. Reaching back would reintroduce exactly the
 // defect this round fixes, one version later — v3 editing `Exercise` would
 // silently rewrite what v2 means. The verbatim copying below is what a real
@@ -68,7 +68,8 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
             ActiveSessionJournal.self,
             SessionItem.self,
             SetRecord.self,
-            ExerciseLastPerformance.self
+            ExerciseLastPerformance.self,
+            WatchSyncJournal.self
         ]
     }
 
@@ -248,6 +249,17 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
             self.exerciseID = exerciseID
             self.performedAt = performedAt
             self.sets = sets
+        }
+    }
+
+    @Model
+    final class WatchSyncJournal {
+        @Attribute(.unique) var key: String
+        var payload: Data
+
+        init(key: String, payload: Data) {
+            self.key = key
+            self.payload = payload
         }
     }
 

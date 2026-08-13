@@ -13,15 +13,17 @@ import BurlySync
 
 public enum SnapshotPayloadBuilder {
     /// Builds the §5 `snapshot` payload at `version` from current store
-    /// truth: every non-archived exercise and routine.
+    /// truth: every non-archived routine and every exercise it references.
     ///
-    /// Archived exercises/routines are left out on purpose. §5 calls this a
+    /// Archived routines are left out on purpose. §5 calls this a
     /// "whole-working-set replace" of what the watch actually uses to start
     /// and log workouts — the routine list (§2 Start) and the swap/add
     /// catalog picker (§2 mid-session edits) both already hide archived
-    /// rows on the phone (`includingArchived: false` is exactly the
-    /// picker-visibility flag both `exercises(includingArchived:)` and
-    /// `routines(includingArchived:)` document) — and the watch never
+    /// rows on the phone. Picker visibility controls what users may newly
+    /// choose; it does not invalidate an existing live routine item, so an
+    /// archived exercise still referenced by a non-archived routine is sent
+    /// with that routine. The watch must retain the reference rather than
+    /// rendering an item with no exercise. The watch never
     /// accumulates history (§1), so it has no symmetric reason to carry an
     /// archived routine's name forward the way a phone-side history row
     /// does. A `needsNaming` placeholder the watch just created and the
@@ -29,10 +31,11 @@ public enum SnapshotPayloadBuilder {
     /// normally.
     @MainActor
     public static func build(version: Int, from store: any BurlyStore) throws -> BurlySnapshotPayloadDTO {
-        BurlySnapshotPayloadDTO(
-            version: version,
-            exercises: try store.exercises(includingArchived: false),
-            routines: try store.routines(includingArchived: false)
-        )
+        let routines = try store.routines(includingArchived: false)
+        let referencedExerciseIDs = Set(routines.flatMap { $0.items.compactMap(\.exerciseID) })
+        let exercises = try store.exercises(includingArchived: true).filter {
+            $0.archivedAt == nil || referencedExerciseIDs.contains($0.id)
+        }
+        return BurlySnapshotPayloadDTO(version: version, exercises: exercises, routines: routines)
     }
 }

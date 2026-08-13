@@ -27,10 +27,11 @@ import SwiftData
 enum BurlySchemaV1: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(1, 0, 0) }
 
-    /// Every §1 entity, in spec order, plus two pieces of module-internal
+    /// Every §1 entity, in spec order, plus three pieces of module-internal
     /// bookkeeping placed next to what they serve: the §9 seed-version
     /// metadata immediately after Exercise, and the in-flight session
-    /// journal immediately after Session. Unqualified because they are
+    /// journal immediately after Session, and watch-sync protocol facts at
+    /// the end. Unqualified because they are
     /// members of this enum. One schema serves both devices; the phone/watch
     /// difference is *content* policy (which rows exist, and the watch's
     /// post-ack pruning — §1 store shape, §5 outbox), not a different entity
@@ -46,7 +47,8 @@ enum BurlySchemaV1: VersionedSchema {
             ActiveSessionJournal.self,
             SessionItem.self,
             SetRecord.self,
-            ExerciseLastPerformance.self
+            ExerciseLastPerformance.self,
+            WatchSyncJournal.self
         ]
     }
 }

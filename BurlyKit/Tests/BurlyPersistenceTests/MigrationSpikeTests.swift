@@ -127,6 +127,9 @@ struct MigrationSpikeTests {
                     sets: [SetSnapshot(weight: Weight(kg: 100), reps: 5)]
                 )
             )
+            // Seed the new v1 entity through the shipping store so the
+            // spike proves the v2 snapshot carries a real journal row.
+            try store.applyDigest(lastPerformance: [], ackedSessionIDs: [])
         }
 
         // 2. Open that same file through a ladder that *does* have a
@@ -165,6 +168,7 @@ struct MigrationSpikeTests {
             #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()) == 1)
             #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ActiveSessionJournal>()) == 1)
             #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ExerciseLastPerformance>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.WatchSyncJournal>()) == 1)
             // Never seeded in this test — the entity migrates even so.
             #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.CatalogSeedState>()) == 0)
 
@@ -198,6 +202,12 @@ struct MigrationSpikeTests {
                 from: journal.payload
             )
             #expect(scaffolding.restTimer?.duration == 90)
+
+            let watchSyncJournal = try #require(
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.WatchSyncJournal>()).first
+            )
+            #expect(watchSyncJournal.key == "watchSync")
+            #expect(!watchSyncJournal.payload.isEmpty)
 
             // 3. The migrated store is a working v2 store, not just a
             //    readable one: write the new column, commit it, and prove

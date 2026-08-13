@@ -12,9 +12,10 @@
 //
 // The seam and the store method now describe the same payload: a receipt
 // cannot be built without both halves (see BurlySync/SessionDigest.swift),
-// and `applyDigest` commits both halves or neither. There is no
-// transport-facing call left that can prune without the entries it was
-// supposed to arrive with (m1-06 review round D).
+// and `applyDigest` commits both payload halves and the watch's durable ack
+// replay guard or neither. There is no transport-facing call left that can
+// prune without the entries it was supposed to arrive with (m1-06 review
+// round D).
 
 import Foundation
 import BurlySync
