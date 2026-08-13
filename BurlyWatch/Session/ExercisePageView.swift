@@ -38,11 +38,17 @@ struct ExercisePageView: View {
             Text(viewModel.exerciseName(item.exerciseID))
                 .font(.headline)
                 .lineLimit(2)
-                .accessibilityIdentifier("exercisePage.name")
+                // The vertical pager deliberately presents one item at a
+                // time. Its ordinal makes that rendered sequence available
+                // to VoiceOver (and proves a move-up/down changed the
+                // screen's order without relying on an ambiguous first
+                // matching row in UI tests).
+                .accessibilityValue("Exercise \(item.order + 1) of \(viewModel.items.count)")
+                .accessibilityIdentifier(currentIdentifier("exercisePage.name"))
             Text(setCounterText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .accessibilityIdentifier("exercisePage.setCounter")
+                .accessibilityIdentifier(currentIdentifier("exercisePage.setCounter"))
         }
     }
 
@@ -57,7 +63,7 @@ struct ExercisePageView: View {
         Text(ghostText)
             .font(.caption)
             .foregroundStyle(.tertiary)
-            .accessibilityIdentifier("exercisePage.ghost")
+            .accessibilityIdentifier(currentIdentifier("exercisePage.ghost"))
     }
 
     /// §2 acceptance #5: a seeded digest renders "Last: <weight> × <reps>"
@@ -67,6 +73,14 @@ struct ExercisePageView: View {
         guard let ghost = viewModel.ghost(for: item.id) else { return "No previous data" }
         let pounds = (ghost.weight.pounds * 2).rounded() / 2
         return String(format: "Last: %.1f lb × %d", pounds, ghost.reps)
+    }
+
+    /// A `TabView` keeps neighbouring pages in the accessibility tree.
+    /// The current page retains the stable test-facing identifier; inactive
+    /// siblings carry their item UUID so no query accidentally pairs a
+    /// control from one page with a label from another.
+    private func currentIdentifier(_ base: String) -> String {
+        isCurrent ? base : "\(base).\(item.id.uuidString)"
     }
 
     @ViewBuilder

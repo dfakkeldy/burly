@@ -111,6 +111,35 @@ struct ActiveSessionTransactionTests {
         #expect(resumed.currentItemID == nil)
     }
 
+    @Test("Custom-name-later creation persists a needsNaming exercise and its active-session reference")
+    func placeholderExercisePersistsWithItsSessionReference() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+
+        let placeholderID: UUID
+        let placeholderItemID: UUID
+        let sessionID: UUID
+        do {
+            let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: TestClock())
+            var (active, _, _) = try startedSession(in: store)
+            let created = try SessionMutator.addPlaceholderExercise(in: &active)
+            try store.createExercise(created.exercise)
+            try store.saveActiveSession(active)
+
+            placeholderID = created.exercise.id
+            placeholderItemID = created.itemID
+            sessionID = active.id
+        }
+
+        let reopened = try SwiftDataStore(kind: .watch, at: .file(url), clock: TestClock())
+        let storedExercise = try #require(try reopened.exercise(id: placeholderID))
+        let storedSession = try #require(try reopened.activeSession(id: sessionID))
+
+        #expect(storedExercise.needsNaming == true)
+        #expect(storedExercise.origin == .custom)
+        #expect(storedSession.item(placeholderItemID)?.exerciseID == placeholderID)
+    }
+
     @Test("a swap before anything is logged rewrites the STORED exerciseID — the exact divergence B1 named")
     func swapBeforeLoggingRewritesTheStoredExerciseReference() throws {
         let store = try makeStore(.watch)

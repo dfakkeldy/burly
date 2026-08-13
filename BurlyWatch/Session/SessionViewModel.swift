@@ -233,12 +233,37 @@ final class SessionViewModel {
     }
 
     /// The catalog picker's source list (§2 ellipsis "swap exercise" /
-    /// "add exercise"). Sorted by name (`BurlyStore.exercises(includingArchived:)`'s
-    /// own contract) -- this is the flat MVP list; sectioning into
-    /// recents/curated/customs is a follow-on UI polish item, not a
-    /// mutation-correctness one.
+    /// "add exercise"). Its deliberate order is recents, then the bundled
+    /// curated catalog, then customs. A last-performance digest is the
+    /// watch's durable "recently used" fact, and its `performedAt` supplies
+    /// a useful newest-first order within the first group. Exercises without
+    /// a digest remain alphabetized inside their origin group.
     func availableExercises() -> [ExerciseData] {
-        (try? store.exercises(includingArchived: false)) ?? []
+        let exercises = (try? store.exercises(includingArchived: false)) ?? []
+        let recentDates = Dictionary(
+            uniqueKeysWithValues: exercises.compactMap { exercise in
+                guard let digest = try? store.lastPerformance(exerciseID: exercise.id) else { return nil }
+                return (exercise.id, digest.performedAt)
+            }
+        )
+
+        return exercises.sorted { lhs, rhs in
+            let lhsRecent = recentDates[lhs.id]
+            let rhsRecent = recentDates[rhs.id]
+            switch (lhsRecent, rhsRecent) {
+            case let (lhsDate?, rhsDate?):
+                if lhsDate != rhsDate { return lhsDate > rhsDate }
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                let lhsGroup = lhs.origin == .curated ? 0 : 1
+                let rhsGroup = rhs.origin == .curated ? 0 : 1
+                if lhsGroup != rhsGroup { return lhsGroup < rhsGroup }
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
 
     func exerciseName(_ exerciseID: UUID?) -> String {

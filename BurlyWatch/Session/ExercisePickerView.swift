@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Spec §2 ellipsis "swap exercise" / "add exercise": "catalog picker:
 // recents -> curated -> customs; search is scribble/dictation only, never
-// required." This is the flat MVP of that picker -- one alphabetical list
-// (the store's own sort order) plus `.searchable`, which on watchOS is
-// itself scribble/dictation-only input, so "search is optional, never a
-// keyboard" falls out of the platform for free. Sectioning into
-// recents/curated/customs is deliberately deferred: it is presentation
-// polish on top of an already-correct, already-tested mutation
-// (`SessionMutator.swapExercise` / `.addExercise`), not a behavior this
-// task's acceptance criteria depend on.
+// required." `SessionViewModel.availableExercises()` supplies that exact
+// recents -> curated -> customs ordering. This remains one compact watch
+// list rather than three labelled sections, while `.searchable` stays
+// scribble/dictation-only input on watchOS: search is optional and never a
+// keyboard prerequisite.
 //
 // m2-03 review round 3 (final pass): this view no longer wraps itself in
 // its own `NavigationStack`. It is plain content meant to be hosted inside
