@@ -265,3 +265,33 @@ Probe instrumentation preserved at scratchpad/m2-04-codex-probe.diff; capture vi
 Next action: review the fix round's diff, then run the FULL acceptance sim via
 `scratchpad/slot-retry.sh -- timeout -s TERM 2700 ./Scripts/acceptance-sim.sh`.
 ```
+
+## 2026-08-13 — round 6 dispatched: mechanism established by read-site partition
+
+Done: Found the discriminator. `viewModel.items` is read at exactly three sites
+— `ExercisePageView.swift:58` (ordinary body, tracked) and
+`LoggingScreenView.swift:165`/`:169`, both inside the `TimelineView` content
+closure at `:163`. `context.date` is used at exactly one site (`.onChange` at
+`:180`), so that `TimelineView` renders nothing time-dependent — it is a 1 Hz
+timer that wraps the whole pager. Reads inside it never register an observation
+dependency. The four passing paths either don't touch `items` or also write
+`saveFailure` (read at `:52` in the real body), which forces a re-render that
+re-reads `items` — they refresh by accident. 7 of 7 paths explained, and it
+explains the isolation-vs-full-suite intermittency too. The whole-value-assign
+lead from the previous entry is dead (`addSet` mutates in place and passes).
+Round 6 dispatched to codex/gpt-5.6-sol from clean `4de3ce8`.
+
+Next: Read the round-6 report, then gate on the FULL acceptance sim in the
+09:00 window. `slot-retry.sh` widened to `MAX_ATTEMPTS=90` (135 min) so it can
+bridge the 07:00→09:00 closed window; the old 45 min could not. Pre-flight rule
+still binding: assert the fix in SOURCE at launch and in the BUILT dylib after,
+or the result is inconclusive.
+
+Resume:
+```
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m2-04, branch task/burly-m2-04.
+Read the round-6 Codex report, then run the full acceptance sim SOLO via
+Scripts/acceptance-sim.sh wrapped in scratchpad/slot-retry.sh. Gate is 32/32
+watch + 8/8 phone with zero test edits. Verify the fix is in the shipped
+BurlyWatch.debug.dylib before trusting any result.
+```
