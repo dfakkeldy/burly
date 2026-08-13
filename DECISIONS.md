@@ -1,5 +1,6 @@
+<!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
-## 2026-08-13 — Skipping advances to the next visible exercise
+## 2026-08-12 — Skipping advances to the next visible exercise
 
 §2 specifies that an exercise can be skipped, but does not specify the page
 shown afterwards. The logging screen now selects the next unskipped item after
@@ -9,7 +10,7 @@ remain. This avoids sending a lifter mid-workout back to the start while keeping
 the policy isolated in `ActiveSession.nextUnskippedItemID(after:)` for an easy
 future reversal.
 
-## 2026-08-13 — The phone-sync journal trades one redundancy for one boundary, knowingly
+## 2026-08-12 — The phone-sync journal trades one redundancy for one boundary, knowingly
 
 The two-file phone-sync persistence (authoritative sidecar + high-water log) was
 replaced with a single append-only journal because the two-file design's
