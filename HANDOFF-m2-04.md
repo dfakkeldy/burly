@@ -146,3 +146,61 @@ Worktree /Users/dfakkeldy/Developer/worktrees/burly-m2-04, branch task/burly-m2-
 Next action: dispatch diagnose-only round for the silent no-op in SessionViewModel's
 actions-sheet mutation path (skip/add). BurlyCore is proven correct — do not re-derive it.
 ```
+
+## 2026-08-13 — measured M directly; "first mutation" story caught and killed
+
+Done:
+- Stopped waiting on the diagnosis engine (three rounds of "0 tests executed"
+  from its sandbox; its last act was launching the full acceptance sim, which
+  cannot answer the question) and measured the value myself.
+- Probe: printed `exercisePage.name`'s accessibility value — which IS
+  `Exercise N of M` — after each mutation, ran the sim, reverted the probe.
+  Baseline unchanged by it (32 tests, 3 failures, same three), so the readings
+  hold. Run dir `20260813T0605*`, log `scratchpad/m2-04-probe-run.log`.
+
+      PROBE88-add1   label=Back Squat  value=Exercise 1 of 1    did NOT land
+      PROBE88-add2   label=Pull-Up     value=Exercise 2 of 2    DID land
+      PROBE118-add1  label=Back Squat  value=Exercise 1 of 1    did NOT land
+
+  Corroborated by the tree at the same instants: `value: page 1 of 1`.
+  **The mutations are not landing at all** — not landing-then-failing-to-route.
+
+- `:88`'s `app.swipeDown()` is INNOCENT, and I had it filed as a harness
+  gesture bug for two rounds. It fails because Barbell Bench Press was never
+  added, so there is no middle page. The retarget work in the reverted round
+  was "fixing" a test that was telling the truth.
+
+The exact pattern, including the passing tests that constrain it:
+
+      LANDS   addSet                                  (first mutation of its test)
+      LANDS   add via `exercisePicker.addPlaceholder`  (first mutation of its test)
+      LANDS   add "Pull-Up" via picker row            (second add in `:88`)
+      DROPPED skip                                     (`:60`, first mutation)
+      DROPPED add "Barbell Bench Press" via picker row (`:118` and `:88`)
+
+I first wrote this up as "the first session-actions mutation after launch is
+silently dropped" and that is FALSE — `addSet` and the placeholder add are both
+first mutations and both land. Caught before dispatching. The real pattern is
+narrower: skip, and the picker-row add of Barbell Bench Press.
+
+Unexplained lead, NOT a conclusion: Barbell Bench Press is tapped ~3s after the
+picker opens (it sits near the top, so it is hittable at once) while Pull-Up is
+tapped only after ~30s of drags. The add given a long settling period lands.
+That does not obviously explain `:60`, where `addSet` and `skip` are reached
+identically and only `skip` fails — so either two causes, or one of these
+readings is misread.
+
+Next:
+- Round 4 dispatched (gpt-5.6-sol, --write): establish the mechanism with
+  evidence, THEN fix. Brief carries the correction that the swipe is innocent
+  and forbids test edits to close the gap.
+- Verify engine-blind afterwards. Prediction to check: all three go green with
+  zero test edits.
+
+Resume:
+```
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m2-04, branch task/burly-m2-04, tree clean.
+Next action: read scratchpad/m2-04-fix4.log; review the diff; then run
+`scratchpad/slot-retry.sh -- timeout -s TERM 2700 ./Scripts/acceptance-sim.sh`
+and read the xcresult bundles directly — do not trust any reported count.
+```
