@@ -592,6 +592,15 @@ final class FaultInjectingStore: BurlyStore {
         try wrapped.exercises(includingArchived: includingArchived)
     }
     func archiveExercise(id: UUID, at date: Date) throws { try wrapped.archiveExercise(id: id, at: date) }
+    /// §6 placeholder resolution is phone-side; the watch never calls these.
+    /// They forward untouched, with no `Fault` case, because no watch UI test
+    /// has a recovery path to exercise here -- same as `archiveExercise`.
+    func namePlaceholderExercise(id: UUID, name: String) throws {
+        try wrapped.namePlaceholderExercise(id: id, name: name)
+    }
+    func mergePlaceholderExercise(id placeholderID: UUID, into exerciseID: UUID, at date: Date) throws {
+        try wrapped.mergePlaceholderExercise(id: placeholderID, into: exerciseID, at: date)
+    }
 
     // MARK: - Routines
 
