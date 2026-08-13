@@ -178,8 +178,6 @@ private struct RoutineCreationView: View {
 
 @MainActor
 private struct RoutineEditorView: View {
-    @Environment(\.dismiss) private var dismiss
-
     let routine: RoutineData
     let viewModel: PhoneHomeViewModel
     let onArchive: () -> Void
@@ -246,18 +244,19 @@ private struct RoutineEditorView: View {
                 }
                 .accessibilityIdentifier("routineEditor.saveButton")
             }
+
+            Section {
+                Button("Archive routine", systemImage: "archivebox", role: .destructive) {
+                    confirmsArchive = true
+                }
+                .accessibilityIdentifier("routineEditor.archiveButton")
+            }
         }
         .navigationTitle("Edit Routine")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 EditButton()
                     .accessibilityIdentifier("routineEditor.editItemsButton")
-            }
-            ToolbarItem(placement: .bottomBar) {
-                Button("Archive", systemImage: "archivebox", role: .destructive) {
-                    confirmsArchive = true
-                }
-                .accessibilityIdentifier("routineEditor.archiveButton")
             }
         }
         .task { viewModel.loadCatalogForDisplay() }
@@ -274,7 +273,6 @@ private struct RoutineEditorView: View {
                 do {
                     try viewModel.archiveRoutine(id: routine.id)
                     onArchive()
-                    dismiss()
                 } catch {
                     errorMessage = error.localizedDescription
                 }

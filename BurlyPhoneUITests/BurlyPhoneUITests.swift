@@ -377,8 +377,13 @@ final class BurlyPhoneUITests: XCTestCase {
 
         app.buttons["routineEditor.saveButton"].tap()
         XCTAssertEqual(setCount.label, "4 sets")
-        app.buttons["routineEditor.archiveButton"].tap()
-        app.buttons["Archive routine"].tap()
+        let archiveRoutineButton = app.buttons["routineEditor.archiveButton"]
+        XCTAssertTrue(archiveRoutineButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(archiveRoutineButton.isHittable)
+        archiveRoutineButton.tap()
+        let confirmArchiveRoutineButton = app.buttons["routineEditor.confirmArchiveButton"]
+        XCTAssertTrue(confirmArchiveRoutineButton.waitForExistence(timeout: 5))
+        confirmArchiveRoutineButton.tap()
         XCTAssertTrue(app.staticTexts["routinesTab.emptyState.heading"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts[routineName].exists)
 
@@ -390,9 +395,13 @@ final class BurlyPhoneUITests: XCTestCase {
         archiveSearch.typeText(customName)
         XCTAssertTrue(app.staticTexts[customName].waitForExistence(timeout: 5))
         let archiveButton = app.buttons["catalog.archiveExercise.\(customExerciseID)"]
+        XCTAssertTrue(archiveButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(archiveButton.isHittable)
         archiveButton.tap()
-        app.buttons["Archive exercise"].tap()
-        XCTAssertFalse(app.staticTexts[customName].exists)
+        let confirmArchiveExerciseButton = app.buttons["catalog.confirmArchiveButton"]
+        XCTAssertTrue(confirmArchiveExerciseButton.waitForExistence(timeout: 5))
+        confirmArchiveExerciseButton.tap()
+        XCTAssertTrue(app.staticTexts[customName].waitForNonExistence(timeout: 10))
 
         attachScreenshot(from: app, name: "BurlyPhone-routineBuilderCatalog")
     }
