@@ -40,6 +40,8 @@ final class PhoneHomeViewModel {
     private(set) var sessionsState: LoadState = .loading
     private(set) var loggedSessionCount = 0
     private(set) var sessionRows: [SessionData] = []
+    private(set) var historyExercises: [ExerciseData] = []
+    private(set) var namingQueue: [ExerciseData] = []
 
     // Stats domain. Unlike the shell's count-only snapshot above, this is
     // loaded only when Stats appears and uses the §7 bounded query surfaces.
@@ -109,7 +111,41 @@ final class PhoneHomeViewModel {
         do {
             loggedSessionCount = try store.loggedSessionCount()
             sessionRows = try store.sessions(state: .logged)
+            historyExercises = try store.exercises(includingArchived: false)
+            namingQueue = historyExercises.filter(\.needsNaming)
             sessionsState = .loaded
+        } catch {
+            sessionsState = .failed(String(describing: error))
+        }
+    }
+
+    /// The phone's §6 edit gateway. `applyPhoneEdit` is the persistence
+    /// invariant owner: it increments revision and never writes HealthKit.
+    func saveHistoryEdit(_ session: SessionData) throws -> SessionData {
+        let revision = try store.applyPhoneEdit(session)
+        var saved = session
+        saved.revision = revision
+        if let index = sessionRows.firstIndex(where: { $0.id == saved.id }) {
+            sessionRows[index] = saved
+        }
+        return saved
+    }
+
+    func namePlaceholder(_ exercise: ExerciseData, as name: String) throws {
+        try store.namePlaceholderExercise(id: exercise.id, name: name)
+        reloadHistoryExercises()
+    }
+
+    func mergePlaceholder(_ exercise: ExerciseData, into destination: ExerciseData) throws {
+        try store.mergePlaceholderExercise(id: exercise.id, into: destination.id, at: .now)
+        reloadHistoryExercises()
+    }
+
+    private func reloadHistoryExercises() {
+        do {
+            historyExercises = try store.exercises(includingArchived: false)
+            namingQueue = historyExercises.filter(\.needsNaming)
+            sessionRows = try store.sessions(state: .logged)
         } catch {
             sessionsState = .failed(String(describing: error))
         }
