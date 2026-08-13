@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // m4-04 review round 3, §1 — the unrecoverable state must be PREVENTED from
 // transmitting, not merely detected: after a load that throws
-// `PhoneSyncStateUnrecoverableError` (both the primary state file and the
-// high-water log untrustworthy), the coordinator's zeroed fallback `State`
+// `PhoneSyncStateUnrecoverableError` (journal present with zero valid lines),
+// the coordinator's zeroed fallback `State`
 // must never reach the transport or the digest publisher. Rounds 1 and 2
 // surfaced the condition (`syncStateUnrecoverable`) but left every push
 // trigger operational — a corrupted phone would retransmit reused
@@ -28,25 +28,19 @@ struct SyncUnrecoverableQuiescenceTests {
             .appending(path: "state.json", directoryHint: .notDirectory)
     }
 
-    private func highWaterURL(for url: URL) -> URL {
-        url.deletingPathExtension().appendingPathExtension("highwater.jsonl")
-    }
-
     /// Persists a real prior identity (version 7, generation 11 — the
-    /// review's concrete scenario), then corrupts BOTH files so the next
-    /// load is unrecoverable.
+    /// review's concrete scenario), then replaces the journal with corrupt
+    /// data so the next load is unrecoverable.
     private func makeCorruptedPersisting(url: URL) throws -> FileBackedPhoneSyncStatePersisting {
-        let hwURL = highWaterURL(for: url)
-        let persisting = FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL)
+        let persisting = FileBackedPhoneSyncStatePersisting(url: url)
         try persisting.save(PhoneSyncRuntimeState(
             machineState: BurlyPhoneSyncMachine.State(latestSnapshotVersion: 7, lastTransferGeneration: 11)
         ))
-        try Data("not json {{{".utf8).write(to: url)
-        try Data("also not json {{{".utf8).write(to: hwURL)
+        try Data("not a valid journal line {{{".utf8).write(to: url)
         return persisting
     }
 
-    @Test("the review's pin: files held (version 7, generation 11), the load is unrecoverable — applicationDidLaunch and EVERY other public trigger transmit NOTHING, and the flag is observable")
+    @Test("the review's pin: the prior journal held (version 7, generation 11), its load is unrecoverable, and every public trigger transmits nothing")
     func unrecoverableLoadDisablesEveryPublicPushTrigger() async throws {
         let url = makeTemporaryURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -144,12 +138,12 @@ struct SyncUnrecoverableQuiescenceTests {
         try await coordinator.applicationDidLaunch()
         #expect(await transport.transmissions.map(\.generation) == [1])
 
-        // And it is durable: a relaunch over the same files is a clean
+        // And it is durable: a relaunch over the same journal is a clean
         // load — no corruption recovery, no unrecoverable flag, and the
         // persisted identity continues from where the reset domain got to.
         let relaunched = PhoneSyncCoordinator(
             store: store, transport: FakeTransport(), digestPublisher: FakeDigestPublisher(),
-            statePersisting: FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: highWaterURL(for: url)),
+            statePersisting: FileBackedPhoneSyncStatePersisting(url: url),
             clock: TestClock(), scheduler: ManualTriggerScheduler()
         )
         #expect(relaunched.syncStateUnrecoverable == false)
@@ -183,62 +177,46 @@ struct SyncUnrecoverableQuiescenceTests {
         #expect(await transport.transmissions.isEmpty, "still quiescent after the failed reset")
     }
 
-    @Test("round 4, §2 — a reset whose PRIMARY write fails leaves durable state indistinguishable from 'reset never happened': the relaunch is STILL unrecoverable, never operational at a laundered zero")
+    @Test("a failed atomic journal reset leaves durable state indistinguishable from reset never happening")
     func partiallyFailedResetDoesNotLaunderAZeroAcrossRelaunch() async throws {
-        // The reviewer's exact setup: primary present-but-unreadable,
-        // high-water log ABSENT. The two files are deliberately placed in
-        // DIFFERENT directories so the primary write can be made to fail
-        // (its directory turned read-only) while the log's directory stays
-        // fully writable — the exact two-phase interleaving that used to
-        // orphan a trustworthy (0, 0) log record: pre-fix, the reset went
-        // through `save`, which appended (0, 0) to the (writable) log
-        // FIRST and only then failed the primary write, so the relaunch
-        // recovered (0, 0) and went operational.
         let base = FileManager.default.temporaryDirectory
             .appending(path: "burly-reset-atomicity-\(UUID().uuidString)", directoryHint: .isDirectory)
-        let primaryDirectory = base.appending(path: "primary", directoryHint: .isDirectory)
-        let highWaterDirectory = base.appending(path: "highwater", directoryHint: .isDirectory)
-        let url = primaryDirectory.appending(path: "state.json", directoryHint: .notDirectory)
-        let hwURL = highWaterDirectory.appending(path: "state.highwater.jsonl", directoryHint: .notDirectory)
-        try FileManager.default.createDirectory(at: primaryDirectory, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: highWaterDirectory, withIntermediateDirectories: true)
+        let url = base.appending(path: "state.jsonl", directoryHint: .notDirectory)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer {
-            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: primaryDirectory.path)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: base.path)
             try? FileManager.default.removeItem(at: base)
         }
-        try Data("unreadable primary {{{".utf8).write(to: url)
+        let corruptBytes = Data("unreadable journal {{{".utf8)
+        try corruptBytes.write(to: url)
 
         let store = try makePhoneStore()
         let coordinator = PhoneSyncCoordinator(
             store: store, transport: FakeTransport(), digestPublisher: FakeDigestPublisher(),
-            statePersisting: FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL),
+            statePersisting: FileBackedPhoneSyncStatePersisting(url: url),
             clock: TestClock(), scheduler: ManualTriggerScheduler()
         )
-        #expect(coordinator.syncStateUnrecoverable, "unreadable primary + absent log is the unrecoverable state")
+        #expect(coordinator.syncStateUnrecoverable, "a present zero-valid-line journal is unrecoverable")
 
-        // Make the primary's directory read-only: the reset's atomic
-        // primary write fails with a real I/O error. The log directory
-        // remains writable throughout.
-        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: primaryDirectory.path)
+        // Atomic replacement needs a directory rename. Making that directory
+        // read-only forces a real I/O failure before the corrupt journal can
+        // be replaced by a fresh-domain record.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: base.path)
         #expect(throws: (any Error).self) {
             try coordinator.resetSyncStateForRePair()
         }
         #expect(coordinator.syncStateUnrecoverable, "the failed reset keeps THIS coordinator quiescent")
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: primaryDirectory.path)
-
-        #expect(
-            FileManager.default.fileExists(atPath: hwURL.path) == false,
-            "no partial zero-identity record may exist ANYWHERE after a failed reset — both records commit or neither"
-        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: base.path)
+        #expect(try Data(contentsOf: url) == corruptBytes)
 
         // The laundering step the review pinned: relaunch over the same
-        // files. Durable state must be indistinguishable from 'reset never
+        // journal. Durable state must be indistinguishable from 'reset never
         // happened' — still unrecoverable, still quiescent, transmitting
         // nothing; never operational at a (0, 0) the reset never committed.
         let relaunchTransport = FakeTransport()
         let relaunched = PhoneSyncCoordinator(
             store: store, transport: relaunchTransport, digestPublisher: FakeDigestPublisher(),
-            statePersisting: FileBackedPhoneSyncStatePersisting(url: url, highWaterURL: hwURL),
+            statePersisting: FileBackedPhoneSyncStatePersisting(url: url),
             clock: TestClock(), scheduler: ManualTriggerScheduler()
         )
         #expect(relaunched.syncStateUnrecoverable, "the relaunch must NOT recover a laundered (0, 0) from the failed reset")

@@ -54,9 +54,8 @@
 //   the commands for execution — so a crash between "ack recorded" and
 //   "digest published" always finds the ack already durable, and the next
 //   event that produces a `publishDigest` command re-covers it.
-//   `PhoneSyncStatePersisting`'s conformer also durably records the
-//   monotonic snapshot identities *before* the primary state save (blocker
-//   1) — see that protocol's doc.
+//   `PhoneSyncStatePersisting`'s journal record contains the complete state,
+//   including both monotonic snapshot identities — see that protocol's doc.
 // - **Item 6 (digest publications coalesce, and carry only a signal):**
 //   `.publishDigest`'s execution goes through `digestCoalescer` — a burst of
 //   confirmations/history-changed signals becomes one derivation and one
@@ -154,15 +153,12 @@ public final class PhoneSyncCoordinator {
     /// contribute and must not run (it would otherwise resurrect a
     /// transfer the newer batch's own cancel already retired).
     private var catalogBatchEpoch = 0
-    /// Blocker 1: `true` when `init` had to reconstruct state from the
-    /// high-water-mark log alone because the primary sidecar was
-    /// missing/unreadable/semantically invalid — a surfaced recovery event,
-    /// not a silent reset. See `PhoneSyncStatePersisting`'s doc.
+    /// `true` when `init` skipped invalid journal data (or migrated a legacy
+    /// recovery) to reconstruct state — a surfaced event, not a silent reset.
     public private(set) var recoveredFromCorruptState = false
     /// m4-04 review round 2, finding 1 + round 3, §1: `true` when `init`
-    /// could get NO trustworthy identity from EITHER the primary state file
-    /// or the high-water-mark log (`PhoneSyncStateUnrecoverableError`) —
-    /// the "both unreadable" edge blocker 1's original fix missed. The
+    /// found a present journal with zero checksum-valid records
+    /// (`PhoneSyncStateUnrecoverableError`). The
     /// coordinator still constructs (with a fresh, zeroed `State` — there
     /// is nothing else to build one from), but that zero is NOT a resumed
     /// identity, and while this flag is `true` the coordinator is
@@ -241,8 +237,7 @@ public final class PhoneSyncCoordinator {
                 self.lastDailyPushAt = nil
             }
         } catch is PhoneSyncStateUnrecoverableError {
-            // m4-04 review round 2, finding 1 + round 3, §1: neither the
-            // primary nor the high-water log gave a trustworthy identity —
+            // The journal exists but no record provides a trustworthy identity —
             // construct a fresh state (there is nothing else to build one
             // from), flag it distinctly from an ordinary single-file
             // corruption recovery, and QUIESCE: every push/ingest entry
@@ -259,8 +254,8 @@ public final class PhoneSyncCoordinator {
         } catch {
             // Any other thrown error (e.g. a conformer with its own
             // failure modes) is a harder failure than a single documented
-            // corruption case but not the specific "both sources
-            // exhausted" one above — treated the same fail-safe way round
+            // corruption case but not the specific zero-valid-record
+            // condition above — treated the same fail-safe way round
             // 1 established: fresh state, surfaced as a corruption
             // recovery.
             self.state = BurlyPhoneSyncMachine.State()
