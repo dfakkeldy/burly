@@ -64,6 +64,13 @@ final class SessionViewModel {
     private let haptics: HapticPlaying
     private let now: () -> Date
 
+    /// Stable identity/order for the logging pager. This is deliberately a
+    /// stored observable value rather than a computed read through `engine`:
+    /// `engine` also carries the 1 Hz clock state, so making the pager's
+    /// structure observe it would rebuild the enclosing `TimelineView` on
+    /// every tick. Only structural item mutations refresh this snapshot.
+    private(set) var pagerItemIDs: [UUID]
+
     /// The item currently on screen. `nil` only for a brand-new "Empty
     /// session" with nothing added yet (§2 Start).
     private(set) var currentItemID: UUID?
@@ -178,6 +185,7 @@ final class SessionViewModel {
         self.store = store
         self.haptics = haptics
         self.now = now
+        self.pagerItemIDs = engine.session.unskippedItems.map(\.id)
         // m2-06 review round 2, finding "new defect": the page-selection
         // policy itself now lives on `ActiveSession.initialPageItemID`
         // (BurlyCore) -- see that property's doc for why, and for the
@@ -194,6 +202,18 @@ final class SessionViewModel {
     // MARK: - Reads
 
     var items: [SessionItemData] { engine.session.unskippedItems }
+
+    /// Resolves one of `pagerItemIDs` inside the `TimelineView` content
+    /// closure. Structural mutations refresh the ID snapshot synchronously,
+    /// and session mutations never delete an item, so a missing ID remains a
+    /// development-time invariant failure while shipping builds skip its page.
+    func pagerItem(for itemID: UUID) -> SessionItemData? {
+        guard let item = engine.session.item(itemID) else {
+            assertionFailure("Pager item \(itemID) is missing from the active session")
+            return nil
+        }
+        return item
+    }
 
     func renderedItemOrdinal(for itemID: UUID) -> Int? {
         engine.session.unskippedItemIndex(of: itemID).map { $0 + 1 }
@@ -517,18 +537,21 @@ final class SessionViewModel {
     func skipCurrentExercise() {
         guard let id = currentItemID else { return }
         try? engine.skipExercise(itemID: id)
+        refreshPagerItemIDs()
         applyCurrentItem(engine.session.nextUnskippedItemID(after: id))
     }
 
     func moveCurrentUp() {
         guard let id = currentItemID else { return }
         try? engine.moveItemUp(itemID: id)
+        refreshPagerItemIDs()
         persist()
     }
 
     func moveCurrentDown() {
         guard let id = currentItemID else { return }
         try? engine.moveItemDown(itemID: id)
+        refreshPagerItemIDs()
         persist()
     }
 
@@ -537,6 +560,7 @@ final class SessionViewModel {
         pickerContext = nil
         guard let exerciseID else { return }
         guard let newID = try? engine.swapExercise(itemID: itemID, toExerciseID: exerciseID) else { return }
+        refreshPagerItemIDs()
         applyCurrentItem(newID)
     }
 
@@ -544,6 +568,7 @@ final class SessionViewModel {
     func addExercise(_ exerciseID: UUID) {
         pickerContext = nil
         guard let newID = try? engine.addExercise(exerciseID: exerciseID) else { return }
+        refreshPagerItemIDs()
         applyCurrentItem(newID)
     }
 
@@ -573,6 +598,7 @@ final class SessionViewModel {
             let result = try attempt.addPlaceholderExercise()
             try store.createExercise(result.exercise)
             engine = attempt
+            refreshPagerItemIDs()
             saveFailure = nil
             pendingRetry = nil
             applyCurrentItem(result.itemID)
@@ -711,6 +737,12 @@ final class SessionViewModel {
     }
 
     // MARK: - Internals
+
+    private func refreshPagerItemIDs() {
+        let updated = engine.session.unskippedItems.map(\.id)
+        guard updated != pagerItemIDs else { return }
+        pagerItemIDs = updated
+    }
 
     /// The generic mutation-save path: attempts `store.saveActiveSession`
     /// for a mutation that has *already* been applied to `engine` (adding a

@@ -160,15 +160,23 @@ struct LoggingScreenView: View {
 
     @ViewBuilder
     private var loggingBody: some View {
+        // This read is intentionally outside the TimelineView closure so
+        // add/skip/swap/reorder rebuild the pager's page set immediately.
+        // Unlike `viewModel.items`, this stored key path is never written by
+        // `tick()`, so the enclosing body does not acquire an `engine`
+        // dependency or restart `.periodic(from: .now, by: 1)` at CPU speed.
+        let pagerItemIDs = viewModel.pagerItemIDs
         TimelineView(.periodic(from: .now, by: 1)) { context in
             Group {
-                if viewModel.items.isEmpty {
+                if pagerItemIDs.isEmpty {
                     emptySessionPlaceholder
                 } else {
                     TabView(selection: viewModel.pagingSelection) {
-                        ForEach(viewModel.items) { item in
-                            ExercisePageView(viewModel: viewModel, item: item)
-                                .tag(item.id as UUID?)
+                        ForEach(pagerItemIDs, id: \.self) { itemID in
+                            if let item = viewModel.pagerItem(for: itemID) {
+                                ExercisePageView(viewModel: viewModel, item: item)
+                                    .tag(item.id as UUID?)
+                            }
                         }
                     }
                     .tabViewStyle(.verticalPage)
