@@ -97,6 +97,28 @@ struct WorkoutControllerTests {
         #expect(harness.controller.lifecycle == .active)
     }
 
+    @Test("retry after a stopped-state timeout re-issues stop activity")
+    func retryAfterStopTimeoutReissuesStopActivity() async throws {
+        let timeout = ImmediateStopTimeout()
+        let harness = Harness(timeout: timeout)
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        await #expect(throws: WorkoutControllerError.stoppedStateTimedOut) {
+            try await harness.controller.finish(at: endedAt)
+        }
+        #expect(harness.log == [.stopActivity(endedAt)])
+
+        await #expect(throws: WorkoutControllerError.stoppedStateTimedOut) {
+            try await harness.controller.finish(at: endedAt)
+        }
+
+        let stopCount = harness.log.calls.filter {
+            if case .stopActivity = $0 { true } else { false }
+        }.count
+        #expect(stopCount == 2)
+    }
+
     @Test("a controller rejects a second live workout while one is active")
     func onlyOneLiveWorkoutCanBeActive() async throws {
         let harness = Harness()
@@ -120,12 +142,11 @@ struct WorkoutControllerTests {
         #expect(harness.controller.lifecycle == .idle)
     }
 
-    @Test("begin-collection failure releases a finish already waiting for stopped")
-    func beginCollectionFailureReleasesParkedFinish() async throws {
+    @Test("begin-collection failure releases finish before stop activity is issued")
+    func beginCollectionFailureReleasesFinishWithoutStopping() async throws {
         let beginCollection = OperationGate()
-        let timeout = ManualStopTimeout()
         let failure = WorkoutHealthError.operationFailed("begin collection failed")
-        let harness = Harness(timeout: timeout, beginCollectionGate: beginCollection)
+        let harness = Harness(beginCollectionGate: beginCollection)
 
         let start = Task { @MainActor in
             try await harness.controller.start(at: startedAt)
@@ -135,16 +156,16 @@ struct WorkoutControllerTests {
         let finish = Task { @MainActor in
             try await harness.controller.finish(at: endedAt)
         }
-        try await waitUntil { harness.log.calls.contains(.stopActivity(endedAt)) }
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+        #expect(!harness.log.calls.contains(.stopActivity(endedAt)))
 
         beginCollection.fail(with: failure)
         await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
             try await start.value
         }
 
-        // On the broken implementation this is the only way to keep the test
-        // from hanging; the wrong timeout error proves start stranded finish.
-        await timeout.fireNextWhenReady()
         await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
             try await finish.value
         }
@@ -159,8 +180,40 @@ struct WorkoutControllerTests {
         }
         harness.session.emit(.stopped)
         try await secondFinish.value
-        await timeout.fireNextWhenReady()
         #expect(harness.controller.lifecycle == .idle)
+    }
+
+    @Test("finish waits for collection startup before issuing stop activity")
+    func finishWaitsForCollectionStartupBeforeStopping() async throws {
+        let beginCollection = OperationGate()
+        let harness = Harness(beginCollectionGate: beginCollection)
+
+        let start = Task { @MainActor in
+            try await harness.controller.start(at: startedAt)
+        }
+        try await waitUntil { harness.log.calls.contains(.beginCollection(startedAt)) }
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+        #expect(!harness.log.calls.contains(.stopActivity(endedAt)))
+
+        beginCollection.succeedAll()
+        try await start.value
+        try await waitUntil { harness.log.calls.contains(.stopActivity(endedAt)) }
+        harness.session.emit(.stopped)
+        try await finish.value
+
+        let beginIndex = try #require(
+            harness.log.calls.firstIndex(of: .beginCollection(startedAt))
+        )
+        let stopIndex = try #require(
+            harness.log.calls.firstIndex(of: .stopActivity(endedAt))
+        )
+        #expect(beginIndex < stopIndex)
     }
 
     @Test("finish retry resumes after collection already ended")
@@ -312,8 +365,8 @@ struct WorkoutControllerTests {
         #expect(harness.controller.lifecycle == .idle)
     }
 
-    @Test("a second termination cannot replace a live stopped-state waiter")
-    func concurrentTerminationDoesNotReplaceStoppedWaiter() async throws {
+    @Test("ending lifecycle rejects a second termination while waiting for stopped")
+    func endingLifecycleRejectsSecondTerminationWhileWaitingForStopped() async throws {
         let harness = Harness()
         try await harness.controller.start(at: startedAt)
         harness.log.removeAll()
@@ -330,6 +383,27 @@ struct WorkoutControllerTests {
 
         harness.session.emit(.stopped)
         try await firstFinish.value
+    }
+
+    @Test("session failure during termination does not admit a second termination")
+    func sessionFailureDuringTerminationPreservesEndingLifecycle() async throws {
+        let failure = WorkoutHealthError.operationFailed("session failed")
+        let harness = Harness()
+        try await harness.controller.start(at: startedAt)
+        harness.log.removeAll()
+
+        let finish = Task { @MainActor in
+            try await harness.controller.finish(at: endedAt)
+        }
+        try await waitUntil { harness.log == [.stopActivity(endedAt)] }
+
+        harness.session.emit(.failed(failure))
+        await #expect(throws: WorkoutControllerError.terminationAlreadyInProgress) {
+            try await harness.controller.discard(at: endedAt)
+        }
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await finish.value
+        }
     }
 
     @Test("a second termination is rejected while end collection is suspended")
@@ -440,22 +514,35 @@ struct WorkoutControllerTests {
         #expect(harness.controller.lifecycle == .idle)
     }
 
-    @Test("the production stopped-state policy waits exactly five seconds")
-    func defaultStopTimeoutUsesFiveSeconds() async throws {
-        let recorder = DurationRecorder()
-        let timeout = FiveSecondWorkoutStopTimeout { duration in
-            await recorder.record(duration)
+    @Test("starting after a session failure reports that failure")
+    func startAfterSessionFailureReportsFailure() async throws {
+        let harness = Harness()
+        try await harness.controller.start(at: startedAt)
+        harness.session.emit(.failed(.anotherWorkoutSessionStarted))
+        let logBeforeRetry = harness.log.calls
+
+        await #expect(throws: WorkoutControllerError.anotherWorkoutSessionStarted) {
+            try await harness.controller.start(at: startedAt.addingTimeInterval(1))
         }
 
-        try await timeout.wait()
-
-        #expect(await recorder.durations == [.seconds(5)])
+        #expect(harness.log.calls == logBeforeRetry)
     }
 
-    @Test("resuming the stopped waiter cancels its timeout task")
-    func stoppedCallbackCancelsTimeoutTask() async throws {
+    @Test("the public default stopped-state policy waits five seconds")
+    func publicDefaultStopTimeoutUsesFiveSeconds() async throws {
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        try await FiveSecondWorkoutStopTimeout().wait()
+
+        #expect(clock.now - start >= .seconds(5))
+    }
+
+    @Test("stopped callback cancels timeout even when end collection fails")
+    func stoppedCallbackCancelsTimeoutBeforeEndCollectionFailure() async throws {
         let timeout = CancellationRecordingTimeout()
-        let harness = Harness(timeout: timeout)
+        let failure = WorkoutHealthError.operationFailed("end collection failed")
+        let harness = Harness(timeout: timeout, endCollectionFailures: [failure])
         try await harness.controller.start(at: startedAt)
 
         let finish = Task { @MainActor in
@@ -463,13 +550,16 @@ struct WorkoutControllerTests {
         }
         try await waitUntil { harness.log.calls.contains(.stopActivity(endedAt)) }
         harness.session.emit(.stopped)
-        try await finish.value
+        await #expect(throws: WorkoutControllerError.healthOperationFailed(failure)) {
+            try await finish.value
+        }
 
         let observedCancellation = await eventually {
             await timeout.cancellationObserved
         }
         await timeout.release()
         #expect(observedCancellation)
+        #expect(harness.controller.lifecycle == .active)
     }
 
     private func eventually(
@@ -700,14 +790,6 @@ private actor ManualStopTimeout: WorkoutStopTimeout {
             await Task.yield()
         }
         continuations.removeFirst().resume()
-    }
-}
-
-private actor DurationRecorder {
-    private(set) var durations: [Duration] = []
-
-    func record(_ duration: Duration) {
-        durations.append(duration)
     }
 }
 

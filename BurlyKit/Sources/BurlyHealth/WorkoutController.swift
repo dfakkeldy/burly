@@ -8,6 +8,14 @@ import Foundation
 /// originate on arbitrary queues.
 @MainActor
 public final class WorkoutController {
+    /// The controller's availability for commands, not HealthKit's activity state.
+    ///
+    /// `.idle` owns no workout resources and permits `start`; `.active` owns a
+    /// workout with no termination call in flight and means "terminable, retry
+    /// me" rather than "currently collecting"; `.ending` has one termination
+    /// call in flight and rejects another; `.failed(error)` owns a workout whose
+    /// session reported `error`, rejects `start` with that error, and still permits
+    /// `finish` or `discard` so the caller can clean it up.
     public private(set) var lifecycle: WorkoutLifecycle = .idle
 
     private enum CollectionState {
@@ -57,7 +65,12 @@ public final class WorkoutController {
     }
 
     public func start(at date: Date) async throws {
-        guard lifecycle == .idle else {
+        switch lifecycle {
+        case .idle:
+            break
+        case let .failed(error):
+            throw error
+        case .active, .ending:
             throw WorkoutControllerError.workoutAlreadyActive
         }
 
@@ -83,19 +96,22 @@ public final class WorkoutController {
 
         do {
             try await resources.builder.beginCollection(at: date)
-            guard isCurrent(resources) else { return }
+            guard isCurrent(resources) else {
+                throw WorkoutControllerError.noActiveWorkout
+            }
             collectionState = .collecting
             resumeCollectionWaiter()
         } catch {
             let mappedError = mapHealthError(error)
+            guard isCurrent(resources) else {
+                throw mappedError
+            }
             collectionState = .failed(mappedError)
             resumeCollectionWaiter(throwing: mappedError)
             resumeStoppedWaiter(throwing: mappedError)
             resources.session.stateHandler = nil
             resources.session.end()
-            if isCurrent(resources) {
-                clearWorkoutState()
-            }
+            clearWorkoutState()
             throw mappedError
         }
     }
@@ -152,8 +168,8 @@ public final class WorkoutController {
         _ resources: LiveWorkoutResources,
         at date: Date
     ) async throws {
-        try await stopActivityIfNeeded(resources.session, at: date)
         try await waitForCollectionToStart()
+        try await stopActivityIfNeeded(resources.session, at: date)
 
         switch terminationProgress {
         case .collectionEnded, .sessionEnded:
@@ -184,9 +200,7 @@ public final class WorkoutController {
         switch terminationProgress {
         case .collectionEnded, .sessionEnded:
             return
-        case .stopping:
-            shouldStopActivity = false
-        case .collecting, .stopped, .none:
+        case .collecting, .stopping, .stopped, .none:
             terminationProgress = .stopping(endDate)
             shouldStopActivity = true
         }
@@ -332,11 +346,13 @@ public final class WorkoutController {
     }
 
     private func clearWorkoutState() {
+        let resetError = WorkoutControllerError.noActiveWorkout
+        resumeCollectionWaiter(throwing: resetError)
+        resumeStoppedWaiter(throwing: resetError)
         timeoutTask?.cancel()
         timeoutTask = nil
         resources = nil
         collectionState = .notStarted
-        collectionWaiter = nil
         terminationProgress = nil
         observedSessionState = .notStarted
         lifecycle = .idle
