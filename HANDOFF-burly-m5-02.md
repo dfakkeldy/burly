@@ -71,3 +71,29 @@ git log --oneline -3  # confirm HEAD includes b2a8c60 on task/burly-m5-02
 # 2. BurlyPhone/RoutinesTabView.swift CatalogBrowserView row: fix identifier collapse
 # 3. Scripts/acceptance-sim.sh (fresh run budget)
 ```
+
+## 2026-08-13 — simulator acceptance PASSED
+
+Done:
+- `Scripts/acceptance-sim.sh` ran green at `fc1410c`, run dir
+  `Scripts/output/runs/20260813T053021Z`.
+- **Phone 9/9, watch 16/16, zero failed, zero skipped.** Both
+  `BurlyPhoneUITests.xcresult` and `BurlyWatchUITests.xcresult` are present, so
+  the watch suite genuinely ran — the previous rounds' failure mode was the
+  phone suite aborting the run before the watch suite was ever reached.
+- Evidence: 9 phone + 15 watch screenshots under `screenshots/`.
+- Verified engine-blind by reading the xcresult bundles, not the driver's rc.
+- The two fixes the previous entry listed as Next (dismiss search before
+  `catalog.doneButton`; the identifier collapse in `CatalogBrowserView`) are
+  both in and covered by this run. That resume block is now stale.
+
+Next:
+- Nothing blocking. m5-02 is implementation- and simulator-complete.
+- Push and PR remain Dan's call; `~/Developer/burly` main is ahead of
+  `origin/main` and has not been pushed.
+
+Resume:
+```
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m5-02-codex, branch task/burly-m5-02 at fc1410c, tree clean.
+Next action: none required — task is done pending Dan's decision to push/PR.
+```
