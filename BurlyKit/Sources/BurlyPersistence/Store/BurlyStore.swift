@@ -38,8 +38,8 @@
 // the sessions the phone has received — so a public method that applies
 // one half in its own save is a crash window with an API in front of it.
 // `applyDigest(lastPerformance:ackedSessionIDs:)` is the whole payload, in
-// one transaction; the halves survive as module-internal helpers it is
-// built from.
+// one transaction; performance validation and row mutation remain private
+// implementation details of that transaction.
 //
 // `deleteRoutine` *does* exist: §1 archives routines "once referenced", but
 // a Session references its routine only by denormalized `routineID` /

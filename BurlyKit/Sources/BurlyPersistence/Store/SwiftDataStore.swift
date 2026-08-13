@@ -789,8 +789,7 @@ public final class SwiftDataStore: BurlyStore {
         }
         try applyDigestTransaction(
             lastPerformance: lastPerformance,
-            ackedSessionIDs: ackedSessionIDs,
-            persistingWatchState: true
+            ackedSessionIDs: ackedSessionIDs
         )
     }
 
@@ -980,24 +979,6 @@ public final class SwiftDataStore: BurlyStore {
         let total = try context.fetchCount(FetchDescriptor<Session>())
         let active = try context.fetchCount(FetchDescriptor<ActiveSessionJournal>())
         return total - active
-    }
-
-    /// **Internal** (m1-06 review round D), for the mirror-image reason
-    /// `upsertLastPerformance` is: the prune on its own, in its own save,
-    /// is the half of a §5 `digest` whose isolation the M2 finding was
-    /// about. Nothing outside this module should be able to commit an ack
-    /// without the entries that arrived with it. Kept because
-    /// `applyDigest`'s prune semantics deserve their own unit tests, and
-    /// because `applyDigest` is built from the same `prune(ackedIDs:)`.
-    func pruneDeliveredSessions(ackedIDs: [UUID]) throws {
-        guard kind == .watch else {
-            throw BurlyStoreError.operationRequiresWatchStore
-        }
-        try applyDigestTransaction(
-            lastPerformance: [],
-            ackedSessionIDs: ackedIDs,
-            persistingWatchState: true
-        )
     }
 
     // MARK: - Catalog seed
@@ -1251,18 +1232,30 @@ public final class SwiftDataStore: BurlyStore {
         _ routine: RoutineData,
         ownedBy owner: Routine?
     ) throws -> [Exercise?] {
+        try preflightRoutineItems(routine, ownedBy: owner, releasedItemIDs: [], resolvingExercise: resolveExercise)
+    }
+
+    /// Snapshot replacement supplies the post-apply exercise universe and
+    /// ids released with dropped routines. Other write paths resolve against
+    /// the current store and have no released owners.
+    private func preflightRoutineItems(
+        _ routine: RoutineData,
+        ownedBy owner: Routine?,
+        releasedItemIDs: Set<UUID>,
+        resolvingExercise: (UUID?) throws -> Exercise?
+    ) throws -> [Exercise?] {
         let owned = Set(owner?.items.map(\.id) ?? [])
         var seen = Set<UUID>()
         for item in routine.items {
             guard seen.insert(item.id).inserted else {
                 throw BurlyStoreError.duplicateID(item.id)
             }
-            guard owned.contains(item.id) == false else { continue }
+            guard owned.contains(item.id) == false, releasedItemIDs.contains(item.id) == false else { continue }
             if try model(RoutineItem.self, id: item.id) != nil {
                 throw BurlyStoreError.duplicateID(item.id)
             }
         }
-        return try routine.items.map { try resolveExercise($0.exerciseID) }
+        return try routine.items.map { try resolvingExercise($0.exerciseID) }
     }
 
     /// Resolves every session item's exercise reference, in item order, and
@@ -1351,7 +1344,7 @@ public final class SwiftDataStore: BurlyStore {
     /// .invalidLastPerformance`. Duplicate-`exerciseID` detection is a
     /// different story — nothing about `Weight` prevents two entries from
     /// naming the same exercise — so that check stays.
-    func validateLastPerformance(
+    private func validateLastPerformance(
         _ entries: [ExerciseLastPerformanceData]
     ) throws {
         var seen = Set<UUID>()
@@ -1516,31 +1509,6 @@ public final class SwiftDataStore: BurlyStore {
         )
     }
 
-    /// The §1 pruning rule, without the save — so `pruneDeliveredSessions`
-    /// and `applyDigest` share one definition of "delivered" and the latter
-    /// can fold it into a larger transaction.
-    private func prune(ackedIDs: [UUID]) throws {
-        for id in ackedIDs {
-            guard
-                let session = try model(Session.self, id: id),
-                session.state == .logged
-            else {
-                // Unknown id, or a still-`.active` session: leave it be.
-                // See the protocol doc — this is a timing fact, not an
-                // error, and it must not abort acks for the other ids.
-                continue
-            }
-            if let journal = try journalModel(sessionID: id) {
-                // Defensive: a `.logged` session should already have had
-                // its journal retired by Finish. If one survived, it goes
-                // with the session rather than lingering as a Resume
-                // pointer into a row that no longer exists.
-                context.delete(journal)
-            }
-            context.delete(session)
-        }
-    }
-
     /// The only construction path for a stored set. It takes `Weight`, which
     /// is kg-canonical by construction — there is no overload that accepts a
     /// raw pound value (§1 acceptance #4).
@@ -1561,12 +1529,10 @@ public final class SwiftDataStore: BurlyStore {
 extension SwiftDataStore: WatchSyncStore {
     public func watchSyncState() throws -> WatchSyncStateData {
         guard kind == .watch else { throw BurlyStoreError.operationRequiresWatchStore }
-        // This journal is a rebuildable protocol cache, not workout truth.
-        // A torn/future payload therefore recovers as an empty state: the
-        // next accepted snapshot or digest rewrites a versioned payload in
-        // its normal transaction, while logged sessions remain available to
-        // rehydrate and retransmit rather than being pruned on a decode error.
-        return recoveredWatchSyncState(from: try watchSyncJournal())
+        // This journal is rebuildable metadata on corruption, but a future
+        // schema is not corruption: an older binary must refuse it rather
+        // than erase its snapshot watermark and accept stale replacements.
+        return try recoveredWatchSyncState(from: try watchSyncJournal())
     }
 
     /// Whole-working-set replacement. Its full rejection surface — every
@@ -1579,7 +1545,7 @@ extension SwiftDataStore: WatchSyncStore {
         guard kind == .watch else { throw BurlyStoreError.operationRequiresWatchStore }
 
         let journal = try watchSyncJournal()
-        let current = recoveredWatchSyncState(from: journal)
+        let current = try recoveredWatchSyncState(from: journal)
         guard current.lastAppliedSnapshotVersion.map({ payload.version > $0 }) ?? true else { return false }
 
         if let duplicateExerciseID = firstDuplicateID(in: payload.exercises.map(\.id)) {
@@ -1607,9 +1573,32 @@ extension SwiftDataStore: WatchSyncStore {
         let storedRoutines = Dictionary(
             uniqueKeysWithValues: try context.fetch(FetchDescriptor<Routine>()).map { ($0.id, $0) }
         )
+        let plannedExercises = Dictionary(uniqueKeysWithValues: payload.exercises.map { exercise in
+            (exercise.id, storedExercises[exercise.id] ?? Exercise(
+                id: exercise.id,
+                name: exercise.name,
+                muscleGroups: exercise.muscleGroups,
+                origin: exercise.origin,
+                needsNaming: exercise.needsNaming,
+                archivedAt: exercise.archivedAt
+            ))
+        })
+        let incomingRoutineIDs = Set(payload.routines.map(\.id))
+        let releasedItemIDs = Set(storedRoutines.values
+            .filter { !incomingRoutineIDs.contains($0.id) }
+            .flatMap { $0.items.map(\.id) })
         let plannedRoutines = try payload.routines.map { routine in
             let stored = storedRoutines[routine.id]
-            return (routine, stored, try preflightRoutineItems(routine, ownedBy: stored))
+            return (routine, stored, try preflightRoutineItems(
+                routine,
+                ownedBy: stored,
+                releasedItemIDs: releasedItemIDs,
+                resolvingExercise: { id in
+                    guard let id else { return nil }
+                    guard let exercise = plannedExercises[id] else { throw BurlyStoreError.missingExercise(id) }
+                    return exercise
+                }
+            ))
         }
         var next = current
         next.lastAppliedSnapshotVersion = payload.version
@@ -1624,17 +1613,9 @@ extension SwiftDataStore: WatchSyncStore {
                     stored.needsNaming = exercise.needsNaming
                     stored.archivedAt = exercise.archivedAt
                 } else {
-                    context.insert(Exercise(
-                        id: exercise.id,
-                        name: exercise.name,
-                        muscleGroups: exercise.muscleGroups,
-                        origin: exercise.origin,
-                        needsNaming: exercise.needsNaming,
-                        archivedAt: exercise.archivedAt
-                    ))
+                    context.insert(plannedExercises[exercise.id]!)
                 }
             }
-            let incomingRoutineIDs = Set(payload.routines.map(\.id))
             for routine in storedRoutines.values where !incomingRoutineIDs.contains(routine.id) {
                 context.delete(routine)
             }
@@ -1691,17 +1672,11 @@ extension SwiftDataStore: WatchSyncStore {
     /// first mutation there is only one `commit()`.
     private func applyDigestTransaction(
         lastPerformance: [ExerciseLastPerformanceData],
-        ackedSessionIDs: [UUID],
-        persistingWatchState: Bool
+        ackedSessionIDs: [UUID]
     ) throws {
-        precondition(persistingWatchState, "watch digests always persist their acknowledgement state")
         try validateLastPerformance(lastPerformance)
 
         let journal = try watchSyncJournal()
-        var nextState = recoveredWatchSyncState(from: journal)
-        nextState.lastAckedSessionIDs = Set(ackedSessionIDs)
-        let encodedNextState = try JSONEncoder().encode(nextState)
-
         // Fetch all affected rows up front. `upsert`/`prune` used to fetch as
         // they mutated, which made a later read or JSON error capable of
         // leaving a delete staged in the long-lived context.
@@ -1718,6 +1693,14 @@ extension SwiftDataStore: WatchSyncStore {
             guard let session = existingSessions[id], session.state == .logged else { return nil }
             return (session, journalsBySession[id])
         }
+        // An acknowledgement can race a session that is still active. It is
+        // not delivery proof for that session, so do not persist its id as a
+        // stale-completion guard; once Finish makes it logged, it must enter
+        // the durable outbox and be transmitted normally.
+        let activeSessionIDs = Set(ackedSessionIDs.filter { existingSessions[$0]?.state == .active })
+        var nextState = try recoveredWatchSyncState(from: journal)
+        nextState.lastAckedSessionIDs = Set(ackedSessionIDs).subtracting(activeSessionIDs)
+        let encodedNextState = try JSONEncoder().encode(nextState)
 
         do {
             for entry in lastPerformance {
@@ -1751,10 +1734,18 @@ extension SwiftDataStore: WatchSyncStore {
         return try context.fetch(descriptor).first
     }
 
-    private func recoveredWatchSyncState(from journal: WatchSyncJournal?) -> WatchSyncStateData {
+    private func recoveredWatchSyncState(from journal: WatchSyncJournal?) throws -> WatchSyncStateData {
         guard let journal else { return WatchSyncStateData() }
-        return (try? JSONDecoder().decode(WatchSyncStateData.self, from: journal.payload))
-            ?? WatchSyncStateData()
+        do {
+            return try JSONDecoder().decode(WatchSyncStateData.self, from: journal.payload)
+        } catch let error as WatchSyncStateDecodingError {
+            // A newer protocol journal must not be reset to `nil`: doing so
+            // would re-admit snapshots the future writer had already applied.
+            throw error
+        } catch {
+            // Corrupt local cache remains rebuildable from the phone.
+            return WatchSyncStateData()
+        }
     }
 
     private func stageWatchSyncState(_ payload: Data, journal: WatchSyncJournal?) {

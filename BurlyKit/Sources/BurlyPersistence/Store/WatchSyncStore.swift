@@ -10,8 +10,8 @@ import BurlySync
 /// facts which cannot be reconstructed from that working set.
 public struct WatchSyncStateData: Sendable, Equatable, Codable {
     /// Bump only when the persisted coordinator facts change incompatibly.
-    /// An unknown version is treated as recoverable local cache loss: the
-    /// next snapshot/digest rebuilds it from phone truth.
+    /// An unknown version is rejected so an older build cannot erase a
+    /// future snapshot watermark and re-admit stale replacement payloads.
     public var schemaVersion: Int
     public var lastAppliedSnapshotVersion: Int?
     public var lastAckedSessionIDs: Set<UUID>

@@ -6,8 +6,7 @@
 //
 // This is the one test in the task that has to cross both modules: it
 // drives the ack through BurlySync's `SessionDigestReceipt` /
-// `SessionDigestApplying` seam, not through `pruneDeliveredSessions`
-// directly (that's WatchWorkingSetTests' job), and it does so disk-backed
+// `SessionDigestApplying` seam, and it does so disk-backed
 // with a cold reopen — the same rationale CascadeTests uses: a prune that
 // merely orphaned rows in the live context could still look clean without a
 // fresh container over the same file.
@@ -227,7 +226,8 @@ struct AckSeamIntegrationTests {
     //
     // The gate above gets one disk-backed pass through the seam. These are
     // unit-level, in-memory pins for replay semantics that review found
-    // "correct by inspection" against `pruneDeliveredSessions(ackedIDs:)`
+    // "correct by inspection" against the digest transaction's delivered
+    // session selection
     // (fetch-by-id + `.logged` check per id, `continue` past a miss, one
     // `save()` at the end) but not yet pinned by a test: a courier that
     // retries, coalesces, or reorders an ack must not be able to regress

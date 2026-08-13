@@ -3,14 +3,10 @@
 // ack, delivered sessions are pruned from the watch store."
 //
 // Unit-level, in-memory coverage of the prune rule itself:
-// `loggedSessionsAwaitingAck` (public) and `pruneDeliveredSessions`, which
-// is module-internal now (m1-06 review round D — nothing outside the module
-// may apply half a §5 digest) and reached here through `@testable`.
-// `applyDigest` runs the identical rule as part of the whole payload, so
-// pinning it once here keeps the digest tests about atomicity rather than
-// about which ids are eligible. The disk-backed §1 acceptance #6 gate —
-// prune through the BurlySync seam, cold-reopen, confirm absence — lives in
-// AckSeamIntegrationTests.swift.
+// `loggedSessionsAwaitingAck` (public) and the delivered-session portion of
+// the sole whole-digest writer. Acknowledgements are never committed through
+// a separate prune API: they arrive with a digest's performance entries and
+// are persisted in that same transaction.
 
 import Foundation
 import SwiftData
@@ -47,8 +43,25 @@ struct WatchWorkingSetTests {
         #expect(try store.watchSyncState().schemaVersion == 1)
     }
 
-    @Test("a rejected working-set replacement cannot leave an omitted routine staged for a later save")
-    func rejectedReplacementLeavesNoStagedRoutineDelete() throws {
+    @Test("a future watch journal schema is rejected without resetting its snapshot watermark")
+    func futureJournalSchemaIsNotTreatedAsCorruptCache() throws {
+        let container = try BurlyContainer.make(.watch, at: .inMemory)
+        let seedContext = ModelContext(container)
+        let payload = try JSONEncoder().encode(WatchSyncStateData(
+            schemaVersion: 2,
+            lastAppliedSnapshotVersion: 99
+        ))
+        seedContext.insert(WatchSyncJournal(payload: payload))
+        try seedContext.save()
+
+        let store = SwiftDataStore(container: container)
+        #expect(throws: WatchSyncStateDecodingError.unsupportedSchemaVersion(2)) {
+            try store.watchSyncState()
+        }
+    }
+
+    @Test("a working-set replacement can move an item from a dropped routine to a retained routine")
+    func replacementMovesItemFromDroppedRoutineToRetainedRoutine() throws {
         let store = try makeStore(.watch)
         let exercise = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
         try store.createExercise(exercise)
@@ -82,15 +95,22 @@ struct WatchWorkingSetTests {
             routines: [invalidRetained]
         )
 
-        #expect(throws: BurlyStoreError.duplicateID(reusedItemID)) {
-            try store.replaceWatchWorkingSet(snapshot)
-        }
-        // A later successful save is the precise regression trigger: it
-        // must not commit the delete of A that a mutate-before-preflight
-        // implementation would have staged.
-        try store.createExercise(Fixture.exercise(name: "Curl", muscleGroups: [.biceps]))
-        #expect(try store.routine(id: removed.id) != nil)
-        #expect(try store.routine(id: retained.id) != nil)
+        #expect(try store.replaceWatchWorkingSet(snapshot))
+        #expect(try store.routine(id: removed.id) == nil)
+        #expect(try store.routine(id: retained.id)?.items.map(\.id) == [reusedItemID])
+    }
+
+    @Test("a replacement into an empty watch store resolves a payload-introduced exercise")
+    func replacementResolvesPayloadIntroducedExercise() throws {
+        let store = try makeStore(.watch)
+        let exercise = Fixture.exercise(name: "New custom", muscleGroups: [.biceps])
+        let routine = Fixture.routine(name: "New routine", over: [exercise])
+        let snapshot = BurlySnapshotPayloadDTO(version: 1, exercises: [exercise], routines: [routine])
+
+        #expect(try store.replaceWatchWorkingSet(snapshot))
+        #expect(try store.exercise(id: exercise.id) == exercise)
+        #expect(try store.routine(id: routine.id)?.items.first?.exerciseID == exercise.id)
+        #expect(try store.watchSyncState().lastAppliedSnapshotVersion == 1)
     }
 
     @Test("loggedSessionsAwaitingAck throws operationRequiresWatchStore on a phone-kind store")
@@ -101,8 +121,8 @@ struct WatchWorkingSetTests {
         }
     }
 
-    @Test("pruneDeliveredSessions throws operationRequiresWatchStore on a phone-kind store, and deletes nothing")
-    func pruneIsWatchOnly() throws {
+    @Test("applyDigest throws operationRequiresWatchStore on a phone-kind store, and deletes nothing")
+    func applyDigestIsWatchOnly() throws {
         let store = try makeStore(.phone)
         let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
         let routine = Fixture.routine(over: [squat])
@@ -112,7 +132,7 @@ struct WatchWorkingSetTests {
         try store.createSession(session)
 
         #expect(throws: BurlyStoreError.operationRequiresWatchStore) {
-            try store.pruneDeliveredSessions(ackedIDs: [session.id])
+            try store.applyDigest(lastPerformance: [], ackedSessionIDs: [session.id])
         }
         #expect(try store.session(id: session.id) != nil)
     }
@@ -138,8 +158,8 @@ struct WatchWorkingSetTests {
         #expect(awaiting.first?.id == logged.id)
     }
 
-    @Test("pruneDeliveredSessions removes an acked .logged session, cascading items and sets")
-    func pruneRemovesAckedLoggedSession() throws {
+    @Test("applyDigest removes an acked .logged session, cascading items and sets")
+    func digestRemovesAckedLoggedSession() throws {
         let store = try makeStore(.watch)
         let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
         let routine = Fixture.routine(over: [squat])
@@ -153,7 +173,7 @@ struct WatchWorkingSetTests {
         )
         try store.createSession(session)
 
-        try store.pruneDeliveredSessions(ackedIDs: [session.id])
+        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [session.id])
 
         #expect(try store.session(id: session.id) == nil)
         #expect(try store.loggedSessionsAwaitingAck().isEmpty)
@@ -161,8 +181,8 @@ struct WatchWorkingSetTests {
         #expect(try store.exercise(id: squat.id) == squat)
     }
 
-    @Test("pruneDeliveredSessions refuses to prune an .active session even when acked")
-    func pruneRefusesActiveSession() throws {
+    @Test("applyDigest leaves an .active session present even when acked")
+    func digestLeavesActiveSessionPresent() throws {
         let store = try makeStore(.watch)
         let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
         let routine = Fixture.routine(over: [squat])
@@ -172,21 +192,21 @@ struct WatchWorkingSetTests {
         let active = Fixture.activeSession(from: routine)
         try store.saveActiveSession(active)
 
-        try store.pruneDeliveredSessions(ackedIDs: [active.id])
+        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [active.id])
 
         let survivor = try #require(try store.session(id: active.id))
         #expect(survivor.state == .active)
     }
 
-    @Test("pruneDeliveredSessions ignores an id that names no session")
-    func pruneIgnoresUnknownID() throws {
+    @Test("applyDigest ignores an acknowledgement that names no session")
+    func digestIgnoresUnknownID() throws {
         let store = try makeStore(.watch)
         // Should not throw for a bogus id — just a no-op for that entry.
-        try store.pruneDeliveredSessions(ackedIDs: [UUID()])
+        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [UUID()])
     }
 
-    @Test("pruneDeliveredSessions is scoped: unacked logged sessions survive")
-    func pruneIsScopedToAckedIDs() throws {
+    @Test("applyDigest is scoped: unacked logged sessions survive")
+    func digestIsScopedToAckedIDs() throws {
         let store = try makeStore(.watch)
         let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
         let routine = Fixture.routine(over: [squat])
@@ -198,7 +218,7 @@ struct WatchWorkingSetTests {
         try store.createSession(acked)
         try store.createSession(unacked)
 
-        try store.pruneDeliveredSessions(ackedIDs: [acked.id])
+        try store.applyDigest(lastPerformance: [], ackedSessionIDs: [acked.id])
 
         #expect(try store.session(id: acked.id) == nil)
         #expect(try store.session(id: unacked.id) != nil)

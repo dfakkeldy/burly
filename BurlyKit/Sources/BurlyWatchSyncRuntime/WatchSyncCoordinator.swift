@@ -17,6 +17,19 @@ public struct WatchSyncOutboundSession: Sendable, Equatable {
     }
 }
 
+/// One execution pass may prepare some envelopes while another one fails to
+/// encode. Keeping both facts lets the transport queue the successes instead
+/// of losing a whole activation behind one malformed entry.
+public struct WatchSyncExecutionResult: Sendable, Equatable {
+    public let outbound: [WatchSyncOutboundSession]
+    public let failedOutboundSessionIDs: [UUID]
+
+    public init(outbound: [WatchSyncOutboundSession], failedOutboundSessionIDs: [UUID]) {
+        self.outbound = outbound
+        self.failedOutboundSessionIDs = failedOutboundSessionIDs
+    }
+}
+
 public enum WatchSyncCoordinatorError: Error, Equatable, Sendable {
     case sessionNotAwaitingAcknowledgement(UUID)
     case staleSessionCompletion(UUID)
@@ -40,7 +53,6 @@ public final class WatchSyncCoordinator {
         self.store = store
         let durable = try store.watchSyncState()
         let outbox: [BurlyWatchSyncMachine.OutboxEntry] = try store.loggedSessionsAwaitingAck().compactMap { session in
-            guard !durable.lastAckedSessionIDs.contains(session.id) else { return nil }
             return try store.watchOutboxPayload(sessionID: session.id).map {
                 BurlyWatchSyncMachine.OutboxEntry(id: session.id, payload: $0)
             }
@@ -55,17 +67,26 @@ public final class WatchSyncCoordinator {
     /// Called after Finish has durably stored the logged session. The session
     /// store itself is the durable outbox; payload construction embeds every
     /// referenced `needsNaming` exercise before it is encoded.
-    public func completedSession(id: UUID) throws -> [WatchSyncOutboundSession] {
+    public func completedSession(id: UUID) throws -> WatchSyncExecutionResult {
         guard let payload = try store.watchOutboxPayload(sessionID: id) else {
+            if state.lastAckedSessionIDs.contains(id) {
+                throw WatchSyncCoordinatorError.staleSessionCompletion(id)
+            }
             throw WatchSyncCoordinatorError.sessionNotAwaitingAcknowledgement(id)
         }
-        return try execute(BurlyWatchSyncMachine.handle(.sessionCompleted(payload), &state))
+        var candidate = state
+        let result = try execute(BurlyWatchSyncMachine.handle(.sessionCompleted(payload), &candidate))
+        state = candidate
+        return result
     }
 
     /// Retry is activation-driven; transport completion is intentionally not
     /// a call site here because it is not delivery proof.
-    public func activated(alreadyQueuedSessionIDs: Set<UUID> = []) throws -> [WatchSyncOutboundSession] {
-        try execute(BurlyWatchSyncMachine.handle(.activated(alreadyQueuedSessionIDs: alreadyQueuedSessionIDs), &state))
+    public func activated(alreadyQueuedSessionIDs: Set<UUID> = []) throws -> WatchSyncExecutionResult {
+        var candidate = state
+        let result = try execute(BurlyWatchSyncMachine.handle(.activated(alreadyQueuedSessionIDs: alreadyQueuedSessionIDs), &candidate))
+        state = candidate
+        return result
     }
 
     @discardableResult
@@ -83,6 +104,12 @@ public final class WatchSyncCoordinator {
                 guard !commands.isEmpty else { return .ignoredStaleSnapshot }
                 // Store method persists the version with its replacement.
                 guard try store.replaceWatchWorkingSet(payload) else {
+                    let durable = try store.watchSyncState()
+                    state = BurlyWatchSyncMachine.State(
+                        outbox: state.outbox,
+                        lastAppliedSnapshotVersion: durable.lastAppliedSnapshotVersion,
+                        lastAckedSessionIDs: durable.lastAckedSessionIDs
+                    )
                     return .ignoredStaleSnapshot
                 }
                 state = candidate
@@ -92,7 +119,12 @@ public final class WatchSyncCoordinator {
                 // This is the only production digest route. It stages last
                 // performance, pruning, and `lastAckedSessionIDs` together.
                 try store.applyWatchDigest(payload)
-                state = candidate
+                let durable = try store.watchSyncState()
+                state = BurlyWatchSyncMachine.State(
+                    outbox: candidate.outbox,
+                    lastAppliedSnapshotVersion: candidate.lastAppliedSnapshotVersion,
+                    lastAckedSessionIDs: durable.lastAckedSessionIDs
+                )
                 return .appliedDigest
             case .session:
                 return .ignoredWrongDirection
@@ -100,19 +132,29 @@ public final class WatchSyncCoordinator {
         }
     }
 
-    private func execute(_ commands: [BurlyWatchSyncMachine.Command]) throws -> [WatchSyncOutboundSession] {
-        try commands.compactMap { command in
+    private func execute(_ commands: [BurlyWatchSyncMachine.Command]) throws -> WatchSyncExecutionResult {
+        var outbound: [WatchSyncOutboundSession] = []
+        var failedOutboundSessionIDs: [UUID] = []
+        for command in commands {
             switch command {
             case let .transmitSession(id, payload):
-                return WatchSyncOutboundSession(
-                    id: id,
-                    envelope: try BurlySyncEnvelope(payload: .session(payload)).encodedData()
-                )
+                do {
+                    outbound.append(WatchSyncOutboundSession(
+                        id: id,
+                        envelope: try BurlySyncEnvelope(payload: .session(payload)).encodedData()
+                    ))
+                } catch {
+                    failedOutboundSessionIDs.append(id)
+                }
             case let .reportStaleSessionCompletion(id):
                 throw WatchSyncCoordinatorError.staleSessionCompletion(id)
             case .applySnapshot, .applyDigest:
-                return nil
+                continue
             }
         }
+        return WatchSyncExecutionResult(
+            outbound: outbound,
+            failedOutboundSessionIDs: failedOutboundSessionIDs
+        )
     }
 }
