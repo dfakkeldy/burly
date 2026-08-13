@@ -98,8 +98,6 @@ struct HistorySessionDetailView: View {
                         reindexItems(&value)
                     }
                 }
-                Button("Add exercise", systemImage: "plus") { pickerPresented = true }
-                    .accessibilityIdentifier("historyDetail.addExercise")
             }
             Section("Notes") {
                 TextField("Notes", text: $notesDraft, axis: .vertical)
@@ -111,7 +109,14 @@ struct HistorySessionDetailView: View {
             }
         }
         .navigationTitle(session.routineName ?? "Workout")
-        .toolbar { EditButton().accessibilityIdentifier("historyDetail.reorderExercises") }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button("Add exercise", systemImage: "plus") { pickerPresented = true }
+                    .accessibilityIdentifier("historyDetail.addExercise")
+                EditButton()
+                    .accessibilityIdentifier("historyDetail.reorderExercises")
+            }
+        }
         .sheet(isPresented: $pickerPresented) {
             ExercisePicker(exercises: viewModel.historyExercises) { exercise in
                 mutate { value in
