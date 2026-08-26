@@ -475,7 +475,13 @@ final class BurlyPhoneUITests: XCTestCase {
         // Add and remove an exercise independently; each is a real store
         // write and gets a distinct revision assertion.
         app.buttons["historyDetail.addExercise"].tap()
-        anyElement(app, identifier: "historyDetail.exercisePicker.\(Self.addableExerciseID)").tap()
+        let addableExercise = scrollToElement(
+            app,
+            identifier: "historyDetail.exercisePicker.\(Self.addableExerciseID)",
+            in: app
+        )
+        XCTAssertTrue(addableExercise.exists, "Expected the addable exercise row to be reachable")
+        addableExercise.tap()
         assertRevision(4, in: app)
         XCTAssertTrue(app.staticTexts["UI Test Added Exercise"].waitForExistence(timeout: 5), "Expected the selected exercise to appear in the session")
 
@@ -591,6 +597,22 @@ final class BurlyPhoneUITests: XCTestCase {
     private func identifierSuffix(of element: XCUIElement, prefix: String) -> String? {
         guard element.identifier.hasPrefix(prefix) else { return nil }
         return String(element.identifier.dropFirst(prefix.count))
+    }
+
+    private func scrollToElement(_ app: XCUIApplication, identifier: String, in scrollContainer: XCUIElement) -> XCUIElement {
+        let maxSwipes = 20
+        let element = anyElement(app, identifier: identifier)
+
+        for swipeCount in 0...maxSwipes {
+            if element.waitForExistence(timeout: 1) {
+                return element
+            }
+            guard swipeCount < maxSwipes else { break }
+            scrollContainer.swipeUp()
+        }
+
+        XCTFail("Expected element with identifier \(identifier) after at most \(maxSwipes) upward swipes")
+        return element
     }
 
     private func assertRevision(_ revision: Int, in app: XCUIApplication) {
