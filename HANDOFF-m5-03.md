@@ -134,3 +134,23 @@ Read /Users/dfakkeldy/Developer/agent-gate/logs/gate-m5-03c.log (durable — NOT
 Worktree /Users/dfakkeldy/Developer/worktrees/burly-m5-03, branch task/burly-m5-03 at a8c827d.
 If phone 9/9: gh pr ready 4, then delete HANDOFF-m5-03.md in the closing PR.
 ```
+
+## 2026-08-25 (late) — tail of the §6 test made position-independent (bd54a00)
+
+Done: Gate at a8c827d went 8/9 — the scroll helper worked, the picker row was
+tapped, and the failure moved to `:326`. `assertRevision(4)` passes there, so the
+write lands; the added item is appended at the end of a lazy `List` below the
+seeded graph and never renders. Fixed the whole remaining tail in one pass
+(the two later assertions shared the flaw): identifier-based scans across every
+scroll position replace a rendered-row count and an ambiguous absence check.
+Added `historyDetail.exercise.<exerciseID>` to session rows.
+
+Next: `gate-m5-03c.sh` runs as chain-d, behind the m2-04 measurement. Its
+pre-flight was updated for the new call-site counts and dry-checked.
+
+Resume:
+```
+Read /Users/dfakkeldy/Developer/agent-gate/logs/gate-m5-03c.log (durable).
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m5-03, branch task/burly-m5-03 at bd54a00.
+If phone 9/9: gh pr ready 4, then delete HANDOFF-m5-03.md in the closing PR.
+```
