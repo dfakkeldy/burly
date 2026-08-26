@@ -686,8 +686,21 @@ final class BurlyPhoneUITests: XCTestCase {
     private func replaceText(in field: XCUIElement, with value: String, app: XCUIApplication) {
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Expected editable text field")
         field.tap()
-        field.press(forDuration: 1.1)
-        app.menuItems["Select All"].tap()
+        let focusExpectation = expectation(
+            for: NSPredicate(format: "hasFocus == true"),
+            evaluatedWith: field
+        )
+        let focusResult = XCTWaiter().wait(for: [focusExpectation], timeout: 5)
+        guard focusResult == .completed else {
+            XCTFail("Expected editable text field to have keyboard focus")
+            return
+        }
+
+        let existing = (field.value as? String) ?? ""
+        let placeholder = field.placeholderValue ?? ""
+        if !existing.isEmpty && existing != placeholder {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+        }
         field.typeText(value)
     }
 
