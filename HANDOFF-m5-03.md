@@ -111,3 +111,26 @@ Worktree /Users/dfakkeldy/Developer/worktrees/burly-m5-03, branch task/burly-m5-
 Read scratchpad/gate-m5-03b.log. If rc=0, take PR #4 out of draft; if red, read the
 EXACT FAILING LINES section before theorising.
 ```
+
+## 2026-08-25 — picker row reached by scrolling, not by flattening the list (a8c827d)
+
+Done: Recovered the Aug-13 re-gate verdict from `runs/20260813T212236Z` after the
+tmp purge destroyed the logs — phone 8/9, with BOTH earlier failures fixed
+(`testPopulatedScenarioRendersRealRows` green, `historyDetail.addExercise`
+tappable). Diagnosed the one remaining failure: the store sorts the ~100-row
+catalog by name, so "UI Test Added Exercise" sits near the end and the lazy
+`List` never rendered it. Rejected the first fix (List → non-lazy ScrollView:
+eager-renders every row, kills virtualization on an iPhone 12 Pro floor, drops
+List styling). Added a bounded 20-swipe `scrollToElement` helper instead, used at
+that one call site, scrolling `app` rather than `app.tables.firstMatch` since the
+picker is a sheet over another List.
+
+Next: `gate-m5-03c.sh` is step 2 of `chain-b.sh`, behind the m2-04 measurement.
+On phone 9/9, take PR #4 out of draft and delete this file in the closing PR.
+
+Resume:
+```
+Read /Users/dfakkeldy/Developer/agent-gate/logs/gate-m5-03c.log (durable — NOT /private/tmp).
+Worktree /Users/dfakkeldy/Developer/worktrees/burly-m5-03, branch task/burly-m5-03 at a8c827d.
+If phone 9/9: gh pr ready 4, then delete HANDOFF-m5-03.md in the closing PR.
+```
