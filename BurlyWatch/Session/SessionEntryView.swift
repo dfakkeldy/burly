@@ -137,6 +137,7 @@ struct SessionEntryView: View {
                     phase = .failed("This workout is no longer available.")
                     return
                 }
+                TimingM204.shared.beginSession()
                 phase = .ready(SessionEngine(session: existing), startInSummary: enterSummary)
             } catch BurlyStoreError.unreadableActiveSessionJournal(let corruptID) {
                 phase = .unreadableSession(sessionID: corruptID)
@@ -187,6 +188,7 @@ struct SessionEntryView: View {
     private func saveAndEnter(_ engine: SessionEngine) {
         do {
             try store.saveActiveSession(engine.session)
+            TimingM204.shared.beginSession()
             phase = .ready(engine, startInSummary: false)
         } catch {
             phase = .failed(String(describing: error))

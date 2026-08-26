@@ -58,6 +58,81 @@ enum ExercisePickerContext: Hashable {
 }
 
 @MainActor
+final class TimingM204 {
+    static let shared = TimingM204()
+
+    private static let bufferCapacity = 64
+
+    private var events = TimingM204.makeBuffer()
+    private let writer = DispatchQueue(label: "com.burly.timing-m204-writer")
+
+    private init() {}
+
+    func append(nanoseconds: UInt64, event: String) {
+        events.append((nanoseconds, event))
+    }
+
+    func flush() {
+        guard !events.isEmpty else { return }
+
+        let eventsToWrite = events
+        events = Self.makeBuffer()
+        let lines = eventsToWrite
+            .map { "TIMING-M204 \($0.0) \($0.1)" }
+            .joined(separator: "\n")
+            + "\n"
+
+        writer.async {
+            Self.appendToFile(lines)
+        }
+    }
+
+    func beginSession() {
+        events = Self.makeBuffer()
+        writer.async {
+            Self.truncateFile()
+        }
+    }
+
+    private static func makeBuffer() -> [(UInt64, String)] {
+        var buffer: [(UInt64, String)] = []
+        buffer.reserveCapacity(bufferCapacity)
+        return buffer
+    }
+
+    private nonisolated static func appendToFile(_ lines: String) {
+        let fileManager = FileManager.default
+        let url = timingFileURL(fileManager: fileManager)
+        if !fileManager.fileExists(atPath: url.path) {
+            fileManager.createFile(atPath: url.path, contents: nil)
+        }
+
+        guard let data = lines.data(using: .utf8),
+              let handle = try? FileHandle(forWritingTo: url) else {
+            return
+        }
+        defer { try? handle.close() }
+
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+        } catch {
+            return
+        }
+    }
+
+    private nonisolated static func truncateFile() {
+        let url = timingFileURL(fileManager: .default)
+        try? Data().write(to: url, options: .atomic)
+    }
+
+    private nonisolated static func timingFileURL(fileManager: FileManager) -> URL {
+        fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("timing-m204.txt")
+    }
+}
+
+@MainActor
 @Observable
 final class SessionViewModel {
     private var engine: SessionEngine
@@ -513,6 +588,7 @@ final class SessionViewModel {
     /// same "missed finish" repeat after a resume that saw the screen wake
     /// in time.
     func tick() {
+        defer { flushTiming() }
         let before = engine.session.restTimer
         let firedHaptics = engine.tick()
         play(firedHaptics)
@@ -779,7 +855,14 @@ final class SessionViewModel {
     }
 
     private func timing(_ event: String) {
-        print("TIMING-M204 \(DispatchTime.now().uptimeNanoseconds) \(event)")
+        TimingM204.shared.append(
+            nanoseconds: DispatchTime.now().uptimeNanoseconds,
+            event: event
+        )
+    }
+
+    private func flushTiming() {
+        TimingM204.shared.flush()
     }
 
     /// m2-06 review finding 3.1: `.sessionNoLongerInFlight` means the

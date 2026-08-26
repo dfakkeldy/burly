@@ -251,6 +251,9 @@ struct LoggingScreenView: View {
     }
 
     private func timing(_ event: String) {
-        print("TIMING-M204 \(DispatchTime.now().uptimeNanoseconds) \(event)")
+        TimingM204.shared.append(
+            nanoseconds: DispatchTime.now().uptimeNanoseconds,
+            event: event
+        )
     }
 }
