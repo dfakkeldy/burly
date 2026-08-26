@@ -44,6 +44,11 @@ final class BurlyPhoneUITests: XCTestCase {
     // deterministic rather than depending on SwiftData-generated UUIDs.
     private static let loggedSessionID = "6F4E2C1A-0000-4000-8000-000000000003"
     private static let squatWorkingSetID = "6F4E2C1A-0000-4000-8000-000000000006"
+    // These catalog ids are the exercises used by PhoneDemoSeed's populated
+    // session. The fourth seeded item is intentionally unattributed.
+    private static let backSquatExerciseID = "10000000-0000-4000-8000-000000000063"
+    private static let benchPressExerciseID = "10000000-0000-4000-8000-000000000001"
+    private static let pullUpExerciseID = "10000000-0000-4000-8000-000000000023"
     private static let addableExerciseID = "6F4E2C1A-0000-4000-8000-00000000000A"
     private static let healthKitWorkoutID = "6F4E2C1A-0000-4000-8000-00000000000B"
 
@@ -483,13 +488,38 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertTrue(addableExercise.exists, "Expected the addable exercise row to be reachable")
         addableExercise.tap()
         assertRevision(4, in: app)
-        XCTAssertTrue(app.staticTexts["UI Test Added Exercise"].waitForExistence(timeout: 5), "Expected the selected exercise to appear in the session")
+        let addedExerciseRow = scrollToElement(
+            app,
+            identifier: "historyDetail.exercise.\(Self.addableExerciseID)",
+            in: app
+        )
+        XCTAssertTrue(addedExerciseRow.exists, "Expected the selected exercise to appear in the session")
+        XCTAssertEqual(addedExerciseRow.label, "UI Test Added Exercise", "Expected the selected exercise name to render")
 
-        let removeButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "historyDetail.removeExercise."))
-        XCTAssertEqual(removeButtons.count, 5, "Expected the four seeded exercises plus the newly added exercise")
-        removeButtons.element(boundBy: 4).tap()
+        let expectedExerciseIdentifiers: Set<String> = [
+            "historyDetail.exercise.\(Self.backSquatExerciseID)",
+            "historyDetail.exercise.\(Self.benchPressExerciseID)",
+            "historyDetail.exercise.\(Self.pullUpExerciseID)",
+            "historyDetail.exercise.unattributed",
+            "historyDetail.exercise.\(Self.addableExerciseID)"
+        ]
+        XCTAssertEqual(
+            sessionExerciseIdentifiersAfterScrolling(app),
+            expectedExerciseIdentifiers,
+            "Expected the four seeded exercises plus the newly added exercise"
+        )
+
+        let addedExerciseRemoveButton = scrollToElement(
+            app,
+            identifier: "historyDetail.removeExercise.\(Self.addableExerciseID)",
+            in: app
+        )
+        addedExerciseRemoveButton.tap()
         assertRevision(5, in: app)
-        XCTAssertFalse(app.staticTexts["UI Test Added Exercise"].exists, "Expected removing the added exercise to update the session content")
+        XCTAssertFalse(
+            sessionExerciseIdentifiersAfterScrolling(app).contains("historyDetail.exercise.\(Self.addableExerciseID)"),
+            "Expected removing the added exercise to remove it from the session at every scroll position"
+        )
 
         attachScreenshot(from: app, name: "BurlyPhone-historyEdits")
     }
@@ -613,6 +643,30 @@ final class BurlyPhoneUITests: XCTestCase {
 
         XCTFail("Expected element with identifier \(identifier) after at most \(maxSwipes) upward swipes")
         return element
+    }
+
+    private func sessionExerciseIdentifiersAfterScrolling(_ app: XCUIApplication) -> Set<String> {
+        let maxSwipes = 20
+        let query = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "historyDetail.exercise.")
+        )
+        var identifiers = Set<String>()
+
+        // Return to the top before scanning so the bounded upward pass covers
+        // the complete list, regardless of where the preceding interaction
+        // left the lazy container.
+        for _ in 0..<maxSwipes { app.swipeDown() }
+
+        for swipeCount in 0...maxSwipes {
+            _ = query.firstMatch.waitForExistence(timeout: 1)
+            for index in 0..<query.count {
+                identifiers.insert(query.element(boundBy: index).identifier)
+            }
+            guard swipeCount < maxSwipes else { break }
+            app.swipeUp()
+        }
+
+        return identifiers
     }
 
     private func assertRevision(_ revision: Int, in app: XCUIApplication) {

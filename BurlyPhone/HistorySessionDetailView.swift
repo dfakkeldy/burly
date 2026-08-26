@@ -82,11 +82,12 @@ struct HistorySessionDetailView: View {
                     } header: {
                         HStack {
                             Text(exerciseName(for: item))
+                                .accessibilityIdentifier("historyDetail.exercise.\(exerciseIdentifier(for: item))")
                             Spacer()
                             Button("Remove", role: .destructive) {
                                 mutate { value in value.items.removeAll { $0.id == item.id }; reindexItems(&value) }
                             }
-                            .accessibilityIdentifier("historyDetail.removeExercise.\(item.id.uuidString)")
+                            .accessibilityIdentifier("historyDetail.removeExercise.\(exerciseIdentifier(for: item))")
                         }
                     }
                 }
@@ -133,6 +134,10 @@ struct HistorySessionDetailView: View {
     private func exerciseName(for item: SessionItemData) -> String {
         guard let id = item.exerciseID else { return "Exercise" }
         return viewModel.historyExercises.first(where: { $0.id == id })?.name ?? "Exercise"
+    }
+
+    private func exerciseIdentifier(for item: SessionItemData) -> String {
+        item.exerciseID?.uuidString ?? "unattributed"
     }
 
     private func mutate(_ change: (inout SessionData) -> Void) {
