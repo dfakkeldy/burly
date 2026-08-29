@@ -16,15 +16,18 @@ edits preserve the linked HealthKit workout identifier.
 
 ## Simulator acceptance
 
-`main` is red after that merge.
-[Run 33258353186](https://github.com/dfakkeldy/burly/actions/runs/33258353186)
-failed in `testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink`.
+[PR #5](https://github.com/dfakkeldy/burly/pull/5) merged the fix for
+`testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink` (`974d33c58f`,
+2026-08-29).
 
-The candidate fix is [PR #5](https://github.com/dfakkeldy/burly/pull/5).
-Leave it open: the `Simulator acceptance` job in
-`.github/workflows/ci.yml` only runs on pushes to `main`, so pull
-requests skip that gate and a green PR check is not simulator
-acceptance.
+The `Simulator acceptance` job in `.github/workflows/ci.yml` only runs
+on pushes to `main`, so a green PR check is not simulator acceptance.
+Status on current `main` is pending:
+[run 33263690697](https://github.com/dfakkeldy/burly/actions/runs/33263690697)
+(includes #5). The #5 merge run was cancelled
+([run 33263594415](https://github.com/dfakkeldy/burly/actions/runs/33263594415)).
+The last completed simulator run is still the pre-#5 failure
+[run 33258353186](https://github.com/dfakkeldy/burly/actions/runs/33258353186).
 
 ## License
 
