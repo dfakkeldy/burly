@@ -157,12 +157,18 @@ struct HistorySessionDetailView: View {
 }
 
 private struct HistorySetEditor: View {
+    private enum Field: Hashable {
+        case weight
+        case reps
+    }
+
     @Environment(\.dismiss) private var dismiss
     let set: SetRecordData
     let onSave: (SetRecordData) -> Void
     @State private var weight: String
     @State private var reps: String
     @State private var isWarmup: Bool
+    @FocusState private var focusedField: Field?
 
     init(set: SetRecordData, onSave: @escaping (SetRecordData) -> Void) {
         self.set = set
@@ -174,8 +180,14 @@ private struct HistorySetEditor: View {
 
     var body: some View {
         Form {
-            TextField("Weight (kg)", text: $weight).keyboardType(.decimalPad).accessibilityIdentifier("historyDetail.setWeight")
-            TextField("Reps", text: $reps).keyboardType(.numberPad).accessibilityIdentifier("historyDetail.setReps")
+            TextField("Weight (kg)", text: $weight)
+                .keyboardType(.decimalPad)
+                .focused($focusedField, equals: .weight)
+                .accessibilityIdentifier("historyDetail.setWeight")
+            TextField("Reps", text: $reps)
+                .keyboardType(.numberPad)
+                .focused($focusedField, equals: .reps)
+                .accessibilityIdentifier("historyDetail.setReps")
             Toggle("Warmup", isOn: $isWarmup).accessibilityIdentifier("historyDetail.setWarmup")
         }
         .navigationTitle("Edit set")

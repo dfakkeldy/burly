@@ -683,25 +683,48 @@ final class BurlyPhoneUITests: XCTestCase {
         )
     }
 
+    /// Replaces a field's value without the edit menu and without waiting
+    /// for `hasFocus`.
+    ///
+    /// The previous helper long-pressed and tapped English "Select All",
+    /// which iOS omits when a short value like `90.0` or `5` is already
+    /// selected. e1e4e08 dropped that menu and waited for `hasFocus`
+    /// instead. On GitHub Actions (Xcode 26.6 iPhone sim) a tap on the
+    /// History set editor's SwiftUI Form `TextField`s synthesizes, but
+    /// `hasFocus` never becomes true — decimalPad / numberPad Form rows
+    /// keep the editable UITextField on the trailing edge, and XCTest
+    /// does not report keyboard focus for them. Main run 33258353186
+    /// died on that wait before any characters were typed.
+    ///
+    /// `XCUIElement.typeText` would then tap the element *again* because
+    /// it believes there is no focus, and a center tap misses the
+    /// trailing editor. Tap the trailing interior, then send keystrokes
+    /// through the application (current first responder, no re-tap).
+    /// Deletes are counted from the live value, skipping the placeholder.
+    /// The replacement is asserted, so an append or a missed focus
+    /// cannot silently pass.
     private func replaceText(in field: XCUIElement, with value: String, app: XCUIApplication) {
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Expected editable text field")
-        field.tap()
-        let focusExpectation = expectation(
-            for: NSPredicate(format: "hasFocus == true"),
-            evaluatedWith: field
-        )
-        let focusResult = XCTWaiter().wait(for: [focusExpectation], timeout: 5)
-        guard focusResult == .completed else {
-            XCTFail("Expected editable text field to have keyboard focus")
-            return
-        }
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
 
-        let existing = (field.value as? String) ?? ""
-        let placeholder = field.placeholderValue ?? ""
-        if !existing.isEmpty && existing != placeholder {
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+        let existing = editableContents(of: field)
+        if !existing.isEmpty {
+            app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
         }
-        field.typeText(value)
+        app.typeText(value)
+
+        XCTAssertEqual(
+            editableContents(of: field),
+            value,
+            "Expected field \(field.identifier) to hold \(value) after replacement"
+        )
+    }
+
+    private func editableContents(of field: XCUIElement) -> String {
+        let raw = (field.value as? String) ?? ""
+        let placeholder = field.placeholderValue ?? ""
+        if raw.isEmpty || raw == placeholder { return "" }
+        return raw
     }
 
     private func attachScreenshot(from app: XCUIApplication, name: String) {
