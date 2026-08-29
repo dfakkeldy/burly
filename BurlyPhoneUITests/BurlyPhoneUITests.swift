@@ -38,6 +38,20 @@ final class BurlyPhoneUITests: XCTestCase {
     /// `testUnrecognizedScenarioFailsClosedToStorageError`.
     private static let scenarioUnrecognized = "definitelyNotARealScenario"
 
+    // These fixture values are intentionally repeated from
+    // PhoneDemoSeed.SeededIDs: the UI-test bundle cannot import the app
+    // target. They make the edit targets and linked-workout assertion
+    // deterministic rather than depending on SwiftData-generated UUIDs.
+    private static let loggedSessionID = "6F4E2C1A-0000-4000-8000-000000000003"
+    private static let squatWorkingSetID = "6F4E2C1A-0000-4000-8000-000000000006"
+    // These catalog ids are the exercises used by PhoneDemoSeed's populated
+    // session. The fourth seeded item is intentionally unattributed.
+    private static let backSquatExerciseID = "10000000-0000-4000-8000-000000000063"
+    private static let benchPressExerciseID = "10000000-0000-4000-8000-000000000001"
+    private static let pullUpExerciseID = "10000000-0000-4000-8000-000000000023"
+    private static let addableExerciseID = "6F4E2C1A-0000-4000-8000-00000000000A"
+    private static let healthKitWorkoutID = "6F4E2C1A-0000-4000-8000-00000000000B"
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -224,7 +238,8 @@ final class BurlyPhoneUITests: XCTestCase {
         // History (default tab) shows the seeded logged session, keyed by
         // its id — the id is a PhoneDemoSeed.SeededIDs literal, matched
         // verbatim here (the UI test target cannot share code with the app).
-        let sessionRow = app.staticTexts["historyTab.sessionRow.6F4E2C1A-0000-4000-8000-000000000003"]
+        // The query is type-agnostic because the row is navigable and therefore carries the button trait.
+        let sessionRow = anyElement(app, identifier: "historyTab.sessionRow.6F4E2C1A-0000-4000-8000-000000000003")
         XCTAssertTrue(
             sessionRow.waitForExistence(timeout: 15),
             "Expected the seeded logged session to render as a History row"
@@ -420,6 +435,95 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-routineBuilderCatalog")
     }
 
+    /// §6 acceptance #1 and #5: each real edit through History's detail
+    /// surface advances the persisted revision exactly once. The weight and
+    /// reps, warmup label, and added exercise name are content assertions,
+    /// so a screen that merely presents the controls cannot satisfy this.
+    ///
+    /// The seeded session starts linked to a known HKWorkout. Its exact UUID
+    /// remains exposed after both set edits, proving the phone UI's real
+    /// edit path retains that link rather than silently dropping it.
+    func testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        XCTAssertTrue(
+            anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").waitForExistence(timeout: 15),
+            "Expected the deterministic linked session in History"
+        )
+        anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").tap()
+
+        assertRevision(1, in: app)
+        assertHealthKitLink(in: app)
+
+        // One save changes the working set's weight and reps. This catches
+        // either field being ignored as well as an absent revision bump.
+        anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").tap()
+        replaceText(in: app.textFields["historyDetail.setWeight"], with: "82.5", app: app)
+        replaceText(in: app.textFields["historyDetail.setReps"], with: "12", app: app)
+        app.buttons["historyDetail.saveSet"].tap()
+        assertRevision(2, in: app)
+        XCTAssertTrue(app.staticTexts["82.5 kg × 12"].waitForExistence(timeout: 5), "Expected the saved set values to render")
+        assertHealthKitLink(in: app)
+
+        // Warmup is a separate edit and therefore must produce its own
+        // one-step revision increment.
+        anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").tap()
+        anyElement(app, identifier: "historyDetail.setWarmup").tap()
+        app.buttons["historyDetail.saveSet"].tap()
+        assertRevision(3, in: app)
+        XCTAssertTrue(app.staticTexts["Warmup"].waitForExistence(timeout: 5), "Expected the set to render as a warmup after saving")
+        assertHealthKitLink(in: app)
+
+        // Add and remove an exercise independently; each is a real store
+        // write and gets a distinct revision assertion.
+        app.buttons["historyDetail.addExercise"].tap()
+        let addableExercise = scrollToElement(
+            app,
+            identifier: "historyDetail.exercisePicker.\(Self.addableExerciseID)",
+            in: app
+        )
+        XCTAssertTrue(addableExercise.exists, "Expected the addable exercise row to be reachable")
+        addableExercise.tap()
+        assertRevision(4, in: app)
+        let addedExerciseRow = scrollToElement(
+            app,
+            identifier: "historyDetail.exercise.\(Self.addableExerciseID)",
+            in: app
+        )
+        XCTAssertTrue(addedExerciseRow.exists, "Expected the selected exercise to appear in the session")
+        XCTAssertEqual(addedExerciseRow.label, "UI Test Added Exercise", "Expected the selected exercise name to render")
+
+        let expectedExerciseIdentifiers: Set<String> = [
+            "historyDetail.exercise.\(Self.backSquatExerciseID)",
+            "historyDetail.exercise.\(Self.benchPressExerciseID)",
+            "historyDetail.exercise.\(Self.pullUpExerciseID)",
+            "historyDetail.exercise.unattributed",
+            "historyDetail.exercise.\(Self.addableExerciseID)"
+        ]
+        XCTAssertEqual(
+            sessionExerciseIdentifiersAfterScrolling(app),
+            expectedExerciseIdentifiers,
+            "Expected the four seeded exercises plus the newly added exercise"
+        )
+
+        let addedExerciseRemoveButton = scrollToElement(
+            app,
+            identifier: "historyDetail.removeExercise.\(Self.addableExerciseID)",
+            in: app
+        )
+        addedExerciseRemoveButton.tap()
+        assertRevision(5, in: app)
+        XCTAssertFalse(
+            sessionExerciseIdentifiersAfterScrolling(app).contains("historyDetail.exercise.\(Self.addableExerciseID)"),
+            "Expected removing the added exercise to remove it from the session at every scroll position"
+        )
+
+        attachScreenshot(from: app, name: "BurlyPhone-historyEdits")
+    }
+
     /// Spec §7 acceptance #3, empty side: each independently meaningful
     /// chart has a genuine empty state on a deterministic empty history.
     /// This catches both crashes during chart construction and a misleading
@@ -523,6 +627,81 @@ final class BurlyPhoneUITests: XCTestCase {
     private func identifierSuffix(of element: XCUIElement, prefix: String) -> String? {
         guard element.identifier.hasPrefix(prefix) else { return nil }
         return String(element.identifier.dropFirst(prefix.count))
+    }
+
+    private func scrollToElement(_ app: XCUIApplication, identifier: String, in scrollContainer: XCUIElement) -> XCUIElement {
+        let maxSwipes = 20
+        let element = anyElement(app, identifier: identifier)
+
+        for swipeCount in 0...maxSwipes {
+            if element.waitForExistence(timeout: 1) {
+                return element
+            }
+            guard swipeCount < maxSwipes else { break }
+            scrollContainer.swipeUp()
+        }
+
+        XCTFail("Expected element with identifier \(identifier) after at most \(maxSwipes) upward swipes")
+        return element
+    }
+
+    private func sessionExerciseIdentifiersAfterScrolling(_ app: XCUIApplication) -> Set<String> {
+        let maxSwipes = 20
+        let query = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "historyDetail.exercise.")
+        )
+        var identifiers = Set<String>()
+
+        // Return to the top before scanning so the bounded upward pass covers
+        // the complete list, regardless of where the preceding interaction
+        // left the lazy container.
+        for _ in 0..<maxSwipes { app.swipeDown() }
+
+        for swipeCount in 0...maxSwipes {
+            _ = query.firstMatch.waitForExistence(timeout: 1)
+            for index in 0..<query.count {
+                identifiers.insert(query.element(boundBy: index).identifier)
+            }
+            guard swipeCount < maxSwipes else { break }
+            app.swipeUp()
+        }
+
+        return identifiers
+    }
+
+    private func assertRevision(_ revision: Int, in app: XCUIApplication) {
+        XCTAssertTrue(
+            app.staticTexts["historyDetail.revision.\(revision)"].waitForExistence(timeout: 5),
+            "Expected edit to persist exactly revision \(revision)"
+        )
+    }
+
+    private func assertHealthKitLink(in app: XCUIApplication) {
+        XCTAssertTrue(
+            anyElement(app, identifier: "historyDetail.healthKitWorkout.\(Self.healthKitWorkoutID)").waitForExistence(timeout: 5),
+            "Expected the seeded HealthKit workout UUID to survive the phone edit path"
+        )
+    }
+
+    private func replaceText(in field: XCUIElement, with value: String, app: XCUIApplication) {
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Expected editable text field")
+        field.tap()
+        let focusExpectation = expectation(
+            for: NSPredicate(format: "hasFocus == true"),
+            evaluatedWith: field
+        )
+        let focusResult = XCTWaiter().wait(for: [focusExpectation], timeout: 5)
+        guard focusResult == .completed else {
+            XCTFail("Expected editable text field to have keyboard focus")
+            return
+        }
+
+        let existing = (field.value as? String) ?? ""
+        let placeholder = field.placeholderValue ?? ""
+        if !existing.isEmpty && existing != placeholder {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+        }
+        field.typeText(value)
     }
 
     private func attachScreenshot(from app: XCUIApplication, name: String) {

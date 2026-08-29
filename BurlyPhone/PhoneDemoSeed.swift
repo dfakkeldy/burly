@@ -75,6 +75,11 @@ enum PhoneDemoSeed {
         static let legDayRoutine = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000001")!
         static let pushPullRoutine = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000002")!
         static let loggedSession = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000003")!
+        static let loggedSessionSquatItem = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000004")!
+        static let loggedSessionSquatWarmupSet = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000005")!
+        static let loggedSessionSquatWorkingSet = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000006")!
+        static let addableExercise = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000A")!
+        static let loggedSessionHealthKitWorkout = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000B")!
     }
 
     /// `nil` **only** when the launch-environment key is absent entirely,
@@ -161,6 +166,12 @@ enum PhoneDemoSeed {
         )
         try store.createRoutine(legDay)
         try store.createRoutine(pushPull)
+        try store.createExercise(ExerciseData(
+            id: SeededIDs.addableExercise,
+            name: "UI Test Added Exercise",
+            muscleGroups: [],
+            origin: .custom
+        ))
 
         // Exercise history spans the longest chart range and deliberately
         // includes recent multi-tag work plus an exercise-less working set.
@@ -210,13 +221,15 @@ enum PhoneDemoSeed {
         let squatWeight = Weight(kg: 60 + Double(progressionIndex) * 2.5)
         let benchWeight = Weight(kg: 40 + Double(progressionIndex) * 1.25)
         let completedAt = startedAt.addingTimeInterval(20 * 60)
+        let isAcceptanceSession = id == SeededIDs.loggedSession
         var items = [
             SessionItemData(
+                id: isAcceptanceSession ? SeededIDs.loggedSessionSquatItem : UUID(),
                 exerciseID: squatID,
                 order: 0,
                 sets: [
-                    SetRecordData(order: 0, weight: Weight(kg: 30), reps: 8, isWarmup: true, completedAt: completedAt),
-                    SetRecordData(order: 1, weight: squatWeight, reps: 5, completedAt: completedAt.addingTimeInterval(90)),
+                    SetRecordData(id: isAcceptanceSession ? SeededIDs.loggedSessionSquatWarmupSet : UUID(), order: 0, weight: Weight(kg: 30), reps: 8, isWarmup: true, completedAt: completedAt),
+                    SetRecordData(id: isAcceptanceSession ? SeededIDs.loggedSessionSquatWorkingSet : UUID(), order: 1, weight: squatWeight, reps: 5, completedAt: completedAt.addingTimeInterval(90)),
                     SetRecordData(order: 2, weight: squatWeight, reps: 8, completedAt: completedAt.addingTimeInterval(180))
                 ]
             ),
@@ -253,6 +266,7 @@ enum PhoneDemoSeed {
             startedAt: startedAt,
             endedAt: startedAt.addingTimeInterval(45 * 60),
             state: .logged,
+            healthKitWorkoutID: isAcceptanceSession ? SeededIDs.loggedSessionHealthKitWorkout : nil,
             origin: .live,
             items: items
         )
