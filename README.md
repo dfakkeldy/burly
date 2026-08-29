@@ -16,9 +16,8 @@ edits preserve the linked HealthKit workout identifier.
 
 ## Simulator acceptance
 
-[PR #5](https://github.com/dfakkeldy/burly/pull/5) merged the fix for
-`testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink` (`974d33c58f`,
-2026-08-29).
+[PR #5](https://github.com/dfakkeldy/burly/pull/5) merged the
+`replaceText` / `hasFocus` fix (`974d33c58f`, 2026-08-29).
 
 The `Simulator acceptance` job in `.github/workflows/ci.yml` only runs
 on pushes to `main`, so a green PR check is not simulator acceptance.
