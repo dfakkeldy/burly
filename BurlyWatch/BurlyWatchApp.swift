@@ -118,9 +118,15 @@ final class WatchAppModel {
         }
         #endif
         let health = HealthKitWorkoutStore()
+        var factory: any WorkoutSessionCreating = health.makeSessionFactory()
+        #if DEBUG
+        if WatchDemoSeed.wantsNoLiveSensors {
+            factory = NoLiveWorkoutFactory()
+        }
+        #endif
         return SessionWorkoutRecorder(
             store: health,
-            controller: WorkoutController(factory: health.makeSessionFactory())
+            controller: WorkoutController(factory: factory)
         )
     }
 }
@@ -164,3 +170,14 @@ private struct RootView: View {
         workoutRecorder.reconcile(activeSessionID: active?.id)
     }
 }
+
+#if DEBUG
+/// `BURLY_WATCH_UI_TEST_HEALTH=noLiveSensors`: every live workout fails to
+/// start, so a finished session takes the duration-only path against real
+/// HealthKit.
+private final class NoLiveWorkoutFactory: WorkoutSessionCreating {
+    func makeLiveWorkout(configuration _: WorkoutConfiguration) throws -> LiveWorkoutResources {
+        throw WorkoutHealthError.operationFailed("UI test: no live sensors")
+    }
+}
+#endif

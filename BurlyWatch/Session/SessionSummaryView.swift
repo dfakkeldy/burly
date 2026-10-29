@@ -90,6 +90,15 @@ struct SessionSummaryView: View {
                         .disabled(isFinishing)
                         .accessibilityIdentifier("sessionSummary.finishButton")
 
+                    // Finish can wait on HealthKit for a few seconds before
+                    // the store save (SessionViewModel's file doc).
+                    if isFinishing && saveError == nil {
+                        Text("Saving…")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("sessionSummary.saving")
+                    }
+
                     if let saveError {
                         Text(saveError)
                             .font(.caption2)

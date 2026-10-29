@@ -7,8 +7,9 @@ import XCTest
 /// acceptance gate cannot pre-grant (`simctl privacy` has no Health
 /// service), and the answer persists on the simulator. They skip unless the
 /// runner sets `BURLY_HEALTH_UI_TESTS=1` (pass it to `xcodebuild test` as
-/// `TEST_RUNNER_BURLY_HEALTH_UI_TESTS=1`). Each test needs the app's Health
-/// authorization reset first (uninstall the app), and the workout count is
+/// `TEST_RUNNER_BURLY_HEALTH_UI_TESTS=1`). The two prompt tests each need a
+/// simulator with no Health answer yet (`simctl erase`); the duration-only
+/// test needs the granted one to have run first. The workout count is
 /// checked outside the test against the simulator's Health database: a UI
 /// test cannot query HealthKit as the app.
 final class HealthKitUITests: XCTestCase {
@@ -55,12 +56,29 @@ final class HealthKitUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["sessionSummary.noSensorData"].exists)
     }
 
+    /// Recovery matrix row 2 against real HealthKit: with access granted
+    /// (by the previous test) but no live workout, Finish saves a
+    /// duration-only workout and says it has no sensor data.
+    func testWithoutLiveWorkoutSavesDurationOnly() throws {
+        let app = launch(health: "noLiveSensors")
+        startLegDay(app)
+        logOneSet(app)
+        endWorkout(app)
+
+        let finishButton = app.buttons["sessionSummary.finishButton"]
+        XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
+        finishButton.tap()
+        let noSensorData = app.staticTexts["sessionSummary.noSensorData"]
+        XCTAssertTrue(noSensorData.waitForExistence(timeout: 20), "Expected the duration-only workout note")
+        attachScreenshot(from: app, name: "BurlyWatch-health-noSensorData")
+    }
+
     // MARK: - Steps
 
-    private func launch() -> XCUIApplication {
+    private func launch(health: String = "live") -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
-        app.launchEnvironment[Self.healthKey] = "live"
+        app.launchEnvironment[Self.healthKey] = health
         app.launch()
         return app
     }
@@ -94,12 +112,16 @@ final class HealthKitUITests: XCTestCase {
         XCTAssertTrue(logButton.waitForExistence(timeout: 10), "Expected the logging screen after the Health sheet")
     }
 
+    /// Looks in the app first, then in the watch's system shell, in case
+    /// the sheet is hosted outside the app's accessibility tree.
     private func tapFirst(_ app: XCUIApplication, labels: [String]) -> Bool {
-        for label in labels {
-            let button = app.buttons[label]
-            if button.exists, button.isHittable {
-                button.tap()
-                return true
+        for host in [app, XCUIApplication(bundleIdentifier: "com.apple.Carousel")] {
+            for label in labels {
+                let button = host.buttons[label]
+                if button.exists, button.isHittable {
+                    button.tap()
+                    return true
+                }
             }
         }
         return false
@@ -181,7 +203,8 @@ final class HealthKitUITests: XCTestCase {
     }
 
     private func attachScreenshot(from app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        // The whole screen, so a system sheet over the app is captured too.
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
