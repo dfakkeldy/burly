@@ -351,13 +351,14 @@ final class PhoneHomeViewModel {
     // MARK: - Hevy import (§8; m7-02)
 
     /// Plans a parsed Hevy export against the store as it stands right now.
-    /// Probes only the file's own session IDs (one keyed lookup each), not
-    /// the whole history graph; exercises come from the bounded catalog
-    /// read, archived rows included because they still exist.
+    /// Probes only the file's own session IDs, each with a bounded count
+    /// (`sessionExists`, never a session graph: m7-02 review), not the
+    /// whole history; exercises come from the bounded catalog read,
+    /// archived rows included because they still exist.
     func planHevyImport(_ result: HevyImportResult, catalog: CatalogSeed) throws -> HevyImportPlan {
         var existingSessionIDs = Set<UUID>()
         for session in result.sessions {
-            if try store.session(id: session.id) != nil {
+            if try store.sessionExists(id: session.id) {
                 existingSessionIDs.insert(session.id)
             }
         }

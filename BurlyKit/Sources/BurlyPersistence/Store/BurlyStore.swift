@@ -798,4 +798,20 @@ public protocol BurlyStore: AnyObject {
     /// `.items`/sets faulting and no row materialization. An `.active`
     /// workout is not history yet, exactly as `sessions(state:)` documents.
     func loggedSessionCount() throws -> Int
+
+    /// Whether a session with `id` is stored, in any state — the Hevy
+    /// import planner's "already imported?" probe (m7-02 review). Bounded:
+    /// a `fetchCount` on the unique `id` column, so asking about every
+    /// workout in a multi-year export never materializes a session graph
+    /// the way `session(id:) != nil` does.
+    func sessionExists(id: UUID) throws -> Bool
+}
+
+extension BurlyStore {
+    /// Correct but unbounded fallback for a conformer with no cheaper
+    /// probe (the watch's DEBUG `FaultInjectingStore` already forwards
+    /// `session(id:)`). `SwiftDataStore` overrides it.
+    public func sessionExists(id: UUID) throws -> Bool {
+        try session(id: id) != nil
+    }
 }

@@ -205,4 +205,24 @@ struct StoreSurfaceTests {
         #expect(try store.sessions(state: .logged).isEmpty)
         #expect(try store.sessions(state: .active).isEmpty)
     }
+
+    // MARK: - sessionExists(id:)
+
+    @Test("sessionExists(id:) answers for logged and active sessions, and false for an unknown id (m7-02 review)")
+    func sessionExistsMatchesSessionLookup() throws {
+        let store = try makeStore()
+        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let routine = Fixture.routine(over: [squat])
+        try store.createExercise(squat)
+        try store.createRoutine(routine)
+
+        let active = Fixture.activeSession(from: routine, startedAt: Fixture.epoch)
+        let logged = Fixture.session(from: routine, startedAt: Fixture.epoch.addingTimeInterval(60))
+        try store.saveActiveSession(active)
+        try store.createSession(logged)
+
+        #expect(try store.sessionExists(id: active.id))
+        #expect(try store.sessionExists(id: logged.id))
+        #expect(try store.sessionExists(id: UUID()) == false)
+    }
 }
