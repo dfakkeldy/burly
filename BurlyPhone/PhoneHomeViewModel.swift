@@ -19,6 +19,7 @@
 
 import Foundation
 import BurlyCore
+import BurlyImport
 import BurlyPersistence
 import Observation
 
@@ -52,6 +53,18 @@ final class PhoneHomeViewModel {
     // loaded only when Stats appears and uses the §7 bounded query surfaces.
     private(set) var statsState: LoadState = .loading
     private(set) var stats: PhoneStatsDashboard?
+
+    /// The arguments of the last `loadStats` call, so a history change made
+    /// outside the Stats tab (a Hevy import) can refresh the dashboard the
+    /// user will see without guessing which ranges they had picked.
+    @ObservationIgnored private var lastStatsRequest: StatsRequest?
+
+    private struct StatsRequest {
+        let progressionRange: PhoneStatsProgressionRange
+        let volumeRange: PhoneStatsVolumeRange
+        let muscleWindowWeeks: Int
+        let exerciseID: UUID?
+    }
 
     private let store: BurlyStore
 
@@ -335,6 +348,63 @@ final class PhoneHomeViewModel {
         }
     }
 
+    // MARK: - Hevy import (§8; m7-02)
+
+    /// Plans a parsed Hevy export against the store as it stands right now.
+    /// Probes only the file's own session IDs, each with a bounded count
+    /// (`sessionExists`, never a session graph: m7-02 review), not the
+    /// whole history; exercises come from the bounded catalog read,
+    /// archived rows included because they still exist.
+    func planHevyImport(_ result: HevyImportResult, catalog: CatalogSeed) throws -> HevyImportPlan {
+        var existingSessionIDs = Set<UUID>()
+        for session in result.sessions {
+            if try store.sessionExists(id: session.id) {
+                existingSessionIDs.insert(session.id)
+            }
+        }
+        let existingExerciseIDs = Set(try store.exercises(includingArchived: true).map(\.id))
+        return try HevyImportPlan.make(
+            result: result,
+            catalog: catalog,
+            existingSessionIDs: existingSessionIDs,
+            existingExerciseIDs: existingExerciseIDs
+        )
+    }
+
+    /// Performs one write of an import commit through the store's strict
+    /// creates (`createExercise` / `createSession`; neither touches
+    /// HealthKit, spec §8 acceptance #3).
+    func writeNextHevyImportStep(_ cursor: inout HevyImportCommitCursor) {
+        cursor.writeNext(
+            createExercise: { try store.createExercise($0) },
+            createSession: { try store.createSession($0) }
+        )
+    }
+
+    /// Refreshes everything an import can change, whether or not it finished:
+    /// the shell counts, History rows, the catalog (new customs), and the
+    /// Stats dashboard if it has been loaded — so History and Stats show the
+    /// imported workouts as soon as the import screen closes.
+    ///
+    /// Sync: the phone app does not own a `PhoneSyncCoordinator` yet, so no
+    /// history change in this view model (`saveHistoryEdit`, placeholder
+    /// naming, routine edits) notifies one today. When that wiring lands,
+    /// this is where `historyDidChange()` (digest refresh) and
+    /// `catalogDidChange()` (new customs in the next snapshot) belong.
+    func refreshAfterHevyImport() {
+        load()
+        loadSessionsForDisplay()
+        loadCatalogForDisplay()
+        if let request = lastStatsRequest {
+            loadStats(
+                progressionRange: request.progressionRange,
+                volumeRange: request.volumeRange,
+                muscleWindowWeeks: request.muscleWindowWeeks,
+                exerciseID: request.exerciseID
+            )
+        }
+    }
+
     // MARK: - Stats (§7; bounded store queries + BurlyCore computation)
 
     /// Loads the four phone-only §7 charts. This is intentionally a
@@ -347,6 +417,12 @@ final class PhoneHomeViewModel {
         muscleWindowWeeks: Int = 4,
         exerciseID: UUID? = nil
     ) {
+        lastStatsRequest = StatsRequest(
+            progressionRange: progressionRange,
+            volumeRange: volumeRange,
+            muscleWindowWeeks: muscleWindowWeeks,
+            exerciseID: exerciseID
+        )
         statsState = .loading
 
         let referenceDate = Date()

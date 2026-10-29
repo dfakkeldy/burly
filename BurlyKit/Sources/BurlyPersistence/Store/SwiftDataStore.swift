@@ -359,6 +359,12 @@ public final class SwiftDataStore: BurlyStore {
         try model(Session.self, id: id)?.snapshot()
     }
 
+    public func sessionExists(id: UUID) throws -> Bool {
+        // SQL `COUNT` on the unique id: no row, relationship or snapshot
+        // work (see the protocol doc).
+        try context.fetchCount(FetchDescriptor<Session>(predicate: Session.predicate(id: id))) > 0
+    }
+
     public func sessions() throws -> [SessionData] {
         try context.fetch(
             FetchDescriptor<Session>(

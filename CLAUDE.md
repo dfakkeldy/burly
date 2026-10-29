@@ -26,7 +26,7 @@ separate CI-only script.
 ## Rules
 
 - Source files start with `// SPDX-License-Identifier: GPL-3.0-or-later`.
-- This repo is public. Planning lives in the private `~/Developer/health-apps`
+- This repo is public. Planning lives in the private `~/Developer/_local/health-apps`
   repo; never copy personal health details from there into this one.
 
 ## Agent work on GitHub

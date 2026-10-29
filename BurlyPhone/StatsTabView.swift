@@ -2,6 +2,11 @@
 // Phone-only Swift Charts dashboard (spec §7). The view deliberately owns
 // range/picker presentation state only; PhoneHomeViewModel obtains bounded
 // projections and calls BurlyCore's stats layer before this file sees data.
+//
+// Every weight here is computed in canonical kg and converted to the
+// Settings display unit only at the mark/label level (spec §7 "canonical kg
+// → display unit"; §9 acceptance #2), so a unit switch re-renders without
+// re-querying the store.
 
 import Charts
 import BurlyCore
@@ -14,6 +19,7 @@ struct StatsTabView: View {
     @State private var progressionRange: PhoneStatsProgressionRange = .threeMonths
     @State private var volumeRange: PhoneStatsVolumeRange = .eightWeeks
     @State private var selectedExerciseID: UUID?
+    @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
 
     var body: some View {
         content
@@ -96,14 +102,14 @@ struct StatsTabView: View {
                         ForEach(stats.progression.points, id: \.sessionID) { point in
                             LineMark(
                                 x: .value("Session", point.date),
-                                y: .value("Weight (kg)", point.topWeight.kg)
+                                y: .value(seriesLabel("Top set"), unit.displayValue(of: point.topWeight))
                             )
                             .foregroundStyle(.blue)
                             .symbol(.circle)
 
                             LineMark(
                                 x: .value("Session", point.date),
-                                y: .value("Estimated 1RM (kg)", point.estimatedOneRepMax)
+                                y: .value(seriesLabel("Estimated 1RM"), unit.displayValue(fromKilograms: point.estimatedOneRepMax))
                             )
                             .foregroundStyle(.orange)
                             .symbol(.diamond)
@@ -112,13 +118,13 @@ struct StatsTabView: View {
                         ForEach(Array(stats.progression.records.enumerated()), id: \.offset) { _, record in
                             PointMark(
                                 x: .value("PR date", record.date),
-                                y: .value("PR", record.value)
+                                y: .value(seriesLabel("Personal record"), unit.displayValue(fromKilograms: record.value))
                             )
                             .symbol(record.kind == .topWeight ? .triangle : .square)
                             .foregroundStyle(.red)
                         }
                     }
-                    .chartYAxisLabel("kg")
+                    .chartYAxisLabel(unit.symbol)
                     .chartLegend(position: .bottom, alignment: .leading) {
                         HStack(spacing: 16) {
                             Label("Top set", systemImage: "circle.fill").foregroundStyle(.blue)
@@ -130,6 +136,16 @@ struct StatsTabView: View {
                     .frame(height: 220)
                     .accessibilityIdentifier("statsTab.progression.chart")
                     .accessibilityLabel("Exercise progression chart for \(exercise.name)")
+
+                    // A findable, VoiceOver-readable statement of the
+                    // chart's headline numbers in the display unit. Worded
+                    // as "best in this range" rather than "PR": the points
+                    // are range-filtered, while PRs are judged against the
+                    // exercise's whole history (PhoneHomeViewModel).
+                    Text(progressionSummary(stats.progression.points))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("statsTab.progression.summary")
                 }
             } else {
                 StatsChartEmptyState(
@@ -153,11 +169,11 @@ struct StatsTabView: View {
                 Chart(stats.volume) { week in
                     BarMark(
                         x: .value("Week", week.weekStart, unit: .weekOfYear),
-                        y: .value("Volume", week.totalVolumeKg)
+                        y: .value("Volume (\(volumeUnitLabel))" as String, unit.displayValue(fromKilograms: week.totalVolumeKg))
                     )
                     .foregroundStyle(.mint.gradient)
                 }
-                .chartYAxisLabel("kg-reps")
+                .chartYAxisLabel(volumeUnitLabel)
                 .chartXAxis {
                     AxisMarks(values: .stride(by: .weekOfYear, count: max(1, volumeRange.weekCount / 4)))
                 }
@@ -292,6 +308,27 @@ struct StatsTabView: View {
             slices.append(PhoneStatsMuscleSlice(name: "Unattributed", fraction: summary.unattributedFraction))
         }
         return slices
+    }
+
+    /// Volume is Σ weight × reps, so its axis keeps the existing "kg-reps"
+    /// shape in whichever unit is shown.
+    private var volumeUnitLabel: String { "\(unit.symbol)-reps" }
+
+    /// Mark labels that carry the unit must reach Charts as `String`, never as
+    /// an interpolated string literal. A literal with interpolation becomes a
+    /// `LocalizedStringKey` with format arguments, and two identically built
+    /// keys compare unequal; Charts keys its internal dictionaries on these
+    /// labels, so the populated Stats tab crashed intermittently with
+    /// KEY_TYPE_OF_DICTIONARY_VIOLATES_HASHABLE_REQUIREMENTS (local acceptance,
+    /// 2026-10-29). `String` equality and hashing always agree.
+    private func seriesLabel(_ name: String) -> String { "\(name) (\(unit.symbol))" }
+
+    /// "Best in this range: top set 198.4 lb · estimated 1RM 251.3 lb".
+    /// Only called with a non-empty point list.
+    private func progressionSummary(_ points: [ExerciseSessionPoint]) -> String {
+        let bestTopSet = points.map(\.topWeight.kg).max() ?? 0
+        let bestEstimate = points.map(\.estimatedOneRepMax).max() ?? 0
+        return "Best in this range: top set \(unit.formatted(kilograms: bestTopSet)) · estimated 1RM \(unit.formatted(kilograms: bestEstimate))"
     }
 
     private func reloadStats() {

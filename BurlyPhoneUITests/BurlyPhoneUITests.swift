@@ -137,15 +137,17 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-startFresh")
     }
 
-    /// First-launch path B: welcome -> Import from Hevy -> the clearly-
-    /// labeled placeholder screen. The heading's wording is asserted because
-    /// "clearly labeled" is the spec contract for this placeholder.
+    /// First-launch path B: welcome -> Import from Hevy -> the Hevy import
+    /// screen (m7-02 replaced m5-01's placeholder). The intent is unchanged:
+    /// the first-launch Import path has an honest destination — here, the
+    /// real import intro with its file-choosing action. The full import flow
+    /// is ImportUITests'.
     ///
     /// The Import choice also persists (finding 5): both welcome buttons
     /// call the same `WelcomeState.markCompleted()`, so a relaunch without
     /// any welcome arguments skips the welcome after Import too — not just
     /// after Start fresh.
-    func testFirstLaunchImportShowsPlaceholder() throws {
+    func testFirstLaunchImportOpensHevyImport() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
         app.launchArguments += ["-burly-reset-welcome"]
@@ -158,12 +160,16 @@ final class BurlyPhoneUITests: XCTestCase {
 
         app.buttons["welcomeView.importButton"].tap()
 
-        let heading = app.staticTexts["importPlaceholderView.heading"]
+        let heading = app.staticTexts["hevyImport.intro.heading"]
         XCTAssertTrue(
             heading.waitForExistence(timeout: 15),
-            "Expected Import from Hevy to navigate to the placeholder screen"
+            "Expected Import from Hevy to open the Hevy import screen"
         )
-        XCTAssertEqual(heading.label, "Import from Hevy")
+        XCTAssertEqual(heading.label, "Bring in your Hevy history")
+        XCTAssertTrue(
+            app.buttons["hevyImport.chooseFileButton"].exists,
+            "Expected the import screen to offer choosing a CSV file"
+        )
         app.terminate()
 
         // The Import choice persisted the welcome flag: a relaunch with no
@@ -180,7 +186,7 @@ final class BurlyPhoneUITests: XCTestCase {
             "Expected the welcome to be skipped on relaunch after choosing Import"
         )
 
-        attachScreenshot(from: relaunched, name: "BurlyPhone-importPlaceholder")
+        attachScreenshot(from: relaunched, name: "BurlyPhone-relaunchAfterImportChoice")
     }
 
     /// The choice persists: the first launch starts from the GENUINE
@@ -669,18 +675,41 @@ final class BurlyPhoneUITests: XCTestCase {
         return identifiers
     }
 
+    /// The revision and HealthKit rows are the first rows of the detail
+    /// view's lazy `List`. After a step that scrolled to the bottom (the
+    /// exercise-identifier scan, a remove button low in the list) they are
+    /// not in the accessibility hierarchy at all, so a plain wait times out
+    /// even though the edit persisted. Main runs 33263690697 and
+    /// 39171686670 failed exactly there, on revision 5. Scroll back toward
+    /// the top until the row materializes; the identifier still names one
+    /// exact revision, so a missing or doubled bump still fails.
     private func assertRevision(_ revision: Int, in app: XCUIApplication) {
         XCTAssertTrue(
-            app.staticTexts["historyDetail.revision.\(revision)"].waitForExistence(timeout: 5),
+            scrollUpToElement(app, identifier: "historyDetail.revision.\(revision)").exists,
             "Expected edit to persist exactly revision \(revision)"
         )
     }
 
     private func assertHealthKitLink(in app: XCUIApplication) {
         XCTAssertTrue(
-            anyElement(app, identifier: "historyDetail.healthKitWorkout.\(Self.healthKitWorkoutID)").waitForExistence(timeout: 5),
+            scrollUpToElement(app, identifier: "historyDetail.healthKitWorkout.\(Self.healthKitWorkoutID)").exists,
             "Expected the seeded HealthKit workout UUID to survive the phone edit path"
         )
+    }
+
+    /// Mirror of `scrollToElement` for rows near the top of a lazy list.
+    /// Waits on the first pass, so a row that is already visible costs no
+    /// swipes; a save that never lands still fails after the bounded pass.
+    private func scrollUpToElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
+        let maxSwipes = 20
+        let element = anyElement(app, identifier: identifier)
+
+        if element.waitForExistence(timeout: 5) { return element }
+        for _ in 0..<maxSwipes {
+            app.swipeDown()
+            if element.waitForExistence(timeout: 1) { return element }
+        }
+        return element
     }
 
     /// Replaces a field's value without the edit menu and without waiting
