@@ -1,0 +1,10 @@
+title,start_time,end_time,description,exercise_title,superset_id,exercise_notes,set_index,set_type,weight_kg,reps,distance_km,duration_seconds,rpe
+"Synthetic Push","2025-03-03 07:00:00","2025-03-03 07:45:00","Synthetic UI-test fixture, not real data","Bench Press (Barbell)",,"",0,"warmup",40,10,,,
+"Synthetic Push","2025-03-03 07:00:00","2025-03-03 07:45:00","Synthetic UI-test fixture, not real data","Bench Press (Barbell)",,"",1,"normal",60,8,,,8
+"Synthetic Push","2025-03-03 07:00:00","2025-03-03 07:45:00","Synthetic UI-test fixture, not real data","Fixture Zorblax Press",,"",2,"normal",20,12,,,
+"Synthetic Legs","2025-03-05 18:00:00","2025-03-05 18:50:00","Synthetic UI-test fixture, not real data","Squat (Barbell)",,"",0,"normal",80,5,,,
+"Synthetic Legs","2025-03-05 18:00:00","2025-03-05 18:50:00","Synthetic UI-test fixture, not real data","Squat (Barbell)",,"",1,"failure",80,4,,,
+"Synthetic Legs","2025-03-05 18:00:00","2025-03-05 18:50:00","Synthetic UI-test fixture, not real data","Treadmill",,"",2,"normal",,,2.0,600,
+"Synthetic Pull","2025-03-07 12:00:00","2025-03-07 12:40:00","Synthetic UI-test fixture, not real data","Pull Up","s1","",0,"normal",0,8,,,
+"Synthetic Pull","2025-03-07 12:00:00","2025-03-07 12:40:00","Synthetic UI-test fixture, not real data","Fixture Zorblax Press","s1","",1,"normal",22,10,,,
+"Synthetic Pull","2025-03-07 12:00:00","2025-03-07 12:40:00","Synthetic UI-test fixture, not real data","Pull Up",,"",2,"normal",0,eight,,,

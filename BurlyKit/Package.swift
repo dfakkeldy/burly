@@ -165,8 +165,11 @@ let package = Package(
             name: "BurlyImportTests",
             // BurlyFixtures for the shared Hevy-shaped CSV generator (bodyweight,
             // warmup, malformed-row scenarios); BurlyImport is the thing under
-            // test.
-            dependencies: ["BurlyImport", "BurlyFixtures"]
+            // test. BurlyPersistence (test-only edge, no cycle: BurlyImport
+            // itself still never sees the store) so the m7-02 import plan is
+            // also proven against the real strict `createSession`, not only a
+            // fake writer.
+            dependencies: ["BurlyImport", "BurlyFixtures", "BurlyPersistence"]
         )
     ],
     swiftLanguageModes: [.v6]
