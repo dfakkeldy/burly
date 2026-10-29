@@ -123,6 +123,8 @@ private struct HistoryWeekGroup: Identifiable {
 private struct HistorySessionRow: View {
     let session: SessionData
     let hasPersonalRecord: Bool
+    /// Spec §9 #2: the volume total renders in the Settings display unit.
+    @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -156,7 +158,7 @@ private struct HistorySessionRow: View {
         let volume = workingSets.reduce(0.0) { partial, set in
             partial + set.weightKg * Double(set.reps)
         }
-        return "\(Int(volume.rounded())) kg"
+        return unit.formattedVolume(kilograms: volume)
     }
 }
 

@@ -10,6 +10,8 @@ struct HistorySessionDetailView: View {
     @State private var pickerPresented = false
     @State private var errorMessage: String?
     @State private var notesDraft: String
+    /// Spec §9 #2: set rows render in the Settings display unit.
+    @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
 
     init(viewModel: PhoneHomeViewModel, session: SessionData) {
         self.viewModel = viewModel
@@ -36,7 +38,7 @@ struct HistorySessionDetailView: View {
                     Section {
                         ForEach(item.sets.sorted { $0.order < $1.order }) { set in
                             NavigationLink {
-                                HistorySetEditor(set: set) { updated in
+                                HistorySetEditor(set: set, unit: unit) { updated in
                                     mutate { session in
                                         guard let itemIndex = session.items.firstIndex(where: { $0.id == item.id }),
                                               let setIndex = session.items[itemIndex].sets.firstIndex(where: { $0.id == updated.id }) else { return }
@@ -45,7 +47,7 @@ struct HistorySessionDetailView: View {
                                 }
                             } label: {
                                 HStack {
-                                    Text("\(set.weightKg.formatted(.number.precision(.fractionLength(1)))) kg × \(set.reps)")
+                                    Text("\(unit.formatted(set.weight)) × \(set.reps)")
                                     Spacer()
                                     if set.isWarmup { Text("Warmup").foregroundStyle(.secondary) }
                                 }
@@ -156,6 +158,12 @@ struct HistorySessionDetailView: View {
     }
 }
 
+/// Edits one logged set. The weight field speaks the Settings display unit
+/// in both directions (spec §9 #2): it starts as the stored kg converted
+/// into that unit, and Save parses the text back through the same unit —
+/// a lifter in lb mode who types 180 stores 81.6466… kg, not 180 kg (the
+/// trap planning task m5-05 records against the old `Weight(kg:
+/// Double(text))` parse).
 private struct HistorySetEditor: View {
     private enum Field: Hashable {
         case weight
@@ -165,22 +173,37 @@ private struct HistorySetEditor: View {
     @Environment(\.dismiss) private var dismiss
     let set: SetRecordData
     let onSave: (SetRecordData) -> Void
+    /// Latched for the editor's lifetime, not read live. The parent
+    /// re-creates this view whenever it re-renders (including after a unit
+    /// change made in the Settings tab while this screen stays pushed), but
+    /// `@State weight` keeps the text the user saw. Holding the unit in
+    /// `@State` too keeps the label, the text, and the Save parse in one
+    /// unit, so a mid-edit switch can never re-read lb text as kg.
+    @State private var entryUnit: WeightUnit
+    /// The field's starting text. Saving it untouched keeps the stored
+    /// weight exactly: re-parsing a rounded display value would quietly
+    /// move 90 kg to 89.99 kg in lb mode (Weight.swift: display rounding
+    /// must never round-trip back into kg).
+    @State private var initialWeightText: String
     @State private var weight: String
     @State private var reps: String
     @State private var isWarmup: Bool
     @FocusState private var focusedField: Field?
 
-    init(set: SetRecordData, onSave: @escaping (SetRecordData) -> Void) {
+    init(set: SetRecordData, unit: WeightUnit, onSave: @escaping (SetRecordData) -> Void) {
         self.set = set
         self.onSave = onSave
-        _weight = State(initialValue: set.weightKg.formatted(.number.precision(.fractionLength(1))))
+        let text = unit.formattedNumber(set.weight)
+        _entryUnit = State(initialValue: unit)
+        _initialWeightText = State(initialValue: text)
+        _weight = State(initialValue: text)
         _reps = State(initialValue: String(set.reps))
         _isWarmup = State(initialValue: set.isWarmup)
     }
 
     var body: some View {
         Form {
-            TextField("Weight (kg)", text: $weight)
+            TextField("Weight (\(entryUnit.symbol))", text: $weight)
                 .keyboardType(.decimalPad)
                 .focused($focusedField, equals: .weight)
                 .accessibilityIdentifier("historyDetail.setWeight")
@@ -194,9 +217,9 @@ private struct HistorySetEditor: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
-                    guard let kg = Double(weight), kg >= 0, let repetitions = Int(reps), repetitions >= 0 else { return }
+                    guard let newWeight = enteredWeight, let repetitions = Int(reps), repetitions >= 0 else { return }
                     var updated = set
-                    updated.setWeight(Weight(kg: kg))
+                    updated.setWeight(newWeight)
                     updated.reps = repetitions
                     updated.isWarmup = isWarmup
                     onSave(updated)
@@ -205,6 +228,13 @@ private struct HistorySetEditor: View {
                 .accessibilityIdentifier("historyDetail.saveSet")
             }
         }
+    }
+
+    /// The weight to store, or `nil` when the text is not a weight (Save
+    /// then does nothing, as before).
+    private var enteredWeight: Weight? {
+        if weight == initialWeightText { return set.weight }
+        return entryUnit.parse(weight)
     }
 }
 
