@@ -16,7 +16,11 @@ Three smaller choices ride along. A catalog-matched exercise the store lacks (a
 store the bundled seed never reached) is inserted as a curated row, the way the seed
 would insert it, instead of failing the session write; it still counts as matched.
 Hevy's CSV carries no time zone, so the phone parses in its current zone and says
-so on the preview. And both entry points present the import over the tab shell,
+so on the preview. Identity does not follow that zone: session, item and set IDs hash
+the wall-clock `start_time` text (spec §8, "title+start_time"), not the instant it
+means in the chosen zone, so re-importing after travelling or a time-zone change
+still finds every workout already stored. Under UTC the key is unchanged from m7-01.
+And both entry points present the import over the tab shell,
 so the welcome path and the tabs share one store instance and finishing or
 cancelling lands on History.
 

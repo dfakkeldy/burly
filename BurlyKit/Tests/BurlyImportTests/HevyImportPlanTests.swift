@@ -115,6 +115,31 @@ struct HevyImportPlanTests {
         #expect(plan.preview.newWorkoutDateRange == range)
     }
 
+    @Test("a recognized file whose every row is unreadable previews zero workouts in the file, not 'already imported'")
+    func fileWithNoImportableWorkoutsIsDistinctFromNothingNew() throws {
+        // The shape a real export would take if its timestamp format were
+        // neither one m7-01 accepts: the header is fine, every row fails.
+        let csv = [
+            Self.header,
+            #""Push Day","15/06/2025 08:00","15/06/2025 08:45","","Bench Press (Barbell)",,"",0,"normal",80,5,,,"#,
+            #""Leg Day","17/06/2025 18:00","17/06/2025 19:00","","Squat (Barbell)",,"",0,"normal",100,5,,,"#
+        ].joined(separator: "\n") + "\n"
+        let plan = try HevyImportPlan.make(
+            result: try parse(csv), catalog: try catalog(),
+            existingSessionIDs: [], existingExerciseIDs: try allCatalogIDs()
+        )
+
+        // The phone keys its "No workouts Burly can import" state on
+        // `workoutsInFile == 0`; `isNothingNew` alone is also true when
+        // every workout is already stored, which is a different message.
+        #expect(plan.preview.workoutsInFile == 0)
+        #expect(plan.preview.isNothingNew)
+        #expect(plan.preview.alreadyImportedWorkoutCount == 0)
+        #expect(plan.preview.fileDateRange == nil)
+        #expect(plan.fileSummary.malformedRowCount == 2)
+        #expect(plan.sessionsToCreate.isEmpty)
+    }
+
     @Test("catalog matches the store lacks are restored as curated rows, not counted as new customs")
     func missingCatalogRowsAreRestoredNotCountedAsCustom() throws {
         let plan = try HevyImportPlan.make(

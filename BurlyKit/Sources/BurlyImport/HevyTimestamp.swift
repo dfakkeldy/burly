@@ -88,6 +88,37 @@ public enum HevyTimestamp {
         String(Int(date.timeIntervalSince1970.rounded()))
     }
 
+    /// The identity key for a timestamp `parse` read in `timeZone`: the
+    /// wall-clock text's components, rendered as if they had been read in
+    /// UTC (m7-02 review). Spec §8 namespaces a session's UUID from
+    /// title + `start_time`, and `start_time` is zone-less wall-clock text,
+    /// so the ID must not move when the zone used to *interpret* that text
+    /// does. Hashing the zone-interpreted instant instead (`canonicalKey`
+    /// on the parsed `Date`) made every ID depend on the phone's current
+    /// zone: re-importing an overlapping export after travelling, or after
+    /// a time-zone setting change, hashed every workout to a new UUID and
+    /// duplicated it an hour or more away.
+    ///
+    /// Under UTC this is exactly `canonicalKey(for: date)`, so IDs derived
+    /// with m7-01's UTC default are unchanged, and both accepted formats of
+    /// the same wall-clock time still agree (finding 2.2). `parse` only
+    /// returns dates whose components round-trip in `timeZone`, so reading
+    /// them back here recovers the original text's components, including
+    /// a repeated hour on a daylight-saving fall-back day.
+    public static func canonicalKey(for date: Date, readIn timeZone: TimeZone) -> String {
+        let wallClock = calendar(timeZone: timeZone).dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: date
+        )
+        guard let asUTC = calendar(timeZone: defaultTimeZone).date(from: wallClock) else {
+            // Unreachable for a date `parse` produced: every wall-clock time
+            // exists in UTC (no daylight-saving gaps). Fall back to the
+            // instant rather than trapping on hostile input.
+            return canonicalKey(for: date)
+        }
+        return canonicalKey(for: asUTC)
+    }
+
     /// `yyyy-MM-dd HH:mm:ss`
     private static func isoLike(_ text: String, timeZone: TimeZone) -> Date? {
         let parts = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)

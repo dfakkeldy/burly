@@ -97,6 +97,23 @@ struct HevyTimestampTests {
         #expect(HevyTimestamp.canonicalKey(for: a) == HevyTimestamp.canonicalKey(for: b))
     }
 
+    @Test("m7-02 review — the zone-aware canonical key is the wall-clock text's key, whatever zone read it")
+    func canonicalKeyReadInZoneIgnoresTheZone() throws {
+        let utc = try #require(HevyTimestamp.parse("2025-11-02 01:30:00"))
+        let expected = HevyTimestamp.canonicalKey(for: utc)
+        // Under UTC the zone-aware key is the original key, so IDs derived
+        // with m7-01's UTC default are unchanged.
+        #expect(HevyTimestamp.canonicalKey(for: utc, readIn: HevyTimestamp.defaultTimeZone) == expected)
+        // 2 Nov 2025 01:30 is the repeated hour of New York's fall-back.
+        for identifier in ["America/New_York", "America/Halifax", "Asia/Kolkata", "Pacific/Chatham"] {
+            let zone = try #require(TimeZone(identifier: identifier))
+            for text in ["2025-11-02 01:30:00", "2 Nov 2025, 01:30"] {
+                let date = try #require(HevyTimestamp.parse(text, timeZone: zone))
+                #expect(HevyTimestamp.canonicalKey(for: date, readIn: zone) == expected, "\(identifier) \(text)")
+            }
+        }
+    }
+
     @Test("finding 6.1 — an explicit non-UTC timezone shifts the parsed instant relative to the UTC default")
     func explicitTimeZoneShiftsInstant() throws {
         let utc = try #require(HevyTimestamp.parse("2025-06-15 08:00:00", timeZone: HevyTimestamp.defaultTimeZone))

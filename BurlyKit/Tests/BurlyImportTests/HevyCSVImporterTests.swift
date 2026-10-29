@@ -675,6 +675,49 @@ struct HevyCSVImporterTests {
         #expect(shiftedStart == utcStart.addingTimeInterval(4 * 3600))
     }
 
+    @Test("m7-02 review — IDs hash the wall-clock start_time, so reading the same file in another zone reproduces every ID")
+    func identitiesDoNotDependOnTheParseTimeZone() throws {
+        let catalog = try loadCatalog()
+        // Two sessions about five months apart (so one sits on each side of
+        // a daylight-saving change), several items and sets each: every
+        // derived level (session -> item -> set) has to agree, not just
+        // the session.
+        let sessions = [
+            FixtureSession(title: "Day A", start: start(dayOffset: 0), durationMinutes: 45, exercises: [
+                FixtureExercise(title: "Bench Press (Barbell)", muscle: "Chest", sets: [
+                    FixtureSet(weightKg: 60, reps: 8), FixtureSet(weightKg: 80, reps: 5)
+                ]),
+                FixtureExercise(title: "Quantum Leg Curl", muscle: "Legs", sets: [FixtureSet(weightKg: 20, reps: 12)])
+            ]),
+            FixtureSession(title: "Day B", start: start(dayOffset: 150), durationMinutes: 30, exercises: [
+                FixtureExercise(title: "Quantum Leg Curl", muscle: "Legs", sets: [
+                    FixtureSet(weightKg: 22, reps: 10), FixtureSet(weightKg: 24, reps: 8)
+                ])
+            ])
+        ]
+        let csv = HevyCSVGenerator.generate(sessions: sessions)
+        let utc = try HevyCSVImporter.parse(csv: csv, catalog: catalog, timeZone: HevyTimestamp.defaultTimeZone)
+        // Named zones with daylight saving, as a phone would report after
+        // travelling (or after a time-zone setting change) between imports.
+        for identifier in ["America/Halifax", "America/Toronto", "Asia/Kolkata"] {
+            let zone = try #require(TimeZone(identifier: identifier))
+            let other = try HevyCSVImporter.parse(csv: csv, catalog: catalog, timeZone: zone)
+
+            #expect(other.sessions.map(\.id) == utc.sessions.map(\.id), "\(identifier)")
+            #expect(other.sessions.flatMap(\.items).map(\.id) == utc.sessions.flatMap(\.items).map(\.id), "\(identifier)")
+            #expect(
+                other.sessions.flatMap(\.items).flatMap(\.sets).map(\.id)
+                    == utc.sessions.flatMap(\.items).flatMap(\.sets).map(\.id),
+                "\(identifier)"
+            )
+            // The instants still move with the zone: only identity is fixed.
+            for (a, b) in zip(other.sessions, utc.sessions) {
+                let offset = TimeInterval(zone.secondsFromGMT(for: a.startedAt))
+                #expect(a.startedAt == b.startedAt.addingTimeInterval(-offset), "\(identifier)")
+            }
+        }
+    }
+
     @Test("finding 6.2 — end_time before start_time on the same row is malformed, not a negative-duration set")
     func endBeforeStartIsMalformed() throws {
         let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_kg,reps"
