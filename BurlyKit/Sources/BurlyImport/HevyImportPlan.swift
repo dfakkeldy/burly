@@ -206,7 +206,9 @@ public struct HevyImportOutcome: Sendable, Equatable {
         public let stage: Stage
         /// The ID of the row whose write threw.
         public let id: UUID
-        /// `String(describing:)` of the thrown error, for the summary screen.
+        /// `String(describing:)` of the thrown error: a diagnostic, not user
+        /// copy (it can carry enum cases and UUIDs), so the phone's summary
+        /// names only the `stage` (m7-02 review).
         public let message: String
     }
 

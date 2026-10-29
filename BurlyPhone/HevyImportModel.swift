@@ -31,6 +31,11 @@ final class HevyImportModel {
         /// Spec §8: "only an unrecognizable header aborts."
         case unrecognizedHeader(missingColumns: [String])
         case unreadable(String)
+        /// The file parsed, but the store read behind the plan threw. Kept
+        /// apart from `.unreadable` (m7-02 review): the file is fine, and
+        /// after a partial import some workouts did land, so "couldn't read
+        /// that file, nothing was imported" would be false twice over.
+        case historyCheckFailed(afterPartialImport: Bool)
     }
 
     private(set) var phase: Phase = .intro
@@ -100,21 +105,28 @@ final class HevyImportModel {
         previewWasRefreshed = false
         parsed = nil
         let timeZone = timeZone
+        let export: ParsedExport
         do {
             // Parsing a multi-year export is real work; keep it off the main
             // actor. Only the plan (which reads the store) comes back to it.
-            let export = try await Task.detached(priority: .userInitiated) {
+            export = try await Task.detached(priority: .userInitiated) {
                 let data = try load()
                 let catalog = try CatalogSeed.loadBundled()
                 let result = try HevyCSVImporter.parse(csvData: data, catalog: catalog, timeZone: timeZone)
                 return ParsedExport(result: result, catalog: catalog)
             }.value
-            parsed = export
-            phase = .preview(try viewModel.planHevyImport(export.result, catalog: export.catalog))
         } catch HevyImportError.unrecognizedHeader(let missingColumns) {
             phase = .unrecognizedHeader(missingColumns: missingColumns)
+            return
         } catch {
             phase = .unreadable(error.localizedDescription)
+            return
+        }
+        parsed = export
+        do {
+            phase = .preview(try viewModel.planHevyImport(export.result, catalog: export.catalog))
+        } catch {
+            phase = .historyCheckFailed(afterPartialImport: false)
         }
     }
 
@@ -147,7 +159,9 @@ final class HevyImportModel {
         do {
             plan = try viewModel.planHevyImport(parsed.result, catalog: parsed.catalog)
         } catch {
-            phase = .unreadable(error.localizedDescription)
+            // From a partial-failure summary, some workouts are already in
+            // History; the screen must not claim otherwise.
+            phase = .historyCheckFailed(afterPartialImport: shownPreview == nil)
             return
         }
         // Stale-preview guard: write only what the user just looked at. A

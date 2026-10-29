@@ -107,7 +107,26 @@ struct HevyImportView: View {
                 identifier: "hevyImport.readError",
                 onChooseAnother: chooseFile
             )
+        case .historyCheckFailed(let afterPartialImport):
+            HevyImportProblemView(
+                systemImage: "exclamationmark.triangle",
+                title: "Couldn't check your history",
+                message: Self.historyCheckFailedMessage(afterPartialImport: afterPartialImport),
+                identifier: "hevyImport.historyError",
+                actionTitle: "Choose the File Again",
+                onChooseAnother: chooseFile
+            )
         }
+    }
+
+    /// The file was fine; the store read wasn't. Says what did and didn't
+    /// happen, and that trying again cannot duplicate anything.
+    private static func historyCheckFailedMessage(afterPartialImport: Bool) -> String {
+        let what = afterPartialImport
+            ? "Burly couldn't read your workout history to see what's left to import. "
+                + "The workouts already added stay in History."
+            : "Burly couldn't read your workout history to compare it with this file, so nothing was imported."
+        return what + " Choosing the file again is safe: workouts already in Burly are skipped, never duplicated."
     }
 
     /// Kind and specific: names what's missing, says nothing was imported,
@@ -177,7 +196,8 @@ private struct HevyImportIntroView: View {
                 IntroPoint(
                     systemImage: "heart.text.square",
                     title: "Apple Health stays as it is",
-                    message: "Hevy already saved these workouts to Health, so Burly won't add them again."
+                    message: "Burly doesn't write imported workouts to Apple Health. "
+                        + "If Hevy saved them there, they're already in Health and won't be counted twice."
                 )
                 IntroPoint(
                     systemImage: "arrow.triangle.2.circlepath",
@@ -275,15 +295,30 @@ private struct HevyImportPreviewView: View {
 
             if preview.isNothingNew {
                 Section {
+                    // `isNothingNew` is also true for a file with no workouts
+                    // at all (every row unreadable, header-only, cardio-only);
+                    // that is not a success and must not read as one (m7-02
+                    // review). The identifier sits on the combined element:
+                    // `.combine` folds its children into one accessibility
+                    // element, so a child's identifier would not reach
+                    // XCUITest (SessionSummaryView.summaryRow's pattern).
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("Everything in this file is already in Burly", systemImage: "checkmark.circle.fill")
-                            .font(.headline)
-                            .foregroundStyle(.green)
-                            .accessibilityIdentifier("hevyImport.preview.nothingNew")
+                        if hasNoImportableWorkouts {
+                            Label("No workouts Burly can import in this file", systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline)
+                                .foregroundStyle(.orange)
+                        } else {
+                            Label("Everything in this file is already in Burly", systemImage: "checkmark.circle.fill")
+                                .font(.headline)
+                                .foregroundStyle(.green)
+                        }
                         Text(nothingNewMessage)
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(
+                        hasNoImportableWorkouts ? "hevyImport.preview.nothingImportable" : "hevyImport.preview.nothingNew"
+                    )
                 }
             }
 
@@ -373,10 +408,14 @@ private struct HevyImportPreviewView: View {
         preview.newWorkoutCount == 1 ? "Import 1 Workout" : "Import \(preview.newWorkoutCount) Workouts"
     }
 
+    private var hasNoImportableWorkouts: Bool {
+        preview.workoutsInFile == 0
+    }
+
     private var nothingNewMessage: String {
         let count = preview.workoutsInFile
         if count == 0 {
-            return "This file has no strength workouts Burly can import. Anything that was set aside is listed below."
+            return "Nothing was found to import. Anything that was set aside, and why, is listed below."
         }
         let workouts = count == 1 ? "The 1 workout" : "All \(count) workouts"
         return "\(workouts) in this file \(count == 1 ? "is" : "are") already in your history. Nothing will be added or duplicated."
@@ -445,7 +484,7 @@ private struct HevyImportDropReport: View {
         Section {
             if summary.encodingDamageDetected {
                 Label {
-                    Text("Part of this file wasn't valid text. \(rows(encodingDamagedRowCount)) with damaged characters \(encodingDamagedRowCount == 1 ? "was" : "were") set aside rather than risk importing garbled data.")
+                    Text(encodingDamageMessage)
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
@@ -491,6 +530,20 @@ private struct HevyImportDropReport: View {
     private func rows(_ count: Int) -> String {
         count == 1 ? "1 row" : "\(count) rows"
     }
+
+    /// The damage can sit outside any workout row (an unrecognized column
+    /// name, or a record the reader already rejected for another reason),
+    /// so "0 rows were set aside" is possible and reads as nonsense (m7-02
+    /// review).
+    private var encodingDamageMessage: String {
+        let count = encodingDamagedRowCount
+        guard count > 0 else {
+            return "Part of this file wasn't valid text. No workout rows were set aside for it "
+                + "beyond any problem rows listed below."
+        }
+        return "Part of this file wasn't valid text. \(rows(count)) with damaged characters "
+            + "\(count == 1 ? "was" : "were") set aside rather than risk importing garbled data."
+    }
 }
 
 // MARK: - Summary
@@ -509,20 +562,22 @@ private struct HevyImportSummaryView: View {
                         Label("Import complete", systemImage: "checkmark.circle.fill")
                             .font(.headline)
                             .foregroundStyle(.green)
-                            .accessibilityIdentifier("hevyImport.summary.heading")
                         Text("Your workouts are in History and Stats.")
                             .foregroundStyle(.secondary)
                     } else {
                         Label("Import stopped part-way", systemImage: "exclamationmark.triangle.fill")
                             .font(.headline)
                             .foregroundStyle(.orange)
-                            .accessibilityIdentifier("hevyImport.summary.failedHeading")
                         Text(failureMessage)
                             .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("hevyImport.summary.failureMessage")
                     }
                 }
+                // On the combined element, not its children: `.combine`
+                // makes one accessibility element, so child identifiers
+                // would not reach XCUITest (m7-02 review; same pattern as
+                // SessionSummaryView.summaryRow).
                 .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(outcome.isComplete ? "hevyImport.summary.heading" : "hevyImport.summary.failedHeading")
             }
 
             Section {
@@ -576,8 +631,10 @@ private struct HevyImportSummaryView: View {
     private var failureMessage: String {
         let total = plan.preview.newWorkoutCount
         let added = outcome.sessionsCreated == 1 ? "1 workout was" : "\(outcome.sessionsCreated) workouts were"
-        let reason = outcome.failure?.message ?? "an unknown error"
-        return "\(added) added out of \(total) before saving failed (\(reason)). "
+        // `Failure.message` is a diagnostic dump (enum cases, UUIDs), not
+        // user copy (m7-02 review); name only what was being saved.
+        let what = outcome.failure?.stage == .exercise ? "an exercise" : "a workout"
+        return "\(added) added out of \(total) before saving \(what) failed. "
             + "Importing the same file again is safe: workouts already added are skipped, never duplicated."
     }
 }
@@ -589,6 +646,7 @@ private struct HevyImportProblemView: View {
     let title: String
     let message: String
     let identifier: String
+    var actionTitle = "Choose Another File"
     let onChooseAnother: () -> Void
 
     var body: some View {
@@ -608,7 +666,7 @@ private struct HevyImportProblemView: View {
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("\(identifier).message")
                 Button(action: onChooseAnother) {
-                    Label("Choose Another File", systemImage: "doc.badge.plus")
+                    Label(actionTitle, systemImage: "doc.badge.plus")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
