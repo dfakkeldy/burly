@@ -51,8 +51,10 @@ Scripts/acceptance-sim.sh
 `Burly Watch S11 46mm` on the newest installed runtimes. CI creates the pair
 the same way (see `.github/workflows/ci.yml`).
 
-The `Simulator acceptance` job only runs on pushes to `main`, so a green PR
-check is not simulator acceptance. From August to October 2026 `main` failed
+The `Simulator acceptance` job runs on pushes to `main` and on pull requests
+labelled `sim-acceptance`. Without that label a green PR check is not
+simulator acceptance, and CI runs Xcode 26 runtimes, which can behave
+differently from a local Xcode 27 run. From August to October 2026 `main` failed
 in `testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink` ("Expected edit
 to persist exactly revision 5"). The cause was in the test, not the app: the
 revision row sits at the top of a lazy list, and the test looked for it after
