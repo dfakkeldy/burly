@@ -36,6 +36,124 @@ public final class HealthKitWorkoutSessionFactory: WorkoutSessionCreating {
     }
 }
 
+/// Spec §4's HealthKit store operations outside one live workout.
+@MainActor
+public final class HealthKitWorkoutStore: WorkoutHealthStore {
+    private let healthStore: HKHealthStore
+
+    public init(healthStore: HKHealthStore = HKHealthStore()) {
+        assert(WorkoutMetadataKey.externalUUID == HKMetadataKeyExternalUUID)
+        assert(WorkoutMetadataKey.brandName == HKMetadataKeyWorkoutBrandName)
+        self.healthStore = healthStore
+    }
+
+    /// A live-workout factory on the same `HKHealthStore`.
+    public func makeSessionFactory() -> HealthKitWorkoutSessionFactory {
+        HealthKitWorkoutSessionFactory(healthStore: healthStore)
+    }
+
+    public var authorizationStatus: WorkoutAuthorizationStatus {
+        guard HKHealthStore.isHealthDataAvailable() else { return .unavailable }
+        switch healthStore.authorizationStatus(for: HKObjectType.workoutType()) {
+        case .notDetermined: return .notDetermined
+        case .sharingDenied: return .denied
+        case .sharingAuthorized: return .authorized
+        @unknown default: return .denied
+        }
+    }
+
+    public func requestAuthorization() async throws {
+        do {
+            try await healthStore.requestAuthorization(
+                toShare: [HKObjectType.workoutType()],
+                read: [HKQuantityType(.heartRate), HKQuantityType(.activeEnergyBurned)]
+            )
+        } catch {
+            throw WorkoutHealthError(healthKitError: error)
+        }
+    }
+
+    public func recoverLiveWorkout() async throws -> LiveWorkoutResources? {
+        #if os(watchOS)
+        let recovered: HKWorkoutSession?
+        do {
+            recovered = try await healthStore.recoverActiveWorkoutSession()
+        } catch {
+            throw WorkoutHealthError(healthKitError: error)
+        }
+        guard let session = recovered else { return nil }
+        let builder = session.associatedWorkoutBuilder()
+        if builder.dataSource == nil {
+            builder.dataSource = HKLiveWorkoutDataSource(
+                healthStore: healthStore,
+                workoutConfiguration: session.workoutConfiguration
+            )
+        }
+        return LiveWorkoutResources(
+            session: HealthKitWorkoutSessionAdapter(session: session),
+            builder: HealthKitLiveWorkoutBuilderAdapter(builder: builder)
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    public func workoutCount(linkedTo sessionID: UUID) async throws -> Int {
+        try await linkedWorkouts(sessionID).count
+    }
+
+    public func saveDurationOnlyWorkout(
+        start: Date,
+        end: Date,
+        metadata: WorkoutMetadata
+    ) async throws -> UUID? {
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = WorkoutActivity.traditionalStrengthTraining.healthKitValue
+        configuration.locationType = WorkoutLocation.indoor.healthKitValue
+        let builder = HKWorkoutBuilder(
+            healthStore: healthStore,
+            configuration: configuration,
+            device: .local()
+        )
+        do {
+            try await builder.beginCollection(at: start)
+            try await builder.addMetadata(metadata)
+            try await builder.endCollection(at: end)
+            return try await builder.finishWorkout()?.uuid
+        } catch {
+            builder.discardWorkout()
+            throw WorkoutHealthError(healthKitError: error)
+        }
+    }
+
+    public func deleteWorkouts(linkedTo sessionID: UUID) async throws -> Int {
+        let workouts = try await linkedWorkouts(sessionID)
+        guard !workouts.isEmpty else { return 0 }
+        do {
+            try await healthStore.delete(workouts)
+        } catch {
+            throw WorkoutHealthError(healthKitError: error)
+        }
+        return workouts.count
+    }
+
+    private func linkedWorkouts(_ sessionID: UUID) async throws -> [HKWorkout] {
+        let predicate = HKQuery.predicateForObjects(
+            withMetadataKey: HKMetadataKeyExternalUUID,
+            allowedValues: [sessionID.uuidString]
+        )
+        let query = HKSampleQueryDescriptor(
+            predicates: [.workout(predicate)],
+            sortDescriptors: []
+        )
+        do {
+            return try await query.result(for: healthStore)
+        } catch {
+            throw WorkoutHealthError(healthKitError: error)
+        }
+    }
+}
+
 @MainActor
 private final class HealthKitWorkoutSessionAdapter: NSObject, WorkoutSessionProtocol,
     HKWorkoutSessionDelegate
@@ -114,12 +232,12 @@ private final class HealthKitLiveWorkoutBuilderAdapter: LiveWorkoutBuilding {
         }
     }
 
-    func finishWorkout(metadata: WorkoutMetadata) async throws {
+    func finishWorkout(metadata: WorkoutMetadata) async throws -> UUID? {
         do {
             if !metadata.isEmpty {
                 try await builder.addMetadata(metadata)
             }
-            _ = try await builder.finishWorkout()
+            return try await builder.finishWorkout()?.uuid
         } catch {
             throw WorkoutHealthError(healthKitError: error)
         }

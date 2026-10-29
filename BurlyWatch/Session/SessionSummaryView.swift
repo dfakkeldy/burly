@@ -30,6 +30,9 @@ struct SessionSummaryView: View {
     let isFinal: Bool
     let isFinishing: Bool
     let saveError: String?
+    /// Spec §4 recovery matrix row 2: the workout went to Health as a
+    /// duration-only record, with no heart rate or energy.
+    var lacksSensorData = false
     let onFinish: () -> Void
     let onRetryFinish: () -> Void
     let onKeepGoing: () -> Void
@@ -67,6 +70,14 @@ struct SessionSummaryView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("sessionSummary.beatLastTime")
+                }
+
+                if isFinal && lacksSensorData {
+                    Text("Saved to Health without sensor data")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("sessionSummary.noSensorData")
                 }
 
                 if isFinal {

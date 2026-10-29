@@ -334,7 +334,26 @@ public struct SessionEngine: Sendable {
     ///   them here would make Finish the one transition that is silent.
     @discardableResult
     public mutating func finish() throws -> [HapticEvent] {
-        try SessionMutator.finish(&session, clock: clock)
+        try finish(endingAt: clock.now)
+    }
+
+    /// Finish with an explicit end time: §4's stale-session guard ends a
+    /// session left open for over an hour at its last logged set, not at
+    /// the moment the lifter finally answers the prompt.
+    @discardableResult
+    public mutating func finish(endingAt endDate: Date) throws -> [HapticEvent] {
+        try SessionMutator.finish(&session, clock: FixedWallClock(now: endDate))
         return weightEditMachine.handle(.pageAway, &weightEdit).haptics
     }
+
+    /// §4 linking: records the HKWorkout the watch saved for this session.
+    /// Not a session mutation (it changes no set, item or state), so it is
+    /// allowed after Finish, before the final store save.
+    public mutating func linkHealthKitWorkout(_ workoutID: UUID?) {
+        session.session.healthKitWorkoutID = workoutID
+    }
+}
+
+private struct FixedWallClock: WallClock {
+    let now: Date
 }

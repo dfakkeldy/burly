@@ -31,6 +31,20 @@ enum WatchDemoSeed {
     /// test). Ignored unless `environmentKey` is also present and
     /// recognized.
     static let faultEnvironmentKey = "BURLY_WATCH_UI_TEST_FAULT"
+
+    /// Set to `live` to keep the real HealthKit path (spec §4) in a seeded
+    /// scenario. Seeded scenarios otherwise run without Health, so the
+    /// system authorization sheet never covers the screens the existing
+    /// suites drive (BurlyWatchApp.swift).
+    static let healthEnvironmentKey = "BURLY_WATCH_UI_TEST_HEALTH"
+
+    static var isScenarioRequested: Bool {
+        ProcessInfo.processInfo.environment[environmentKey] != nil
+    }
+
+    static var wantsLiveHealth: Bool {
+        ProcessInfo.processInfo.environment[healthEnvironmentKey] == "live"
+    }
     /// How many of the faulting method's calls succeed before failures
     /// start (e.g. 1 lets Start's own `saveActiveSession` through so the
     /// logging screen can be reached before a later save fails).

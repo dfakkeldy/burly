@@ -23,11 +23,11 @@ struct ResumeSessionView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
-                Image(systemName: "arrow.clockwise.circle")
+                Image(systemName: preview.staleSince == nil ? "arrow.clockwise.circle" : "clock.badge.exclamationmark")
                     .font(.title2)
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("Resume workout?")
+                Text(preview.staleSince == nil ? "Resume workout?" : "Still working out?")
                     .font(.headline)
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("resumeSession.heading")
@@ -37,31 +37,69 @@ struct ResumeSessionView: View {
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("resumeSession.details")
 
-                NavigationLink(
-                    value: HomeRoute.resume(sessionID: preview.sessionID, enterSummary: false)
-                ) {
-                    Text("Resume")
-                        .frame(maxWidth: .infinity)
+                if let staleSince = preview.staleSince {
+                    staleActions(lastActivity: staleSince)
+                } else {
+                    resumeActions
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("resumeSession.resumeButton")
-
-                // §2: "Declining resume = normal end-workout summary path"
-                // -- not a discard, not an instant finish. `SessionEntryView`
-                // reattaches the same session and lands straight on the
-                // Finish/Keep going/Discard preview instead of the pager.
-                NavigationLink(
-                    value: HomeRoute.resume(sessionID: preview.sessionID, enterSummary: true)
-                ) {
-                    Text("Not now")
-                        .frame(maxWidth: .infinity)
-                }
-                .accessibilityIdentifier("resumeSession.notNowButton")
             }
             .padding()
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Burly")
+    }
+
+    @ViewBuilder
+    private var resumeActions: some View {
+        NavigationLink(
+            value: HomeRoute.resume(sessionID: preview.sessionID, enterSummary: false)
+        ) {
+            Text("Resume")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("resumeSession.resumeButton")
+
+        // §2: "Declining resume = normal end-workout summary path"
+        // -- not a discard, not an instant finish. `SessionEntryView`
+        // reattaches the same session and lands straight on the
+        // Finish/Keep going/Discard preview instead of the pager.
+        NavigationLink(
+            value: HomeRoute.resume(sessionID: preview.sessionID, enterSummary: true)
+        ) {
+            Text("Not now")
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("resumeSession.notNowButton")
+    }
+
+    /// §4 stale-session guard: the last set was over an hour ago, so the
+    /// first offer is to end the workout, timed at that last set; the
+    /// summary it opens offers Finish or Discard. Never ends it silently.
+    @ViewBuilder
+    private func staleActions(lastActivity: Date) -> some View {
+        Text("Last set \(lastActivity, format: .relative(presentation: .named))")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .accessibilityIdentifier("resumeSession.staleSince")
+
+        NavigationLink(
+            value: HomeRoute.resume(sessionID: preview.sessionID, enterSummary: true, finishAt: lastActivity)
+        ) {
+            Text("End workout")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("resumeSession.endStaleButton")
+
+        NavigationLink(
+            value: HomeRoute.resume(sessionID: preview.sessionID, enterSummary: false)
+        ) {
+            Text("Resume")
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("resumeSession.resumeButton")
     }
 
     private var detailText: String {

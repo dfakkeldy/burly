@@ -12,15 +12,13 @@
 // - Rest default is editable on §3's 15 s–5 min, 15 s grid. It reaches the
 //   watch in the sync snapshot, where it ends the rest ladder: an
 //   exercise's own rest wins, then the routine's, then this.
-// - Apple Health is informational, and says what this build actually does.
-//   Spec §4 puts HealthKit authorization and workout saving on the watch,
-//   at first session start, but that is not wired yet: no target carries
-//   the HealthKit entitlement or the Health purpose strings, and no watch
-//   code uses BurlyHealth. Until it is, the row says saving is coming
-//   rather than claiming it (review finding: the first draft described
-//   saving and a permission prompt that never happen). When the watch side
-//   ships, restore §4's wording here. The phone reads no authorization
-//   status either way; §4 asks for a quiet row that never nags.
+// - Apple Health is informational. Spec §4 puts authorization and workout
+//   saving on the watch: it asks at the first session start, and a finished
+//   session saves one workout linked to it. The row says that, and what
+//   still works if access was declined, then opens Health. It reads no
+//   authorization status: the phone's answer would describe the phone app,
+//   not the watch that actually saves, and §4 asks for a quiet row that
+//   never nags.
 
 import BurlyCore
 import BurlyPhoneSync
@@ -160,7 +158,7 @@ struct SettingsView: View {
     private var healthSection: some View {
         Section {
             Label {
-                Text("Saving workouts to Apple Health from Apple Watch is coming in a later update.")
+                Text("Apple Watch saves each finished workout to Health, with heart rate and energy from its sensors.")
             } icon: {
                 Image(systemName: "heart.text.square")
                     .foregroundStyle(.pink)
@@ -181,7 +179,7 @@ struct SettingsView: View {
         } header: {
             Text("Apple Health")
         } footer: {
-            Text("Your sets are kept in Burly. When saving to Health arrives, Apple Watch will ask for permission the first time you start a workout.")
+            Text("Apple Watch asks the first time you start a workout. If Health access is off, your sets still save in Burly; turn it on in the Health app under Sharing, then Apps, then Burly.")
         }
     }
 

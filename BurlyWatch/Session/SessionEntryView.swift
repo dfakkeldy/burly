@@ -64,8 +64,18 @@
 // (safe: `deleteSession` never reads the payload) and `dismiss()`s back to
 // the shell, whose own `.onAppear` reload (`ContentView`'s existing
 // reappearance-reload pattern) then finds a clean store.
+//
+// ## HealthKit (spec §4, m3-02)
+//
+// `saveAndEnter` is also where a new session tells the workout recorder it
+// started -- after the store save, so a HealthKit workout never exists for
+// a session the store refused. The first such start asks for Health access.
+// Resume never starts a workout: the one HealthKit kept alive was already
+// reattached at launch, and without one the session finishes with a
+// duration-only workout instead (recovery matrix rows 1 and 2).
 import SwiftUI
 import BurlyCore
+import BurlyHealth
 import BurlyPersistence
 
 struct SessionEntryView: View {
@@ -77,11 +87,12 @@ struct SessionEntryView: View {
     /// here goes through `settings.engine(for:)`.
     @Environment(\.watchSettings) private var settings
     @Environment(\.sessionLogged) private var sessionLogged
+    @Environment(\.workoutRecorder) private var workoutRecorder
 
     private enum Phase {
         case checking
         case conflict(ActiveSession)
-        case ready(SessionEngine, startInSummary: Bool)
+        case ready(SessionEngine, startInSummary: Bool, finishAt: Date?)
         /// m2-06 review round 2, finding 1: the session this view was
         /// about to check or reattach to has an undecodable journal.
         /// Distinct from `.failed` on purpose -- see the file doc.
@@ -98,11 +109,13 @@ struct SessionEntryView: View {
                 ProgressView()
             case .conflict(let existing):
                 SessionConflictView(existing: existing, store: store, onResolved: start)
-            case .ready(let engine, let startInSummary):
+            case .ready(let engine, let startInSummary, let finishAt):
                 LoggingScreenView(
                     engine: engine,
                     store: store,
+                    workoutRecorder: workoutRecorder,
                     startInSummary: startInSummary,
+                    finishAt: finishAt,
                     onSessionLogged: sessionLogged
                 )
             case .unreadableSession(let sessionID):
@@ -140,13 +153,13 @@ struct SessionEntryView: View {
     private func start() {
         phase = .checking
 
-        if case .resume(let sessionID, let enterSummary) = route {
+        if case .resume(let sessionID, let enterSummary, let finishAt) = route {
             do {
                 guard let existing = try store.activeSession(id: sessionID) else {
                     phase = .failed("This workout is no longer available.")
                     return
                 }
-                phase = .ready(settings.engine(for: existing), startInSummary: enterSummary)
+                phase = .ready(settings.engine(for: existing), startInSummary: enterSummary, finishAt: finishAt)
             } catch BurlyStoreError.unreadableActiveSessionJournal(let corruptID) {
                 phase = .unreadableSession(sessionID: corruptID)
             } catch {
@@ -196,7 +209,8 @@ struct SessionEntryView: View {
     private func saveAndEnter(_ engine: SessionEngine) {
         do {
             try store.saveActiveSession(engine.session)
-            phase = .ready(engine, startInSummary: false)
+            workoutRecorder?.sessionDidStart(sessionID: engine.session.id, at: engine.session.session.startedAt)
+            phase = .ready(engine, startInSummary: false, finishAt: nil)
         } catch {
             phase = .failed(String(describing: error))
         }

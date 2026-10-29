@@ -129,13 +129,40 @@ public final class WorkoutController {
         }
     }
 
-    public func finish(at date: Date, metadata: WorkoutMetadata = [:]) async throws {
+    /// Takes ownership of a workout HealthKit recovered after a relaunch
+    /// (spec §4 recovery matrix, row 1). The recovered builder is already
+    /// collecting, so this skips `startActivity`/`beginCollection`; `finish`
+    /// and `discard` then run the same ordered end sequence as a workout this
+    /// controller started itself.
+    public func adopt(_ resources: LiveWorkoutResources) throws {
+        switch lifecycle {
+        case .idle:
+            break
+        case let .failed(error):
+            throw error
+        case .active, .ending:
+            throw WorkoutControllerError.workoutAlreadyActive
+        }
+        self.resources = resources
+        collectionState = .collecting
+        terminationProgress = .collecting
+        observedSessionState = .running
+        resources.session.stateHandler = { [weak self] state in
+            self?.receive(state)
+        }
+        lifecycle = .active
+    }
+
+    /// Returns the saved workout's HealthKit UUID when HealthKit provides one.
+    @discardableResult
+    public func finish(at date: Date, metadata: WorkoutMetadata = [:]) async throws -> UUID? {
         let resources = try beginTermination()
         do {
             try await prepareBuilderForTermination(resources, at: date)
-            try await resources.builder.finishWorkout(metadata: metadata)
+            let workoutID = try await resources.builder.finishWorkout(metadata: metadata)
             endSessionIfNeeded(resources.session)
             clearCompletedWorkout(resources.session)
+            return workoutID
         } catch {
             handleTerminationFailure(resources, error: error)
             if error is CancellationError {

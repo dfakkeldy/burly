@@ -2,9 +2,18 @@
 import SwiftUI
 import WatchKit
 import os
+import BurlyCore
+import BurlyHealth
 import BurlyPersistence
 import BurlySyncAdapters
 import BurlyWatchSyncRuntime
+
+extension EnvironmentValues {
+    /// Spec §4's session-level HealthKit recorder, shared by every session
+    /// the app runs so a resumed session finds the workout HealthKit kept
+    /// alive. `nil` when Health is switched off for a UI-test scenario.
+    @Entry var workoutRecorder: SessionWorkoutRecorder? = nil
+}
 
 @main
 struct BurlyWatchApp: App {
@@ -41,24 +50,29 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     }
 }
 
-/// The watch's one store and its sync host, resolved exactly once for this
-/// launch (m2-01 review finding 3.1: never from a view `body`, which SwiftUI
-/// re-evaluates freely). It lives on the app delegate because Watch
-/// Connectivity can wake the app with no view on screen, and the sync
-/// coordinator must apply into the same store the UI reads.
+/// The watch's one store, its sync host, and the session-level HealthKit
+/// recorder, resolved exactly once for this launch (m2-01 review finding
+/// 3.1: never from a view `body`, which SwiftUI re-evaluates freely). It
+/// lives on the app delegate because Watch Connectivity can wake the app
+/// with no view on screen, and the sync coordinator must apply into the
+/// same store the UI reads.
 ///
 /// A real launch uses the on-device store, which starts empty until the
 /// phone's first snapshot arrives -- the §5 "waiting for iPhone" case.
 /// BurlyWatchUITests requests an isolated in-memory scenario instead (see
 /// WatchDemoSeed.swift), and those launches get no sync: the standalone UI
 /// tests must not touch WCSession, and a seeded or fault-wrapped store is
-/// not the on-device working set.
+/// not the on-device working set. They also get no Health unless the test
+/// opts in, so the authorization sheet does not cover the screens those
+/// suites drive.
 @MainActor
 final class WatchAppModel {
     let storeResult: Result<BurlyStore, Error>
     let sync: WatchSyncHost?
+    let workoutRecorder: SessionWorkoutRecorder?
 
     init() {
+        workoutRecorder = Self.makeWorkoutRecorder()
         #if DEBUG
         // Once a scenario is recognized, WatchDemoSeed fails closed: its
         // Result is used as-is, success or failure, and never falls through
@@ -93,6 +107,22 @@ final class WatchAppModel {
             return nil
         }
     }
+
+    /// No Health at all in a seeded UI-test scenario unless the test opts
+    /// in: the authorization sheet would otherwise cover the screens the
+    /// existing suites drive.
+    private static func makeWorkoutRecorder() -> SessionWorkoutRecorder? {
+        #if DEBUG
+        if WatchDemoSeed.isScenarioRequested, !WatchDemoSeed.wantsLiveHealth {
+            return nil
+        }
+        #endif
+        let health = HealthKitWorkoutStore()
+        return SessionWorkoutRecorder(
+            store: health,
+            controller: WorkoutController(factory: health.makeSessionFactory())
+        )
+    }
 }
 
 @MainActor
@@ -105,6 +135,8 @@ private struct RootView: View {
             ContentView(store: store, sync: model.sync)
                 .environment(\.watchSettings, settings)
                 .environment(\.sessionLogged, { [sync = model.sync] id in sync?.sessionLogged(id: id) })
+                .environment(\.workoutRecorder, model.workoutRecorder)
+                .task { reconcileWorkout(with: store) }
         case .failure(let error):
             StoreUnavailableView(message: String(describing: error))
         }
@@ -115,5 +147,20 @@ private struct RootView: View {
     private var settings: WatchSyncedSettings {
         guard let sync = model.sync else { return WatchSyncedSettings() }
         return WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
+    }
+
+    /// Spec §4 recovery matrix at launch: a workout HealthKit kept running
+    /// is reattached to the store's active session, or discarded when the
+    /// store has none. An unreadable store leaves HealthKit alone; the
+    /// orphan, if any, is discarded when the next session starts.
+    private func reconcileWorkout(with store: BurlyStore) {
+        guard let workoutRecorder = model.workoutRecorder else { return }
+        let active: ActiveSession?
+        do {
+            active = try store.resumableActiveSession()
+        } catch {
+            return
+        }
+        workoutRecorder.reconcile(activeSessionID: active?.id)
     }
 }

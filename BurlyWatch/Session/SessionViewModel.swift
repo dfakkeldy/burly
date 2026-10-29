@@ -35,10 +35,24 @@
 // exactly the failed attempt; nothing about the failed mutation is visible
 // anywhere else in this type's state, because it was never committed to
 // `engine` in the first place.
+//
+// ## HealthKit (spec §4, m3-02..04)
+//
+// Finish saves the HealthKit workout *before* the store write, so the
+// workout's UUID lands in the same save as `.logged`. That save then
+// calls `onSessionLogged`, which queues the session for the phone.
+// Health is best-effort:
+// `SessionWorkoutRecorder` never throws and bounds every HealthKit call, so
+// a declined prompt or a HealthKit failure only leaves the link `nil` and
+// never reaches `finishSaveError` or `saveFailure` (§4 acceptance #4). A
+// crash between the two writes is safe too: the next Finish finds the
+// workout already linked by ExternalUUID and does not save a second one.
+// Discard tells the recorder only after the store delete succeeds.
 import Foundation
 import SwiftUI
 import Observation
 import BurlyCore
+import BurlyHealth
 import BurlyPersistence
 
 /// Where a swap/add picker should write its result back to.
@@ -64,6 +78,16 @@ final class SessionViewModel {
     private let haptics: HapticPlaying
     private let now: () -> Date
     private let onSessionLogged: @MainActor (UUID) -> Void
+    private let workoutRecorder: SessionWorkoutRecorder?
+
+    /// §4 stale-session guard: Finish ends the session here (its last
+    /// logged set) instead of now. Cleared by "Keep going", which means
+    /// the lifter is back.
+    private var finishAt: Date?
+
+    /// What happened in HealthKit when this session finished; `nil` until
+    /// then, and always `nil` without a recorder.
+    private(set) var workoutRecording: WorkoutRecording?
 
     /// The item currently on screen. `nil` only for a brand-new "Empty
     /// session" with nothing added yet (§2 Start).
@@ -169,13 +193,16 @@ final class SessionViewModel {
     ///   declining-then-changing-your-mind should behave.
     ///
     /// - Parameter onSessionLogged: called once Finish's save has durably
-    ///   stored the session as logged -- the §5 outbox's immediate send.
+    ///   stored the session as logged -- the §5 outbox's immediate send,
+    ///   after HealthKit has already been asked to save.
     init(
         engine: SessionEngine,
         store: BurlyStore,
         haptics: HapticPlaying = HapticPlayer(),
         now: @escaping () -> Date = Date.init,
+        workoutRecorder: SessionWorkoutRecorder? = nil,
         startInSummary: Bool = false,
+        finishAt: Date? = nil,
         onSessionLogged: @escaping @MainActor (UUID) -> Void = { _ in }
     ) {
         self.engine = engine
@@ -183,6 +210,8 @@ final class SessionViewModel {
         self.onSessionLogged = onSessionLogged
         self.haptics = haptics
         self.now = now
+        self.workoutRecorder = workoutRecorder
+        self.finishAt = finishAt
         // m2-06 review round 2, finding "new defect": the page-selection
         // policy itself now lives on `ActiveSession.initialPageItemID`
         // (BurlyCore) -- see that property's doc for why, and for the
@@ -553,12 +582,13 @@ final class SessionViewModel {
 
     func requestEndWorkout() {
         endWorkoutPreview = SessionSummaryBuilder.summarize(
-            engine.session, referenceDate: now(), lastPerformance: lastPerformance(for:)
+            engine.session, referenceDate: finishAt ?? now(), lastPerformance: lastPerformance(for:)
         )
     }
 
     func keepGoing() {
         endWorkoutPreview = nil
+        finishAt = nil
     }
 
     /// Commits Finish. Guarded by `isFinishing` so a double-tap on the
@@ -576,13 +606,40 @@ final class SessionViewModel {
         isFinishing = true
         finishSaveError = nil
         do {
-            pendingFinishHaptics = try engine.finish()
+            if let finishAt {
+                pendingFinishHaptics = try engine.finish(endingAt: finishAt)
+            } else {
+                pendingFinishHaptics = try engine.finish()
+            }
         } catch {
             finishSaveError = String(describing: error)
             isFinishing = false
             return
         }
-        persistFinish()
+        recordWorkoutThenPersist()
+    }
+
+    /// Saves the HealthKit workout, links it, then runs the store save (see
+    /// the file doc). Runs once per Finish: `retryFinishSave()` goes
+    /// straight to `persistFinish()`, so a failed store write never saves a
+    /// second workout. `self` is held strongly on purpose -- the store save
+    /// must still happen if the view goes away while HealthKit answers.
+    private func recordWorkoutThenPersist() {
+        guard let workoutRecorder else {
+            persistFinish()
+            return
+        }
+        let session = engine.session.session
+        Task {
+            let recording = await workoutRecorder.sessionDidFinish(
+                sessionID: session.id,
+                startedAt: session.startedAt,
+                endedAt: session.endedAt ?? now()
+            )
+            workoutRecording = recording
+            engine.linkHealthKitWorkout(recording.workoutID)
+            persistFinish()
+        }
     }
 
     /// Retries the save after `engine.finish()` already committed
@@ -651,6 +708,7 @@ final class SessionViewModel {
     private func performDiscard() {
         do {
             _ = try store.deleteSession(id: engine.session.id)
+            workoutRecorder?.sessionDidDiscard(sessionID: engine.session.id)
             saveFailure = nil
             pendingRetry = nil
             didDiscard = true
