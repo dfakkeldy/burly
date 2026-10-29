@@ -217,7 +217,7 @@ private struct HistorySetEditor: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
-                    guard let newWeight = enteredWeight, let repetitions = Int(reps), repetitions >= 0 else { return }
+                    guard let newWeight = enteredWeight, let repetitions = enteredReps else { return }
                     var updated = set
                     updated.setWeight(newWeight)
                     updated.reps = repetitions
@@ -225,16 +225,27 @@ private struct HistorySetEditor: View {
                     onSave(updated)
                     dismiss()
                 }
+                // Disabled rather than a silent no-op: text Save cannot
+                // read (including ambiguous "1,000", which parse refuses)
+                // must look unsaveable instead of appearing to ignore the
+                // tap (review finding on the settings branch).
+                .disabled(enteredWeight == nil || enteredReps == nil)
                 .accessibilityIdentifier("historyDetail.saveSet")
             }
         }
     }
 
     /// The weight to store, or `nil` when the text is not a weight (Save
-    /// then does nothing, as before).
+    /// is then disabled).
     private var enteredWeight: Weight? {
         if weight == initialWeightText { return set.weight }
         return entryUnit.parse(weight)
+    }
+
+    /// The rep count to store, or `nil` when the text is not one.
+    private var enteredReps: Int? {
+        guard let repetitions = Int(reps), repetitions >= 0 else { return nil }
+        return repetitions
     }
 }
 

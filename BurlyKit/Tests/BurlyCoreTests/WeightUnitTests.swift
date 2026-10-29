@@ -103,7 +103,13 @@ struct WeightUnitTests {
 
     @Test(
         "non-weights are rejected rather than guessed at",
-        arguments: ["", "   ", ".", "-5", "abc", "1,000.5", "1.2.3", "12kg", "1e3", "inf", "nan"]
+        arguments: [
+            "", "   ", ".", "-5", "abc", "1,000.5", "1.2.3", "12kg", "1e3", "inf", "nan",
+            // A thousand in en_US, one in de_DE: refuse rather than guess.
+            "1,000", "1.000", "2,500",
+            // Characters with a numeric value that are not decimal digits.
+            "Ⅻ", "½", "②",
+        ]
     )
     func rejectsNonWeights(text: String) {
         #expect(WeightUnit.kilograms.parse(text) == nil)
@@ -137,6 +143,27 @@ struct WeightUnitTests {
         let original = Weight(kg: 82.5)
         let text = WeightUnit.kilograms.formattedNumber(original, locale: german)
         #expect(try #require(WeightUnit.kilograms.parse(text)) == original)
+    }
+
+    @Test(
+        "the editor's starting text round-trips in non-Latin digit locales",
+        arguments: ["ar_SA@numbers=arab", "ar_EG@numbers=arab", "fa_IR@numbers=arabext"]
+    )
+    func nonLatinDigitRoundTrip(identifier: String) throws {
+        let locale = Locale(identifier: identifier)
+        let original = Weight(kg: 82.5)
+        let text = WeightUnit.kilograms.formattedNumber(original, locale: locale)
+        // Guard against the test passing trivially if the formatter ever
+        // falls back to Latin digits for this locale.
+        #expect(text.unicodeScalars.contains { !$0.isASCII }, "Expected non-Latin digits, got \(text)")
+        #expect(try #require(WeightUnit.kilograms.parse(text)) == original)
+    }
+
+    @Test("Arabic-Indic and Persian digits parse like ASCII ones")
+    func nonLatinDigitParsing() {
+        #expect(WeightUnit.kilograms.parse("٨٢٫٥") == Weight(kg: 82.5))
+        #expect(WeightUnit.kilograms.parse("۸۲٫۵") == Weight(kg: 82.5))
+        #expect(WeightUnit.pounds.parse("١٨٠") == WeightUnit.pounds.parse("180"))
     }
 
     @Test("entering a value in lb and displaying it in lb returns the entered value exactly")

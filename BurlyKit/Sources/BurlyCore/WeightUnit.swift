@@ -68,36 +68,65 @@ public enum WeightUnit: String, CaseIterable, Sendable, Codable {
     /// Parses user-entered text as a weight in this unit, independent of
     /// the device locale.
     ///
-    /// Accepts ASCII digits with at most one decimal separator, either `.`
+    /// Accepts decimal digits with at most one decimal separator, either `.`
     /// or `,` — the decimal pad shows the locale's separator, so a lifter
     /// in a comma locale types `82,5` while the field's own formatted value
-    /// may read `82.5`, and both must mean the same thing. Grouping
-    /// separators are deliberately not accepted (a second separator makes
-    /// the text ambiguous, so it is rejected rather than guessed at), which
-    /// is why `formattedNumber` never emits them. Surrounding whitespace is
-    /// ignored. Returns `nil` for empty, negative, or otherwise
-    /// non-numeric text.
+    /// may read `82.5`, and both must mean the same thing. Digits from any
+    /// Unicode decimal numbering system count, and the Arabic decimal
+    /// separator (U+066B) counts as `.`, because `formattedNumber` writes
+    /// the editor's starting text in the locale's own digits (`٨٢٫٥` in
+    /// Arabic regions) and Save must read back what the field showed
+    /// (review finding on the settings branch).
+    ///
+    /// Grouping separators are deliberately not accepted, which is why
+    /// `formattedNumber` never emits them. Text that could be either is
+    /// rejected rather than guessed at: a second separator, or a single
+    /// separator followed by exactly three digits — `1,000` is a thousand
+    /// in en_US and one in de_DE, and storing the wrong one silently
+    /// rewrites history. One-decimal formatted text never has that shape.
+    /// Surrounding whitespace is ignored. Returns `nil` for empty,
+    /// negative, ambiguous, or otherwise non-numeric text.
     public func parse(_ text: String) -> Weight? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
         var normalized = ""
         var separatorCount = 0
+        var digitsAfterSeparator = 0
         for character in trimmed {
+            if let digit = Self.decimalDigit(character) {
+                normalized.append(String(digit))
+                if separatorCount > 0 { digitsAfterSeparator += 1 }
+                continue
+            }
             switch character {
-            case "0"..."9":
-                normalized.append(character)
-            case ".", ",":
+            case ".", ",", "\u{066B}":
                 separatorCount += 1
                 normalized.append(".")
             default:
                 return nil
             }
         }
-        guard separatorCount <= 1, normalized != ".", let value = Double(normalized) else {
+        guard separatorCount <= 1,
+              !(separatorCount == 1 && digitsAfterSeparator == 3),
+              normalized != ".",
+              let value = Double(normalized) else {
             return nil
         }
         return weight(fromDisplayValue: value)
+    }
+
+    /// The value 0–9 of a single-scalar character from any Unicode decimal
+    /// digit system (general category Nd), or `nil`. Restricting to `Nd`
+    /// keeps out characters that merely have a numeric value, such as
+    /// Roman numerals, circled numbers, or vulgar fractions.
+    private static func decimalDigit(_ character: Character) -> Int? {
+        let scalars = character.unicodeScalars
+        guard scalars.count == 1, let scalar = scalars.first,
+              scalar.properties.numericType == .decimal,
+              let value = scalar.properties.numericValue,
+              let digit = Int(exactly: value), (0...9).contains(digit) else { return nil }
+        return digit
     }
 
     // MARK: - Formatting
@@ -105,7 +134,8 @@ public enum WeightUnit: String, CaseIterable, Sendable, Codable {
     /// The number alone, to one decimal place and without grouping
     /// separators ("82.5", "198.4", "0.0"). This is also the text an
     /// editable weight field starts with, so it must stay parseable by
-    /// `parse(_:)` in every locale — hence no grouping.
+    /// `parse(_:)` in every locale — hence no grouping, and hence `parse`
+    /// reading non-ASCII decimal digits and U+066B.
     public func formattedNumber(_ weight: Weight, locale: Locale = .autoupdatingCurrent) -> String {
         oneDecimal(displayValue(of: weight), locale: locale)
     }
