@@ -166,7 +166,13 @@ struct LicenseDocument {
               ) else {
             return AttributedString(source)
         }
-        return rendered
+        // A relative link ("[`LICENSE`](LICENSE)" in the exception) points
+        // at a sibling file in the repository; in the app it has nowhere to
+        // go, so openURL would fail silently on a tap. Keep its text, drop
+        // the link. Absolute links (the GitHub autolink) stay tappable.
+        return rendered.transformingAttributes(\.link) { link in
+            if link.value?.scheme == nil { link.value = nil }
+        }
     }
 }
 

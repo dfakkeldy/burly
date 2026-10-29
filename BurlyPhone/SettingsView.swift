@@ -12,11 +12,15 @@
 //   if it reaches the watch, which needs a §5 snapshot wire change; until
 //   then the row shows the §3 default the watch actually uses and points at
 //   the per-exercise rest that *is* editable, in each routine.
-// - Apple Health is informational. HealthKit authorization belongs to the
-//   watch, at first session start (§4 "Authorization"); the phone has no
-//   HealthKit entitlement and does not read authorization status. §4 asks
-//   for "a quiet settings row ... deep-links to Health settings" and "never
-//   nag", so the row explains and offers to open Health — nothing more.
+// - Apple Health is informational, and says what this build actually does.
+//   Spec §4 puts HealthKit authorization and workout saving on the watch,
+//   at first session start, but that is not wired yet: no target carries
+//   the HealthKit entitlement or the Health purpose strings, and no watch
+//   code uses BurlyHealth. Until it is, the row says saving is coming
+//   rather than claiming it (review finding: the first draft described
+//   saving and a permission prompt that never happen). When the watch side
+//   ships, restore §4's wording here. The phone reads no authorization
+//   status either way; §4 asks for a quiet row that never nags.
 
 import BurlyCore
 import SwiftUI
@@ -116,7 +120,7 @@ struct SettingsView: View {
     private var healthSection: some View {
         Section {
             Label {
-                Text("Burly saves each workout to Health from Apple Watch. Heart rate and energy come from the watch's sensors during workouts.")
+                Text("Saving workouts to Apple Health is coming in a later update. Burly doesn't read from or write to Health yet.")
             } icon: {
                 Image(systemName: "heart.text.square")
                     .foregroundStyle(.pink)
@@ -128,12 +132,12 @@ struct SettingsView: View {
             } label: {
                 Label("Open Health", systemImage: "arrow.up.forward.app")
             }
-            .accessibilityHint("Opens the Health app, where you can review what Burly may save.")
+            .accessibilityHint("Opens the Health app.")
             .accessibilityIdentifier("settingsTab.openHealth")
         } header: {
             Text("Apple Health")
         } footer: {
-            Text("Apple Watch asks for permission the first time you start a workout. Your sets are kept in Burly either way.")
+            Text("Your sets are kept in Burly. When saving to Health arrives, Apple Watch will ask for permission the first time you start a workout.")
         }
     }
 

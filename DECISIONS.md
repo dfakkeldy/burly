@@ -1,5 +1,29 @@
 <!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
+## 2026-10-29 — Phone Settings ships the display unit phone-only and the rest default read-only
+
+Spec §9 lists "display unit (kg/lb)" and "global rest default" among the phone
+Settings rows, and planning task m5-05 is titled for both. The Settings screen
+delivers the first on iPhone only and shows the second without a control. Both
+gaps have one cause: the watch can only honour either setting if it arrives in
+the §5 phone→watch snapshot, and the Settings task deliberately leaves the
+snapshot wire format alone.
+
+- **Display unit.** The kg/lb choice lives in the phone's UserDefaults and
+  drives History, the set editor and Stats. Apple Watch still logs and shows
+  kilograms, and the unit footer says so. §9 acceptance #2 ("render correctly in
+  lb everywhere") is therefore met on the phone, not yet on the watch.
+- **Rest default.** The row shows the §3 global default the watch actually
+  uses (90 s) and points at per-exercise rest in routines, which is editable
+  and does reach the watch. A phone-side control that the watch ignored would
+  be a row that silently does nothing, which Settings avoids everywhere else.
+
+Follow-up, still open: add the display unit and an editable global rest default
+(15 s to 5 min in 15 s steps, §3) to the snapshot, resolve rest on the watch as
+override → routine → global, and render watch weights through `WeightUnit`.
+Until that lands, m5-05's "rest default" item and the watch half of §9
+acceptance #2 are not done, whatever the Settings screen looks like.
+
 ## 2026-08-12 — The phone-sync journal trades one redundancy for one boundary, knowingly
 
 The two-file phone-sync persistence (authoritative sidecar + high-water log) was

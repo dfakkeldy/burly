@@ -334,16 +334,28 @@ final class SettingsUITests: XCTestCase {
         scroll(app, toward: elementWithLabel(app, containing: text), description: text)
     }
 
+    /// Slow swipes carry no momentum, so a row that is only partly on
+    /// screen (present but not yet hittable) is nudged into view rather than
+    /// flung past the top. If the downward pass still misses — say a long
+    /// Licenses paragraph overshot — a bounded upward-content pass looks
+    /// back before failing (review finding: the helper only ever swiped up).
     private func scroll(_ app: XCUIApplication, toward element: XCUIElement, description: String) -> XCUIElement {
-        let maxSwipes = 20
+        let maxSwipes = 40
         for swipeCount in 0...maxSwipes {
             if element.waitForExistence(timeout: 1), element.isHittable {
                 return element
             }
             guard swipeCount < maxSwipes else { break }
-            app.swipeUp()
+            app.swipeUp(velocity: .slow)
         }
-        XCTFail("Expected \(description) after at most \(maxSwipes) upward swipes")
+        let maxBackSwipes = 5
+        for _ in 0..<maxBackSwipes {
+            app.swipeDown(velocity: .slow)
+            if element.waitForExistence(timeout: 1), element.isHittable {
+                return element
+            }
+        }
+        XCTFail("Expected \(description) after \(maxSwipes) upward and \(maxBackSwipes) downward swipes")
         return element
     }
 
