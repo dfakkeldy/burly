@@ -120,7 +120,7 @@ struct SettingsView: View {
     private var healthSection: some View {
         Section {
             Label {
-                Text("Saving workouts to Apple Health is coming in a later update. Burly doesn't read from or write to Health yet.")
+                Text("Saving workouts to Apple Health from Apple Watch is coming in a later update.")
             } icon: {
                 Image(systemName: "heart.text.square")
                     .foregroundStyle(.pink)

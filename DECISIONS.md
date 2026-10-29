@@ -19,7 +19,7 @@ snapshot wire format alone.
   be a row that silently does nothing, which Settings avoids everywhere else.
 
 Follow-up, still open: add the display unit and an editable global rest default
-(15 s to 5 min in 15 s steps, §3) to the snapshot, resolve rest on the watch as
+(the §3 range in `RestDuration`) to the snapshot, resolve rest on the watch as
 override → routine → global, and render watch weights through `WeightUnit`.
 Until that lands, m5-05's "rest default" item and the watch half of §9
 acceptance #2 are not done, whatever the Settings screen looks like.
