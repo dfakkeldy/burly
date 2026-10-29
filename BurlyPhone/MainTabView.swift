@@ -31,8 +31,18 @@ struct MainTabView: View {
         case history, routines, stats, settings
     }
 
-    init(store: BurlyStore) {
+    /// The Hevy import screen (§8, m7-02), presented over the tabs from
+    /// either entry point: the welcome's Import path and the Settings row.
+    @State private var isHevyImportPresented = false
+    /// One-shot request from the welcome's Import path, consumed on first
+    /// appearance (presenting from `onAppear` rather than seeding
+    /// `isHevyImportPresented` with `true`, which SwiftUI may not present
+    /// reliably on the very first render).
+    @State private var pendingHevyImport: Bool
+
+    init(store: BurlyStore, presentsHevyImportOnAppear: Bool = false) {
         _viewModel = State(initialValue: PhoneHomeViewModel(store: store))
+        _pendingHevyImport = State(initialValue: presentsHevyImportOnAppear)
     }
 
     var body: some View {
@@ -65,6 +75,19 @@ struct MainTabView: View {
         // Bounded shell snapshot (existence/count only — finding 3), fired
         // when the tabs appear. Rows load in each tab's own `.task`.
         .task { viewModel.load() }
+        .onAppear {
+            guard pendingHevyImport else { return }
+            pendingHevyImport = false
+            isHevyImportPresented = true
+        }
+        .environment(\.presentHevyImport, PresentHevyImportAction { isHevyImportPresented = true })
+        .sheet(isPresented: $isHevyImportPresented) {
+            NavigationStack {
+                HevyImportView(viewModel: viewModel) {
+                    isHevyImportPresented = false
+                }
+            }
+        }
         // Shell-level reload mechanics (m5-01 review finding 2, mirroring
         // the watch shell's m2-01 finding 4.1): a relaunch from the
         // background is the one lifecycle signal this shell can already

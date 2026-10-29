@@ -10,10 +10,9 @@ struct SettingsView: View {
     var body: some View {
         List {
             Section {
-                Label("Import from Hevy", systemImage: "tray.and.arrow.down")
-                    .accessibilityIdentifier("settingsTab.importRow")
+                HevyImportSettingsRow()
             } footer: {
-                Text("Importing your Hevy routines and history is coming in a later update.")
+                Text("Bring in workouts from a Hevy CSV export. You'll see what will be added before anything is saved.")
             }
 
             Section("About") {
