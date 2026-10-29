@@ -669,18 +669,41 @@ final class BurlyPhoneUITests: XCTestCase {
         return identifiers
     }
 
+    /// The revision and HealthKit rows are the first rows of the detail
+    /// view's lazy `List`. After a step that scrolled to the bottom (the
+    /// exercise-identifier scan, a remove button low in the list) they are
+    /// not in the accessibility hierarchy at all, so a plain wait times out
+    /// even though the edit persisted. Main runs 33263690697 and
+    /// 39171686670 failed exactly there, on revision 5. Scroll back toward
+    /// the top until the row materializes; the identifier still names one
+    /// exact revision, so a missing or doubled bump still fails.
     private func assertRevision(_ revision: Int, in app: XCUIApplication) {
         XCTAssertTrue(
-            app.staticTexts["historyDetail.revision.\(revision)"].waitForExistence(timeout: 5),
+            scrollUpToElement(app, identifier: "historyDetail.revision.\(revision)").exists,
             "Expected edit to persist exactly revision \(revision)"
         )
     }
 
     private func assertHealthKitLink(in app: XCUIApplication) {
         XCTAssertTrue(
-            anyElement(app, identifier: "historyDetail.healthKitWorkout.\(Self.healthKitWorkoutID)").waitForExistence(timeout: 5),
+            scrollUpToElement(app, identifier: "historyDetail.healthKitWorkout.\(Self.healthKitWorkoutID)").exists,
             "Expected the seeded HealthKit workout UUID to survive the phone edit path"
         )
+    }
+
+    /// Mirror of `scrollToElement` for rows near the top of a lazy list.
+    /// Waits on the first pass, so a row that is already visible costs no
+    /// swipes; a save that never lands still fails after the bounded pass.
+    private func scrollUpToElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
+        let maxSwipes = 20
+        let element = anyElement(app, identifier: identifier)
+
+        if element.waitForExistence(timeout: 5) { return element }
+        for _ in 0..<maxSwipes {
+            app.swipeDown()
+            if element.waitForExistence(timeout: 1) { return element }
+        }
+        return element
     }
 
     /// Replaces a field's value without the edit menu and without waiting
