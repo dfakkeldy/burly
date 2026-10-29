@@ -87,7 +87,10 @@ DERIVED_DATA="$REPO_ROOT/DerivedData"     # shared DerivedData for ALL Burly bui
 OUTPUT_DIR="$REPO_ROOT/Scripts/output"
 RUNS_DIR="$OUTPUT_DIR/runs"
 LATEST_LINK="$OUTPUT_DIR/latest"
-LOCK_DIR="${BURLY_LOCK_DIR:-/Users/dfakkeldy/Developer/health-apps/plan/dispatch/sim.lock}"
+# The default must be a path every checkout and worktree on the machine agrees
+# on, and whose parent always exists: `mkdir` (not `mkdir -p`) is the lock, so
+# a missing parent is a FATAL, not a wait. CI passes its own BURLY_LOCK_DIR.
+LOCK_DIR="${BURLY_LOCK_DIR:-${TMPDIR:-/tmp}/burly-sim.lock}"
 OWNER_FILE="$LOCK_DIR/owner"
 
 IPHONE_NAME="Burly iPhone"
