@@ -6,26 +6,57 @@ Apple Watch.
 **Status: under active development.** Nothing here is ready for daily
 use. There is no App Store listing and no Fastlane pipeline.
 
-## What's on `main`
+## What works today
 
-The phone History tab (`HistoryTabView`) and session-detail editor
-(`HistorySessionDetailView`) landed on `main` on 2026-08-29 in
-[PR #4](https://github.com/dfakkeldy/burly/pull/4)
-(`48ee5a257d`). Logged sessions can be reviewed and edited there; those
-edits preserve the linked HealthKit workout identifier.
+On iPhone:
+
+- **History**: logged sessions grouped by week, with a session editor
+  (sets, warmups, added or removed exercises, notes). Edits keep the linked
+  HealthKit workout identifier.
+- **Routines**: a routine builder, plus a catalog browser where you can
+  create and archive your own exercises.
+- **Stats**: exercise progression, weekly volume, muscle split and
+  consistency charts, each with its own empty state.
+- **Settings**: kg or lb for every phone screen, including the weight you
+  type into the set editor; the default rest time; an Apple Health row;
+  the version, a source code link and the full licence text.
+- **Import from Hevy**: choose a Hevy CSV export and see a preview (new
+  workouts, already-imported ones, date range, matched and new exercises,
+  and everything that will be dropped) before anything is saved. Importing
+  the same file again adds nothing. Imports are never written to Apple
+  Health.
+
+On Apple Watch: the routine list and the logging screen, with a guarded
+weight edit, the rest timer, finish, discard and resume.
+
+## Not wired up yet
+
+The sync engine and the HealthKit workout controller are built and tested
+in `BurlyKit`, but neither app calls them yet. Until they do:
+
+- The phone and the watch don't exchange routines or sessions.
+- No workout is saved to Apple Health.
+- The watch shows kilograms and uses the 90-second rest default whatever the
+  phone's Settings say. Carrying those two choices to the watch needs a
+  sync schema change; see `DECISIONS.md`.
 
 ## Simulator acceptance
 
-[PR #5](https://github.com/dfakkeldy/burly/pull/5) merged the
-`replaceText` / `hasFocus` fix (`974d33c58f`, 2026-08-29).
+```bash
+cd BurlyKit && swift test
+Scripts/acceptance-sim.sh
+```
 
-The `Simulator acceptance` job in `.github/workflows/ci.yml` only runs
-on pushes to `main`, so a green PR check is not simulator acceptance.
-`main` is still red:
-[run 33263690697](https://github.com/dfakkeldy/burly/actions/runs/33263690697)
-(includes #5) failed in
-`testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink`
-(`Expected edit to persist exactly revision 5`).
+`acceptance-sim.sh` needs a simulator pair named `Burly iPhone` and
+`Burly Watch S11 46mm` on the newest installed runtimes. CI creates the pair
+the same way (see `.github/workflows/ci.yml`).
+
+The `Simulator acceptance` job only runs on pushes to `main`, so a green PR
+check is not simulator acceptance. From August to October 2026 `main` failed
+in `testHistoryEditsAdvanceRevisionAndPreserveHealthKitLink` ("Expected edit
+to persist exactly revision 5"). The cause was in the test, not the app: the
+revision row sits at the top of a lazy list, and the test looked for it after
+scrolling to the bottom.
 
 ## License
 
