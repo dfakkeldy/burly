@@ -30,6 +30,11 @@ import XCTest
 /// every imported session's HealthKit link to nil (unit-tested in
 /// BurlyKit). The UI-level stand-in here: an imported session's detail
 /// shows no linked HealthKit workout.
+///
+/// `@MainActor` because XCUIElement's API is main-actor isolated under the
+/// Swift 6 language mode; `continueAfterFailure` is set per test instead of
+/// in a (nonisolated) `setUpWithError` override.
+@MainActor
 final class ImportUITests: XCTestCase {
 
     // Matched literally by BurlyPhone's PhoneDemoSeed and
@@ -39,11 +44,8 @@ final class ImportUITests: XCTestCase {
     private static let fixtureKey = "BURLY_PHONE_UI_TEST_HEVY_FIXTURE"
     private static let fixtureSynthetic = "synthetic"
 
-    override func setUpWithError() throws {
-        continueAfterFailure = false
-    }
-
     func testWelcomeImportPreviewMatchesSummaryThenReimportAddsNothing() throws {
+        continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
         app.launchEnvironment[Self.fixtureKey] = Self.fixtureSynthetic
@@ -158,6 +160,7 @@ final class ImportUITests: XCTestCase {
     /// Backing out of the welcome's import lands in the tab shell, and the
     /// welcome does not come back.
     func testCancellingWelcomeImportLandsInTabs() throws {
+        continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
         app.launchEnvironment[Self.fixtureKey] = Self.fixtureSynthetic
@@ -189,7 +192,7 @@ final class ImportUITests: XCTestCase {
     /// control inside it, so rows are counted by distinct identifier (each
     /// History row's identifier carries its session UUID).
     private func distinctIdentifiers(_ query: XCUIElementQuery) -> Int {
-        Set(query.allElementsBoundByIndex.map(\.identifier)).count
+        Set(query.allElementsBoundByIndex.map { $0.identifier }).count
     }
 
     private func firstElement(_ app: XCUIApplication, identifierPrefix: String) -> XCUIElement {

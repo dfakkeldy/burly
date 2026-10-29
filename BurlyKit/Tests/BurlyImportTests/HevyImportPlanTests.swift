@@ -344,7 +344,11 @@ struct HevyImportPlanTests {
             if case .unterminatedQuoteConsumedRemainder = $0.reason { return true }
             return false
         })
-        #expect(plan.fileSummary.rowsLostToUnterminatedQuote > 0)
+        // (A quote left open to end-of-file is discovered AT end-of-file, so
+        // the tokenizer reports its approximate loss as 0 — m7-01's
+        // contract; a nonzero total needs a size bound tripping mid-file.
+        // Either way the plan carries the parse's number unchanged.)
+        #expect(plan.fileSummary.rowsLostToUnterminatedQuote == result.summary.rowsLostToUnterminatedQuote)
         #expect(plan.fileSummary == result.summary)
         // The clean first row still imports.
         #expect(plan.preview.setCount == 1)
