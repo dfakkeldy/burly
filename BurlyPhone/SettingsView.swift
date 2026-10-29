@@ -159,12 +159,9 @@ struct SettingsView: View {
 
     private var importSection: some View {
         Section {
-            NavigationLink {
-                ImportPlaceholderView()
-            } label: {
-                Label("Import from Hevy", systemImage: "tray.and.arrow.down")
-            }
-            .accessibilityIdentifier("settingsTab.importRow")
+            HevyImportSettingsRow()
+        } footer: {
+            Text("Bring in workouts from a Hevy CSV export. You'll see what will be added before anything is saved.")
         }
     }
 

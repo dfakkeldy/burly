@@ -15,7 +15,10 @@
 //               lexeme, so the same instant exported once as
 //               "yyyy-MM-dd HH:mm:ss" and again as "d MMM yyyy, HH:mm"
 //               hashes to the same session ID (m7-01 review finding 2.2;
-//               see `HevyTimestamp.canonicalKey`).
+//               see `HevyTimestamp.canonicalKey`). The rendering is of the
+//               wall-clock text, not the instant it means in the chosen
+//               `timeZone`, so the ID never depends on which zone the file
+//               was read in (m7-02 review; spec §8 "title+start_time").
 //   - exercise: the catalog/lookup-normalized (NFC + locale-independent
 //               case-folded, see `CatalogSeed.normalizedMatchKey`)
 //               unmatched exercise title, independent of which session it
@@ -239,7 +242,7 @@ public enum HevyCSVImporter {
             case .row(let decoded, let drops):
                 applyDrops(drops)
 
-                let sessionKey = decoded.title + "\u{1}" + HevyTimestamp.canonicalKey(for: decoded.startDate)
+                let sessionKey = decoded.title + "\u{1}" + HevyTimestamp.canonicalKey(for: decoded.startDate, readIn: timeZone)
                 if accumulators[sessionKey] == nil {
                     sessionOrder.append(sessionKey)
                     accumulators[sessionKey] = SessionAccumulator(
@@ -271,7 +274,8 @@ public enum HevyCSVImporter {
         for key in sessionOrder {
             guard let accumulator = accumulators[key] else { continue }
             let sessionID = DeterministicUUID.v5(
-                name: "session\u{1}" + accumulator.title + "\u{1}" + HevyTimestamp.canonicalKey(for: accumulator.startDate)
+                name: "session\u{1}" + accumulator.title + "\u{1}"
+                    + HevyTimestamp.canonicalKey(for: accumulator.startDate, readIn: timeZone)
             )
 
             var items: [SessionItemData] = []

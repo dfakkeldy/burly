@@ -137,15 +137,17 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-startFresh")
     }
 
-    /// First-launch path B: welcome -> Import from Hevy -> the clearly-
-    /// labeled placeholder screen. The heading's wording is asserted because
-    /// "clearly labeled" is the spec contract for this placeholder.
+    /// First-launch path B: welcome -> Import from Hevy -> the Hevy import
+    /// screen (m7-02 replaced m5-01's placeholder). The intent is unchanged:
+    /// the first-launch Import path has an honest destination — here, the
+    /// real import intro with its file-choosing action. The full import flow
+    /// is ImportUITests'.
     ///
     /// The Import choice also persists (finding 5): both welcome buttons
     /// call the same `WelcomeState.markCompleted()`, so a relaunch without
     /// any welcome arguments skips the welcome after Import too — not just
     /// after Start fresh.
-    func testFirstLaunchImportShowsPlaceholder() throws {
+    func testFirstLaunchImportOpensHevyImport() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
         app.launchArguments += ["-burly-reset-welcome"]
@@ -158,12 +160,16 @@ final class BurlyPhoneUITests: XCTestCase {
 
         app.buttons["welcomeView.importButton"].tap()
 
-        let heading = app.staticTexts["importPlaceholderView.heading"]
+        let heading = app.staticTexts["hevyImport.intro.heading"]
         XCTAssertTrue(
             heading.waitForExistence(timeout: 15),
-            "Expected Import from Hevy to navigate to the placeholder screen"
+            "Expected Import from Hevy to open the Hevy import screen"
         )
-        XCTAssertEqual(heading.label, "Import from Hevy")
+        XCTAssertEqual(heading.label, "Bring in your Hevy history")
+        XCTAssertTrue(
+            app.buttons["hevyImport.chooseFileButton"].exists,
+            "Expected the import screen to offer choosing a CSV file"
+        )
         app.terminate()
 
         // The Import choice persisted the welcome flag: a relaunch with no
@@ -180,7 +186,7 @@ final class BurlyPhoneUITests: XCTestCase {
             "Expected the welcome to be skipped on relaunch after choosing Import"
         )
 
-        attachScreenshot(from: relaunched, name: "BurlyPhone-importPlaceholder")
+        attachScreenshot(from: relaunched, name: "BurlyPhone-relaunchAfterImportChoice")
     }
 
     /// The choice persists: the first launch starts from the GENUINE

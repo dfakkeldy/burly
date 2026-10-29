@@ -35,7 +35,6 @@
 		E5B86DA8387E32F218411F01 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 387E32F218411F016C5DC66F /* EmptyStateView.swift */; };
 		0F3F419C1D6847CCE772834C /* HistoryTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D6847CCE772834C378273DB /* HistoryTabView.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* HistorySessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */; };
-		4BC4E73D83CC915FA4EF9183 /* ImportPlaceholderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CC915FA4EF91835BBAFA53 /* ImportPlaceholderView.swift */; };
 		7B5B07CEFD61D9C852F1778D /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD61D9C852F1778D202ABC7B /* MainTabView.swift */; };
 		9D5EDA057CE92FF9FDE83EEC /* PhoneHomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE92FF9FDE83EEC09FBD238 /* PhoneHomeViewModel.swift */; };
 		97F8F1E99E9E61AC7A5E7095 /* RoutinesTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9E61AC7A5E7095169EDA1C /* RoutinesTabView.swift */; };
@@ -70,6 +69,13 @@
 		921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */; };
 		94A77A6BFFAF15718B081B35 /* UnreadableSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */; };
 		EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */; };
+		B4E29C6C90479A29C93AE4FF /* HevyImportEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */; };
+		8E8D9773339EFEEBD416B27D /* HevyImportModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C40E4D9C23E8FDE26CD9DF /* HevyImportModel.swift */; };
+		19663138E26A422B76462B4A /* HevyImportUITestFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D80F5A90E5CE4112E1ED6E3 /* HevyImportUITestFixture.swift */; };
+		5845CF35C913070F9B7DC824 /* HevyImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3977FDEC11E10ABAC071362D /* HevyImportView.swift */; };
+		EDBAF78E0925F15C703E299B /* HevySyntheticFixture.csv in Resources */ = {isa = PBXBuildFile; fileRef = 5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */; };
+		4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B93D51444666972BC5B477A8 /* ImportUITests.swift */; };
+		B03EFAC4CE507E8E5A27456F /* BurlyImport in Frameworks */ = {isa = PBXBuildFile; productRef = EE2761409B9545392090D8F1 /* BurlyImport */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -135,7 +141,6 @@
 		387E32F218411F016C5DC66F /* EmptyStateView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
 		1D6847CCE772834C378273DB /* HistoryTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryTabView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistorySessionDetailView.swift; sourceTree = "<group>"; };
-		83CC915FA4EF91835BBAFA53 /* ImportPlaceholderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImportPlaceholderView.swift; sourceTree = "<group>"; };
 		FD61D9C852F1778D202ABC7B /* MainTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		7CE92FF9FDE83EEC09FBD238 /* PhoneHomeViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneHomeViewModel.swift; sourceTree = "<group>"; };
 		9E9E61AC7A5E7095169EDA1C /* RoutinesTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoutinesTabView.swift; sourceTree = "<group>"; };
@@ -170,6 +175,12 @@
 		18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeUITests.swift; sourceTree = "<group>"; };
 		F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UnreadableSessionView.swift; sourceTree = "<group>"; };
 		0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRecoveryUITests.swift; sourceTree = "<group>"; };
+		B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportEntry.swift; sourceTree = "<group>"; };
+		61C40E4D9C23E8FDE26CD9DF /* HevyImportModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportModel.swift; sourceTree = "<group>"; };
+		5D80F5A90E5CE4112E1ED6E3 /* HevyImportUITestFixture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportUITestFixture.swift; sourceTree = "<group>"; };
+		3977FDEC11E10ABAC071362D /* HevyImportView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportView.swift; sourceTree = "<group>"; };
+		5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = HevySyntheticFixture.csv; sourceTree = "<group>"; };
+		B93D51444666972BC5B477A8 /* ImportUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImportUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -188,6 +199,7 @@
 				DC5785914A49E8FF0DB826D9 /* BurlyPersistence in Frameworks */,
 				B0D27728FF99715467571093 /* BurlySync in Frameworks */,
 				01700F631CF0BFDBE87CCDAE /* BurlyHealth in Frameworks */,
+				B03EFAC4CE507E8E5A27456F /* BurlyImport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -235,6 +247,7 @@
 			isa = PBXGroup;
 			children = (
 				AAD12240990445278C58B1D9 /* Preview Assets.xcassets */,
+				5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */,
 			);
 			path = "Preview Content";
 			sourceTree = "<group>";
@@ -273,8 +286,11 @@
 				387E32F218411F016C5DC66F /* EmptyStateView.swift */,
 				1D6847CCE772834C378273DB /* HistoryTabView.swift */,
 				A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */,
-				83CC915FA4EF91835BBAFA53 /* ImportPlaceholderView.swift */,
 				75C1B4C336761A13E5004C05 /* LicensesView.swift */,
+				B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */,
+				61C40E4D9C23E8FDE26CD9DF /* HevyImportModel.swift */,
+				5D80F5A90E5CE4112E1ED6E3 /* HevyImportUITestFixture.swift */,
+				3977FDEC11E10ABAC071362D /* HevyImportView.swift */,
 				FD61D9C852F1778D202ABC7B /* MainTabView.swift */,
 				7CE92FF9FDE83EEC09FBD238 /* PhoneHomeViewModel.swift */,
 				9E9E61AC7A5E7095169EDA1C /* RoutinesTabView.swift */,
@@ -305,6 +321,7 @@
 			children = (
 				E096219D3CBCC86425088168 /* BurlyPhoneUITests.swift */,
 				831A69A7A453C868EB8BC404 /* SettingsUITests.swift */,
+				B93D51444666972BC5B477A8 /* ImportUITests.swift */,
 			);
 			name = BurlyPhoneUITests;
 			path = BurlyPhoneUITests;
@@ -365,6 +382,7 @@
 				FBDB9D2F0A7B453113B3EB98 /* BurlyPersistence */,
 				7D53C7D712D458158C14765C /* BurlySync */,
 				6541DF4935431A0466822488 /* BurlyHealth */,
+				EE2761409B9545392090D8F1 /* BurlyImport */,
 			);
 			productName = BurlyPhone;
 			productReference = 173AA9D85E7E4AB4AE010F4C /* BurlyPhone.app */;
@@ -488,6 +506,7 @@
 				6F52ED6B92E84F5A91C21E41 /* Assets.xcassets in Resources */,
 				6D16D2636E2EFF3C565EE8DB /* LICENSE in Resources */,
 				72DF77D12C8CE6D250412597 /* LICENSE-APP-STORE-EXCEPTION.md in Resources */,
+				EDBAF78E0925F15C703E299B /* HevySyntheticFixture.csv in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -566,6 +585,7 @@
 			files = (
 				258796C96795AAD47DC0760B /* BurlyPhoneUITests.swift in Sources */,
 				052946BFA2912DD9B70C62B2 /* SettingsUITests.swift in Sources */,
+				4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -578,7 +598,10 @@
 				E5B86DA8387E32F218411F01 /* EmptyStateView.swift in Sources */,
 				0F3F419C1D6847CCE772834C /* HistoryTabView.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* HistorySessionDetailView.swift in Sources */,
-				4BC4E73D83CC915FA4EF9183 /* ImportPlaceholderView.swift in Sources */,
+				B4E29C6C90479A29C93AE4FF /* HevyImportEntry.swift in Sources */,
+				8E8D9773339EFEEBD416B27D /* HevyImportModel.swift in Sources */,
+				19663138E26A422B76462B4A /* HevyImportUITestFixture.swift in Sources */,
+				5845CF35C913070F9B7DC824 /* HevyImportView.swift in Sources */,
 				7B5B07CEFD61D9C852F1778D /* MainTabView.swift in Sources */,
 				9D5EDA057CE92FF9FDE83EEC /* PhoneHomeViewModel.swift in Sources */,
 				97F8F1E99E9E61AC7A5E7095 /* RoutinesTabView.swift in Sources */,
@@ -768,6 +791,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"BurlyPhone/Preview Content\"";
 				DEVELOPMENT_TEAM = 8AXNA5B37R;
 				ENABLE_PREVIEWS = YES;
+				EXCLUDED_SOURCE_FILE_NAMES = HevySyntheticFixture.csv;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -1027,6 +1051,10 @@
 		FBDB9D2F0A7B453113B3EB98 /* BurlyPersistence */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BurlyPersistence;
+		};
+		EE2761409B9545392090D8F1 /* BurlyImport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BurlyImport;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

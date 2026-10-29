@@ -23,6 +23,10 @@ import BurlyPersistence
 struct ContentView: View {
     @State private var storeResult: Result<BurlyStore, Error>?
     @State private var showWelcome: Bool
+    /// Set when the welcome's "Import from Hevy" dismissed it (m7-02): the
+    /// shell opens the import screen over the tabs once the store resolves,
+    /// so the import and the tabs share the one store instance.
+    @State private var importOnShellEntry = false
 
     init() {
         // The reset seam must run before the flag is first read, so the
@@ -34,9 +38,15 @@ struct ContentView: View {
 
     var body: some View {
         if showWelcome {
-            WelcomeView(onStartFresh: {
-                showWelcome = false
-            })
+            WelcomeView(
+                onStartFresh: {
+                    showWelcome = false
+                },
+                onImportFromHevy: {
+                    importOnShellEntry = true
+                    showWelcome = false
+                }
+            )
         } else {
             shellContent
                 // Resolve the store when the tab shell is entered — this
@@ -55,7 +65,7 @@ struct ContentView: View {
         if let storeResult {
             switch storeResult {
             case .success(let store):
-                MainTabView(store: store)
+                MainTabView(store: store, presentsHevyImportOnAppear: importOnShellEntry)
             case .failure(let error):
                 StoreUnavailableView(message: String(describing: error)) {
                     resolveStore()
