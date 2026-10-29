@@ -113,7 +113,7 @@ final class SettingsUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         scrollUpToElement(app, identifier: "settingsTab.importRow").tap()
         XCTAssertTrue(
-            app.staticTexts["importPlaceholderView.heading"].waitForExistence(timeout: 5),
+            app.staticTexts["hevyImport.intro.heading"].waitForExistence(timeout: 5),
             "Expected the Import row to open the import screen"
         )
     }
