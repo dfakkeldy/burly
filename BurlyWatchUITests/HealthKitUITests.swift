@@ -91,40 +91,72 @@ final class HealthKitUITests: XCTestCase {
 
     /// The Health sheet is system UI hosted over the app; its button labels
     /// are matched by text because it carries no identifiers of ours.
+    ///
+    /// On watchOS it opens as a "Health Access" card whose only button is
+    /// Review; the per-type screen behind it carries the answer, possibly
+    /// below the fold. Each label is tapped at most once, in order, and a
+    /// failed answer attaches both accessibility trees so the next run can
+    /// name the real buttons.
     private func answerHealthPrompt(_ app: XCUIApplication, allow: Bool) {
-        let logButton = app.buttons["logSetButton"]
-        let deadline = Date().addingTimeInterval(20)
-        var answered = false
-        while Date() < deadline {
-            if allow, tapFirst(app, labels: ["Turn On All", "Turn On All Categories"]) {
-                answered = true
+        let hosts = [app, XCUIApplication(bundleIdentifier: "com.apple.Carousel")]
+        let steps = allow
+            ? ["Review", "Turn On All", "Turn On All Categories", "Allow", "Next", "Done"]
+            : ["Review", "Don’t Allow", "Don't Allow", "Not Now", "Done"]
+        let answers: Set<String> = allow
+            ? ["Allow", "Done"]
+            : ["Don’t Allow", "Don't Allow", "Not Now", "Done", "Close", "Cancel"]
+        var tapped: [String] = []
+        var swipes = 0
+        let deadline = Date().addingTimeInterval(45)
+        while Date() < deadline, !tapped.contains(where: answers.contains) {
+            if let label = tapFirst(hosts, labels: steps.filter { !tapped.contains($0) }) {
+                tapped.append(label)
+                swipes = 0
+                Thread.sleep(forTimeInterval: 1)
+                continue
             }
-            let finalLabels = allow ? ["Allow", "Done", "Next"] : ["Don’t Allow", "Don't Allow", "Not Now", "Cancel"]
-            if tapFirst(app, labels: finalLabels) {
-                answered = true
-                if !allow || logButton.waitForExistence(timeout: 2) { break }
+            if !tapped.isEmpty, swipes < 6 {
+                // The answer buttons can sit below the type toggles.
+                app.swipeUp()
+                swipes += 1
+            } else if !allow, !tapped.isEmpty, let label = tapFirst(hosts, labels: ["Close", "Cancel"]) {
+                // Dismissing the review without turning anything on.
+                tapped.append(label)
             }
-            if answered, logButton.exists { break }
             Thread.sleep(forTimeInterval: 0.5)
         }
         attachScreenshot(from: app, name: allow ? "BurlyWatch-health-allowed" : "BurlyWatch-health-declined")
-        XCTAssertTrue(answered, "Expected the Health authorization sheet at the first session start")
-        XCTAssertTrue(logButton.waitForExistence(timeout: 10), "Expected the logging screen after the Health sheet")
+        let answered = tapped.contains(where: answers.contains)
+        if !answered {
+            for (name, host) in zip(["app", "carousel"], hosts) {
+                let tree = XCTAttachment(string: host.debugDescription)
+                tree.name = "health-sheet-tree-\(name)"
+                tree.lifetime = .keepAlways
+                add(tree)
+            }
+        }
+        XCTAssertTrue(answered, "Expected to answer the Health sheet at the first session start; tapped \(tapped)")
+        let logButton = app.buttons["logSetButton"]
+        XCTAssertTrue(
+            waitFor(timeout: 10) { logButton.exists && logButton.isHittable },
+            "Expected the logging screen after the Health sheet"
+        )
     }
 
     /// Looks in the app first, then in the watch's system shell, in case
-    /// the sheet is hosted outside the app's accessibility tree.
-    private func tapFirst(_ app: XCUIApplication, labels: [String]) -> Bool {
-        for host in [app, XCUIApplication(bundleIdentifier: "com.apple.Carousel")] {
-            for label in labels {
+    /// the sheet is hosted outside the app's accessibility tree. Returns the
+    /// label it tapped.
+    private func tapFirst(_ hosts: [XCUIApplication], labels: [String]) -> String? {
+        for label in labels {
+            for host in hosts {
                 let button = host.buttons[label]
                 if button.exists, button.isHittable {
                     button.tap()
-                    return true
+                    return label
                 }
             }
         }
-        return false
+        return nil
     }
 
     private func logOneSet(_ app: XCUIApplication) {
