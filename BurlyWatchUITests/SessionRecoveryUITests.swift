@@ -99,6 +99,10 @@ final class SessionRecoveryUITests: XCTestCase {
         // with margin, so this tap -- not any shell-side reload -- is what
         // the fault fires on.
         Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(
+            app.staticTexts["resumeSession.heading"].exists,
+            "The fault fired on a shell reload before the tap, not on SessionEntryView's preflight"
+        )
         legDayRow.tap()
 
         let heading = app.staticTexts["unreadableSession.heading"]

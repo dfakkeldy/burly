@@ -284,14 +284,25 @@ final class SettingsUITests: XCTestCase {
     }
 
     /// Chooses a display unit in Settings and waits for the selection to
-    /// land, so the next screen is asserted against the new unit.
+    /// land, so the next screen is asserted against the new unit. Waits on a
+    /// query rather than a predicate expectation: on CI one accessibility
+    /// snapshot took over 4 s, so a 5 s expectation got a single look and
+    /// failed although the checkmark had moved. waitForExistence polls and
+    /// checks once more at its deadline. One tap only, so a tap that really
+    /// doesn't select still fails.
     private func selectUnit(_ rawValue: String, in app: XCUIApplication) {
         openSettings(in: app)
-        let option = scrollUpToElement(app, identifier: "settingsTab.unitOption.\(rawValue)")
+        let identifier = "settingsTab.unitOption.\(rawValue)"
+        let option = scrollUpToElement(app, identifier: identifier)
         XCTAssertTrue(option.exists, "Expected the \(rawValue) option in Settings")
         option.tap()
-        let selected = expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: option)
-        wait(for: [selected], timeout: 5)
+        let selectedOption = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ AND selected == true", identifier))
+            .firstMatch
+        XCTAssertTrue(
+            selectedOption.waitForExistence(timeout: 15),
+            "Expected \(rawValue) to become selected after tapping it"
+        )
     }
 
     /// Looks a stable identifier up regardless of the accessibility element

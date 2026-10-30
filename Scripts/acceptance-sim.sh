@@ -489,30 +489,34 @@ log "resolved '$WATCH_NAME' -> $WATCH_UDID"
 xcrun simctl bootstatus "$IPHONE_UDID" -b
 xcrun simctl bootstatus "$WATCH_UDID" -b
 
-# A booted device is not yet a device xcodebuild can see. On a fresh CI
-# runner (2026-10-29, macos-26 image 20261021) xcodebuild listed no
-# simulators at all right after both boots finished and failed with
-# "Unable to find a device matching the provided destination specifier".
-# Poll -showdestinations until the device appears, and fail with the
-# simulator inventory in the log instead of a bare destination error.
-DESTINATION_WAIT_SECONDS=$((5 * 60))
+# A booted device is not yet a device xcodebuild can see. On fresh macos-26
+# runners xcodebuild lists no simulators at all for a while after both boots
+# finish, then every simulator appears at once; simctl sees them throughout.
+# A 12-job probe on 2026-10-29 measured 82-386 s before they appeared, and
+# neither -runFirstLaunch nor restarting CoreSimulatorService shortened it.
+# Poll -showdestinations until the device appears (15 minutes is about twice
+# the worst case seen), and fail with xcodebuild's own output and the simctl
+# inventory instead of a bare destination error.
+DESTINATION_WAIT_SECONDS=$((15 * 60))
 
 wait_for_destination() {
   local scheme="$1" device_name="$2" udid="$3"
-  local deadline=$((SECONDS + DESTINATION_WAIT_SECONDS)) destinations
+  local started=$SECONDS deadline=$((SECONDS + DESTINATION_WAIT_SECONDS)) destinations
   while true; do
     # Captured, not piped into `grep -q`: under pipefail an early grep exit
     # can SIGPIPE xcodebuild and turn a match into a failure.
-    destinations="$(xcodebuild -showdestinations -project "$PROJECT" -scheme "$scheme" 2>/dev/null || true)"
+    destinations="$(xcodebuild -showdestinations -project "$PROJECT" -scheme "$scheme" 2>&1 || true)"
     if [[ "$destinations" == *"id:$udid"* ]]; then
+      log "xcodebuild sees '$device_name' after $((SECONDS - started))s"
       return 0
     fi
     if (( SECONDS >= deadline )); then
-      log "FATAL: xcodebuild still cannot see '$device_name' ($udid) for $scheme after ${DESTINATION_WAIT_SECONDS}s; simulator inventory follows."
+      log "FATAL: xcodebuild still cannot see '$device_name' ($udid) for $scheme after ${DESTINATION_WAIT_SECONDS}s; its last -showdestinations output and the simctl inventory follow."
+      printf '%s\n' "$destinations" >&2
       xcrun simctl list devices >&2 || true
       exit 70
     fi
-    log "waiting for xcodebuild to see '$device_name' ($udid) for $scheme"
+    log "waiting for xcodebuild to see '$device_name' ($udid) for $scheme ($((SECONDS - started))s so far)"
     sleep 15
   done
 }
@@ -542,24 +546,113 @@ xcodebuild build \
 # (BurlyWatchUITests, spec §2 routine list / §5 waiting-for-iPhone shell).
 # Both run through this one script/lock so a change to either device's
 # acceptance coverage never needs a second, parallel script.
+#
+# A suite that fails gets one bounded second pass. On GitHub's macos-26
+# runners, CI attempts of identical code (2026-10-29/30) each failed a
+# different single UI test: a dropped tap, a skip that never ran, a 5 s wait
+# starved by 4 s accessibility snapshots. Cause unproven, never the same test
+# twice. So when a suite fails at most MAX_RETRIED_TESTS tests, exactly those
+# run again in a fresh xcodebuild (its own result bundle, next to the first).
+# The suite passes only if every one of them passes the second time. More
+# failures than that, or a failure with no failed test (a crash or build
+# error), is treated as real and stops the run. Every retried test is
+# reported: a FLAKE log line, a GitHub Actions warning, a step-summary line,
+# and a row in retried-tests.txt. BURLY_FAIL_ON_RETRY=1 fails the run on any
+# retry instead, for measuring flakes.
 # ---------------------------------------------------------------------------
+MAX_RETRIED_TESTS=3
+RETRIED_TESTS_COUNT=0
+
+# Prints one "Class/testMethod()" line per failed test case in a bundle.
+failed_tests() {
+  xcrun xcresulttool get test-results tests --path "$1" --compact \
+    | /usr/bin/python3 -I -c '
+import json, sys
+def walk(node):
+    if node.get("nodeType") == "Test Case":
+        if node.get("result") == "Failed":
+            print(node["nodeIdentifier"])
+        return
+    for child in node.get("children", []):
+        walk(child)
+for node in json.load(sys.stdin).get("testNodes", []):
+    walk(node)
+'
+}
+
+# run_ui_suite SUITE SCHEME DESTINATION BUNDLE
+run_ui_suite() {
+  local suite="$1" scheme="$2" destination="$3" bundle="$4"
+  local retry_bundle="${bundle%.xcresult}-retry.xcresult"
+  local rc=0 failed count only_testing test outcome
+
+  xcodebuild test \
+    -project "$PROJECT" \
+    -scheme "$scheme" \
+    -destination "$destination" \
+    -resultBundlePath "$bundle" \
+    -only-testing:"$suite" \
+    "${COMMON_XCODEBUILD_FLAGS[@]}" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+
+  failed="$(failed_tests "$bundle" 2>/dev/null || true)"
+  count="$(printf '%s' "$failed" | grep -c . || true)"
+  if [ "$count" -eq 0 ]; then
+    log "$suite failed (exit $rc) with no failed test in its result bundle; not retrying"
+    return "$rc"
+  fi
+  if [ "$count" -gt "$MAX_RETRIED_TESTS" ]; then
+    log "$suite failed $count tests, more than $MAX_RETRIED_TESTS; treating it as a real failure, not retrying"
+    return "$rc"
+  fi
+
+  only_testing=""
+  while IFS= read -r test; do
+    only_testing="$only_testing -only-testing:$suite/${test%()}"
+  done <<< "$failed"
+  log "$suite failed $count test(s); running them once more:$only_testing"
+
+  rc=0
+  # shellcheck disable=SC2086 # only_testing is one word per test, by construction.
+  xcodebuild test \
+    -project "$PROJECT" \
+    -scheme "$scheme" \
+    -destination "$destination" \
+    -resultBundlePath "$retry_bundle" \
+    $only_testing \
+    "${COMMON_XCODEBUILD_FLAGS[@]}" || rc=$?
+
+  while IFS= read -r test; do
+    if [ "$rc" -eq 0 ]; then
+      outcome="passed on retry"
+      RETRIED_TESTS_COUNT=$((RETRIED_TESTS_COUNT + 1))
+    else
+      outcome="and the retry run failed; see $(basename "$retry_bundle")"
+    fi
+    log "FLAKE $suite/$test: failed once, $outcome"
+    printf '%s\t%s\t%s\n' "$suite" "$test" "$outcome" >> "$RUN_DIR/retried-tests.txt"
+    # A workflow command on stdout shows as a warning on the GitHub run.
+    printf '::warning title=Retried UI test::%s/%s failed once, %s\n' "$suite" "$test" "$outcome"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      printf -- '- Retried UI test `%s/%s`: failed once, %s\n' "$suite" "$test" "$outcome" >> "$GITHUB_STEP_SUMMARY"
+    fi
+  done <<< "$failed"
+  return "$rc"
+}
+
 log "running BurlyPhoneUITests on $IPHONE_NAME"
-xcodebuild test \
-  -project "$PROJECT" \
-  -scheme BurlyPhone \
-  -destination "platform=iOS Simulator,id=$IPHONE_UDID" \
-  -resultBundlePath "$RESULT_BUNDLE" \
-  -only-testing:BurlyPhoneUITests \
-  "${COMMON_XCODEBUILD_FLAGS[@]}"
+run_ui_suite BurlyPhoneUITests BurlyPhone "platform=iOS Simulator,id=$IPHONE_UDID" "$RESULT_BUNDLE"
 
 log "running BurlyWatchUITests on $WATCH_NAME"
-xcodebuild test \
-  -project "$PROJECT" \
-  -scheme BurlyWatch \
-  -destination "platform=watchOS Simulator,id=$WATCH_UDID" \
-  -resultBundlePath "$WATCH_RESULT_BUNDLE" \
-  -only-testing:BurlyWatchUITests \
-  "${COMMON_XCODEBUILD_FLAGS[@]}"
+run_ui_suite BurlyWatchUITests BurlyWatch "platform=watchOS Simulator,id=$WATCH_UDID" "$WATCH_RESULT_BUNDLE"
+
+if [ "$RETRIED_TESTS_COUNT" -gt 0 ]; then
+  log "WARNING: $RETRIED_TESTS_COUNT UI test(s) passed only on retry; see retried-tests.txt"
+  if [ "${BURLY_FAIL_ON_RETRY:-0}" = 1 ]; then
+    log "FATAL: BURLY_FAIL_ON_RETRY=1 and a UI test needed a retry"
+    exit 1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Export screenshots/attachments for digest reports.

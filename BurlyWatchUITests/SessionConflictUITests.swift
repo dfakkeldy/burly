@@ -161,10 +161,14 @@ final class SessionConflictUITests: XCTestCase {
         // routine list renders normally.
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
-        // Clears WatchDemoSeed's quiet-period gate (1.0 s) with margin, so
+        // Clears WatchDemoSeed's quiet-period gate (1.5 s) with margin, so
         // this tap -- not any shell-side reload -- is what the fault fires
         // on.
         Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(
+            app.staticTexts["resumeSession.heading"].exists,
+            "The fault fired on a shell reload before the tap, not on SessionEntryView's pre-check"
+        )
         legDayRow.tap()
 
         // SessionEntryView's own defensive pre-check is where the fault's
@@ -206,6 +210,10 @@ final class SessionConflictUITests: XCTestCase {
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
         Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(
+            app.staticTexts["resumeSession.heading"].exists,
+            "The fault fired on a shell reload before the tap, not on SessionEntryView's pre-check"
+        )
         legDayRow.tap()
 
         let conflictHeading = app.staticTexts["sessionConflict.heading"]
