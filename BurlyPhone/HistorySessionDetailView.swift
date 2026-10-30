@@ -10,6 +10,13 @@ struct HistorySessionDetailView: View {
     @State private var pickerPresented = false
     @State private var errorMessage: String?
     @State private var notesDraft: String
+    #if DEBUG
+    // Exercise the existing error path against a synthetic UI-test store.
+    // Never enabled for the real store or included in release builds.
+    @State private var failNextSaveForUITest =
+        ProcessInfo.processInfo.environment["BURLY_PHONE_UI_TEST_SCENARIO"] == "populated"
+        && ProcessInfo.processInfo.environment["BURLY_PHONE_UI_TEST_FAIL_HISTORY_SAVE_ONCE"] == "1"
+    #endif
     /// Spec §9 #2: set rows render in the Settings display unit.
     @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
 
@@ -147,6 +154,12 @@ struct HistorySessionDetailView: View {
         var updated = session
         change(&updated)
         do {
+            #if DEBUG
+            if failNextSaveForUITest {
+                failNextSaveForUITest = false
+                throw CocoaError(.fileWriteUnknown)
+            }
+            #endif
             session = try viewModel.saveHistoryEdit(updated)
             return true
         } catch {

@@ -530,6 +530,39 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-historyEdits")
     }
 
+    @MainActor
+    func testFailedHistorySetSaveKeepsDraftAndRetrySavesOnce() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchEnvironment["BURLY_PHONE_UI_TEST_FAIL_HISTORY_SAVE_ONCE"] = "1"
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        let sessionRow = anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)")
+        XCTAssertTrue(sessionRow.waitForExistence(timeout: 15))
+        sessionRow.tap()
+        assertRevision(1, in: app)
+        anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").tap()
+        let weight = app.textFields["historyDetail.setWeight"]
+        let reps = app.textFields["historyDetail.setReps"]
+        replaceText(in: weight, with: "82.5", app: app)
+        replaceText(in: reps, with: "12", app: app)
+        app.buttons["historyDetail.saveSet"].tap()
+
+        let alert = app.alerts["Couldn’t save edit"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.buttons["OK"].tap()
+        XCTAssertTrue(weight.waitForExistence(timeout: 5), "A rejected write must keep the editor open")
+        XCTAssertEqual(editableContents(of: weight), "82.5")
+        XCTAssertEqual(editableContents(of: reps), "12")
+
+        app.buttons["historyDetail.saveSet"].tap()
+        assertRevision(2, in: app)
+        XCTAssertTrue(app.staticTexts["82.5 kg × 12"].waitForExistence(timeout: 5))
+        assertHealthKitLink(in: app)
+        attachScreenshot(from: app, name: "BurlyPhone-historySaveRetry")
+    }
+
     /// Spec §7 acceptance #3, empty side: each independently meaningful
     /// chart has a genuine empty state on a deterministic empty history.
     /// This catches both crashes during chart construction and a misleading
