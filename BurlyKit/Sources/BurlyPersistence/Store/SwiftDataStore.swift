@@ -897,8 +897,8 @@ public final class SwiftDataStore: BurlyStore {
 
     /// Shared fetch/map body for date-bounded queries and the explicit
     /// all-history projection. The unbounded single-exercise path above
-    /// instead follows the exercise's inverse relationships. `exerciseID`, when given, is applied entirely below in
-    /// Swift, not in `predicate` — see `setRecordFilterPredicate`'s doc for
+    /// instead follows the exercise's inverse relationships. `exerciseID`,
+    /// when given, is applied below in Swift, not in `predicate` — see `setRecordFilterPredicate`'s doc for
     /// why relationship traversal was pulled out of the `#Predicate`
     /// entirely (the runner-predicate fix).
     private func fetchSetSlices(
