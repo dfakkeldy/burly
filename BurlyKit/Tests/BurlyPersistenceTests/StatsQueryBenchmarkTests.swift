@@ -89,18 +89,11 @@ struct StatsQueryBenchmarkTests {
         // that takes an arbitrary `since` at all — see (a) above and
         // `BurlyStore`'s stats-queries doc).
         //
-        // This is NOT predicate-pushed-down as of the runner-predicate fix
-        // (see `SwiftDataStore.setRecordFilterPredicate`'s doc): both
-        // relationship-predicate shapes tried for `sessionItem.exercise.id
-        // == exerciseID` were rejected by SwiftData/CoreData (optional
-        // chaining → TERNARY, rejected only on the macos-26 CI runner;
-        // force-unwrap → rejected locally, on every runner, by SwiftData
-        // itself). `exerciseID` is now filtered in Swift after a
-        // date-unbounded fetch, so this case is bounded by the *store's
-        // total* SetRecord count, not that exercise's row count — this is
-        // the query the fix's brief said to watch for a material
-        // regression on, and it is one: compare this number against the
-        // git history of this comment for the pre-fix figure.
+        // The unbounded request follows the exercise's session-item
+        // inverse instead of materializing the full SetRecord table. This
+        // preserves the exercise bound without reintroducing either
+        // unsupported relationship-predicate shape. Date-bounded queries
+        // retain their existing SQL date filter.
         let (allTimeSlices, allTimeQueryTime, allTimePeak) = try measure {
             try store.loggedSetSlices(exerciseID: seed.benchExerciseID, since: nil, through: nil)
         }
