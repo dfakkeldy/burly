@@ -1,148 +1,170 @@
 # Burly overnight audit — October 30, 2026
 
-Run started at 00:03 ADT (03:03 UTC), from `829fe5d` on `origin/main`.
-There is no `nightly` branch. The clean audit branch is
-`codex/overnight-audit-20261030-cycle-1`.
+The audit covered bugs, code, performance, architecture, HIG/accessibility
+and usability. It started00:03 ADT from `829fe5d` on `origin/main` (no nightly
+branch); the window ended08:00 ADT /11:00UTC. Morning wrap-up delivered
+already-tested heads and finalized this record. All fixtures are synthetic.
+This is evidence from exercised flows, not an exhaustive release sign-off.
 
-This is an ongoing audit, not an exhaustive pass or a release sign-off.
-Work ends by 08:00 ADT, or after the bug-hunt workflow's 60 active search
-minutes without a new reproducible bug. Setup, implementation, builds and
-CI waits do not count toward that quiet hour. No quiet hour has been
-established at this checkpoint.
+**Fifteen confirmed defects under fourteen issues: eleven fixed and merged,
+one focused draft fix blocked by its full acceptance gate, and three open
+implementation follow-ups.** The heartbeat was deleted at morning wrap-up;
+there is no later-night continuation.
 
-## Findings and fixes
+## Findings and delivery
 
-| Finding | Evidence | Change | Verification |
-| --- | --- | --- | --- |
-| #17: imported workout titles disappear | Parser retains `SessionAccumulator.title` but omits `routineName`; History and detail fall back to “Workout” | Preserve the title without linking a routine or changing IDs | Parser, real-store and visible-title UI regressions passed in hosted CI at `a453627` |
-| #18: History repeats whole-history work per row | Lazy row closure evaluates the computed `prSessionIDs` for every session | Capture the badge set once before building the list | Source confirms one projection per content evaluation; no measured speedup claimed |
-| #18: badges omit estimated-1RM records and disagree on timestamp ties | Old badge loop compares only weight and sorts only by date | Reuse the core progression rules across exercises | New estimate-only, mixed-exercise, warmup/unattributed and equal-time regressions passed in hosted package CI |
-| #19: consistency days do not announce dates | Every dot's accessibility label is only a workout status | Date label plus status value on each day | 28 distinct date labels and both status values passed the accessibility-tree regression at `a453627` |
-| #21: a failed set save discards the editor draft | The parent catches a write error, then the editor unconditionally dismisses | Throw save failures to the active editor, which owns its alert and dismisses only on success | First injected-write test exposed that the retained editor could not present its parent's alert; repaired on the same branch, retry verification pending |
-| #22: archiving an exercise hides its historical name | History loads only active exercise metadata; detail resolves names from that array | Include archived metadata in History; exclude it from selection and naming work | Catalog archive → History name/sets/revision → Add Exercise exclusion regression added; runtime result pending |
-| #23: all-time progression query costs 8.2453 s at 50k sets | Existing hosted scale benchmark; all SetRecords fetched before exercise filtering | Bound unbounded single-exercise reads through the exercise inverse | Same 4,306 slices in 1.6870 s across separate hosted runs; cold-reopen/archive/active/merge regressions passed; delivery checks accompany this patch |
-| #24: digest costs 6.1419 s at 50k sets | Existing hosted benchmark exceeds its 3 s signal threshold | Separate performance follow-up | Baseline reproduced; no fix or device timing claimed |
-| #25: progression renders one blue zigzag instead of two trends | Successful simulator's `BurlyPhone-statsPounds` screenshot shows connections between top set and e1RM within each session | Explicit series identities and categorical colors for both trends and PRs | `c1eed8f` screenshot confirms independent blue/orange paths and visible legend. Legend moved outside Charts' synthesized accessibility tree; new tree assertions pending |
-| #26: Stats has no navigation title and content overlaps status time when scrolled | `BurlyPhone-statsPounds` and `BurlyPhone-consistencyDates` screenshots; Stats alone lacks a NavigationStack | Restore a tab-owned navigation host | `c1eed8f` navigation assertion and rendered Stats heading verified; the whole suite remains red for separate repairs below |
-
-## Coverage checkpoint
-
-| Requested area | Reviewed so far | Status and next pass |
+| Finding | Reproduction / cause | Fix and status |
 | --- | --- | --- |
-| Bugs | Hevy parse/plan/commit flow; History badges; statistics/date projections; archive-to-History flow; scale benchmarks; rendered charts/navigation | Ten source/benchmark/screenshot-supported defects above; nine issue records |
-| Code | Import row validation/tokenizer and deterministic IDs; weight validation; History mutation and error paths; stats calculations | Package regressions pass for the first fixes. The editor's failed-write path now preserves its draft; runtime failure injection remains unverified |
-| Performance | History list projection; Stats store queries; import detached parsing/main-actor planning; existing 50k-row stats/digest benchmarks | Repeated badge scan fixed in source; baseline query/digest costs measured below. Candidate optimization remains separate until equivalence and before/after measurements pass |
-| Architecture | Package target graph, store projections, importer boundary, phone/watch runtime placement, Health abstractions | Core remains UI-independent; import depends only on core; protocol machines and transport adapters are declared dependency-free. Badge policy duplication removed; historical metadata now includes archives while selection surfaces filter them. Existing HealthKit and sync app-wiring PRs retain their scope; inspect their integration after merge |
-| HIG/accessibility | Phone import scrolling, semantic typography/colors, chart labels, watch adjustable controls/rest controls, exported phone/watch screenshots | Date accessibility verified at `a453627`; rendered chart grouping and missing navigation host reproduced and fixed in source. Fresh screenshots and largest Dynamic Type remain unverified |
-| Usability | Welcome/import/cancel/re-import/history flow; routine editor; history editor failure handling; default watch viewport | Imported names verified. Failed-save retry/archive flows await new-head CI. Default watch screenshot places Log set below the initial viewport; scroll/layout ergonomics remain an observed follow-up in the separately owned watch flow |
+| [#17](https://github.com/dfakkeldy/burly/issues/17): imported titles disappear | Parser retained the accumulated title but omitted `routineName`; History fell back to “Workout” | Preserve title without routine linkage or changed IDs. Merged #20; parser, real-store and visible-title regressions passed. |
+| [#18](https://github.com/dfakkeldy/burly/issues/18): per-row History work | Each row evaluated a whole-history PR projection | Capture once per list render. Merged #20; source-backed reduction, no measured frame-rate claim. |
+| #18: incorrect PR badges | Weight-only comparison omitted e1RM records; timestamp ties lacked the core ordering policy | Share core progression policy. Merged #20; estimate-only, mixed-exercise, warmup/unattributed and tie regressions passed. |
+| [#19](https://github.com/dfakkeldy/burly/issues/19): calendar dates absent from accessibility | Day dots announced workout status without their date | Full local date plus status value. Merged #20; 28 distinct dates and both statuses verified in the accessibility tree. |
+| [#21](https://github.com/dfakkeldy/burly/issues/21): failed save loses draft | Editor dismissed after a caught write failure; a parent alert could not present over the pushed editor | Throw to the active editor's own catch/alert; dismiss only on success. Merged #20; injected first failure, visible error, retained draft and single successful retry passed. |
+| [#22](https://github.com/dfakkeldy/burly/issues/22): archived names lost from History | History metadata excluded archived exercises | Include historical metadata while keeping selection/naming surfaces filtered. Merged #20; archive → History name/sets/revision → picker exclusion passed. |
+| [#23](https://github.com/dfakkeldy/burly/issues/23): slow all-time progression | Single-exercise reads materialized every set before filtering | Exercise inverse traversal for the unbounded single-exercise path. Merged #28; same 4,306 slices, cold reopen/archive/active-session and primed-cache merge checks passed. |
+| [#24](https://github.com/dfakkeldy/burly/issues/24): slow latest-performance digest | Full-history materialization dominates pure derivation at 50k sets | Open. Rejected a non-improving prefetch variant; narrower projection is experimental, not integrated. |
+| [#25](https://github.com/dfakkeldy/burly/issues/25): one zigzag instead of separate trends | Rendered artifact connected top-set and e1RM points within each session | Explicit series/colors, with ordinary adaptive legend outside Charts' synthesized tree. Merged #20; fresh rendering and legend assertions passed. |
+| [#26](https://github.com/dfakkeldy/burly/issues/26): missing Stats navigation host | Title absent and content under status chrome in rendered artifact | NavigationStack around Stats. Merged #20; title and scroll-edge rendering inspected. |
+| [#30](https://github.com/dfakkeldy/burly/issues/30): largest-text Stats clipping | Selected title clipped; fixed-height axes overlapped or ellipsized | Draft #31: local render/test and hosted phone20/20 passed; watch26/27 failed an existing countdown-skip assertion. Not merged; obtain a fully green canonical gate. |
+| [#32](https://github.com/dfakkeldy/burly/issues/32): Stats stale after activation | Pre-fix native test independently found new History data while Stats stayed at the old count with6M retained | Merged #29: refresh only requested, visible Stats using its last request. Package828+2, phone20/20 and watch27/27 passed. |
+| [#34](https://github.com/dfakkeldy/burly/issues/34): Hevy action ellipsis | Largest-text pre-audit capture shows “Import3Workou…” | Merged #35: full-width wrapping title at accessibility sizes. Local rendered/import flow and hosted package828+2, phone20/20, watch27/27 passed. |
+| [#37](https://github.com/dfakkeldy/burly/issues/37): unreadable lower weekly axes | Largest-text Weekly volume shows colliding Y/unit labels; Volume/Consistency week dates collapse to repeated ellipses | Open follow-up. Adapt lower plot space/date density and verify all volume ranges; separate from progression #31. |
+| [#38](https://github.com/dfakkeldy/burly/issues/38): Muscle split legends overlap | Automatic categorical legend overflows its fixed210pt chart and draws across the explicit percentage list | Open follow-up. Use one adaptive legend/value presentation preserving group/color/percentage meaning. |
+
+## Coverage of the six requested areas
+
+| Area | Evidence / conclusion | Limits or next work |
+| --- | --- | --- |
+| Bugs | Import/re-import, archive/history/picker, failed-save/retry, Stats lifecycle, unit rendering and chart flows exercised | Findings above are distinct from incomplete features and harness failures. |
+| Code | Import parse/plan, strict persistence reads, numeric input, history mutations, snapshot metadata and shared stats policy inspected | No broad cleanup, schema migration or public API change shipped. |
+| Performance | Per-row derived work removed; 50,351-set query benchmark and digest phase measurements collected | Debug fixture cost is not a physical-device, energy or frame-rate measurement. |
+| Architecture | Core/persistence/runtime boundaries reviewed; historical metadata separated from selection; badge policy duplication removed | Digest needs a narrower supported read contract with strict failure semantics and one shared selection policy. |
+| HIG/accessibility | Phone/watch rendering, date semantics, chart series/legend/navigation, largest text, all lower Stats cards and native accessibility audits inspected | A passing audit at a scrolled viewport did not establish whole-screen compliance; rendered inspection found #30/#34. |
+| Usability | Imported names, partial/error recovery, archive continuity, retained ranges and reachable import confirmation exercised | Watch Log set starts below the initial viewport in captured layout. This is an observation within separate watch work, not a failed button or observed device ergonomics. |
+
+The existing HealthKit, sync, simulator/test hardening and privacy-readiness
+PRs remain separate. This audit does not establish completion of those
+features or physical-device acceptance.
+
+## Architecture evidence
+
+The final read-only pass checked concrete boundaries rather than treating
+module names as evidence of separation:
+
+| Boundary | Owning source / observed guard | Consequence |
+| --- | --- | --- |
+| Store isolation | `BurlyStore`, `SwiftDataStore` and `PhoneSyncCoordinator` are `@MainActor`; store methods return domain value types | Narrow expensive synchronous reads while retaining their executor/strict error contract. A detached call to the same store is not an isolation-safe optimization. |
+| Import parsing | `HevyImportModel.read` parses data/catalog in a detached task and returns a `Sendable` ParsedExport; store-backed planning returns to the main actor | The parser has a separate execution path without sending a SwiftData context to it. No cancellation/resource claim was established by this source pass. |
+| Reusable sync seams | Package manifest keeps `BurlySyncMachine` and `BurlySyncAdapters` dependency-free; seam tests inspect source imports and the target declarations | Domain binding sits above these seams. The green package suite includes these guards; app wiring remains separate work. |
+| Journal recovery | File-backed sync state protects load/save with an instance NSLock, rejects an existing journal with no valid record, and validates checksums/identity bounds | Malformed journal-line decoding is deliberate recovery, not evidence by itself of an ignored write failure. Corruption-matrix tests cover fallback and compaction. This is not a cross-process locking audit. |
+
+The digest publisher still invokes synchronous full-history generation from
+the main actor. The measured fetch cost motivates #24's narrower projection;
+no UI stall, dropped-frame count or physical-device trace was observed here.
+Optional watch metadata and engine-error paths were inspected without
+changing the separately retained watch scope. This pass found no additional
+reproducible defect.
+
+## Verification and exact delivered heads
+
+| Delivery / run | Result |
+| --- | --- |
+| [#20](https://github.com/dfakkeldy/burly/pull/20), tested `a548cf5`; [41010129851](https://github.com/dfakkeldy/burly/actions/runs/41010129851) | 826 package + 2 migration tests; phone 19/19; watch 27/27. Fresh title/series/legend, retry/revision and archived-history artifacts reviewed. Merged `7149531`. |
+| [#28](https://github.com/dfakkeldy/burly/pull/28), tested `481ecf3`; [41016575153](https://github.com/dfakkeldy/burly/actions/runs/41016575153) | 828 package + 2 migration tests; phone 19/19; watch 27/27. Merged `e5b858e`. Benchmarks retain normal environment gates. |
+| [#29](https://github.com/dfakkeldy/burly/pull/29), tested `43b3a94`; [41031247128 attempt3](https://github.com/dfakkeldy/burly/actions/runs/41031247128/attempts/3) | 828 package+2 migration tests; phone20/20; watch27/27 passed. Local foreground regression also passed37.867s. Merged `d2c4dec` at08:22 ADT. Earlier attempts failed Settings unit-selection timing and destination discovery; the final unchanged head passed the full gate. |
+| [#31](https://github.com/dfakkeldy/burly/pull/31), `3bc58ba`; [41038544280](https://github.com/dfakkeldy/burly/actions/runs/41038544280) | Package checks and phone20/20 passed, including largest-text regression29.972s; local rendered title/axis review passed. Watch26/27 failed `LoggingScreenUITests.testRestTimerCountsDownAdjustsAndSkips` at the countdown-skip assertion. No watch source changed, but cause is unproven. Draft/unmerged; investigate on current main respecting watch ownership, then restore the complete gate without weakening its assertion. |
+| [#35](https://github.com/dfakkeldy/burly/pull/35), tested `61d3029`; [41038464378](https://github.com/dfakkeldy/burly/actions/runs/41038464378) | 828 package+2 migration tests; phone20/20; watch27/27 passed. Local max-size flow passed60.370s with complete label/viewport fit, readable capture and three synthetic workouts imported. Merged `519cc12` at08:22 ADT. No global accessibility-audit compliance claim. |
+
+Local Apple builds/tests used the shared slot wrapper. Earlier attempts
+were deferred on admission; admitted commands used only a dedicated
+synthetic phone simulator and shut it down afterwards. Existing simulators
+and unrelated processes were preserved. No physical-device testing or
+additional deployment was performed.
+
+## Performance evidence
+
+Hosted Xcode 26.6 Debug fixture: 3,600 sessions, 50,351 sets, 12 exercises.
+
+| Operation | Output | Time |
+| --- | --- | --- |
+| All-exercise trailing 90-day query | 1,173 slices | 0.2349s |
+| Baseline all-time single-exercise query | 4,306 slices | 8.2453s |
+| Exercise inverse candidate | Same 4,306 slices | 1.6870s |
+| All logged session dates | 3,600 dates | 0.2617s |
+| Baseline digest | 12 entries | 6.1419s |
+
+[Baseline](https://github.com/dfakkeldy/burly/actions/runs/41001270610)
+and [inverse candidate](https://github.com/dfakkeldy/burly/actions/runs/41004588146)
+ran separately: about 4.9× lower observed query time, without a device-speedup
+claim. The delivered query has cold persisted-store and live inverse-cache
+regressions; date-bounded queries retain their existing path.
+
+Digest [phase profiling](https://github.com/dfakkeldy/burly/actions/runs/41006812710)
+measured 8.4439s total, a separate fresh-context fetch 8.4568s, and pure
+derivation 0.0690s for the same 12 entries. A parent-only-prefetch variant
+preserved output but total 9.6150s did not improve, so it was rejected.
+
+A [diagnostic projection](https://github.com/dfakkeldy/burly/actions/runs/41020233505)
+returned 74 candidate slices / the same 12 entries in 1.6164s versus 8.3665s full
+generation in that run. It is feasibility evidence only. Before adoption:
+share latest-session/tie policy, define strict read/error behavior, test
+empty/latest-empty/tie/repeated/nil/active/archive/corrupt cases and validate
+against native persisted SQLite. No prototype API or runtime wiring shipped.
+Process high-water RSS included seeding/the full suite and is not an app or
+per-query memory measurement.
+
+## Native HIG diagnostic classification
+
+[Diagnostic #27](https://github.com/dfakkeldy/burly/pull/27) closed without
+integration. First attempts failed at simulator discovery before app tests.
+The next Hevy attempt failed a pre-scroll harness existence assertion.
+The corrected [run 41029041077](https://github.com/dfakkeldy/burly/actions/runs/41029041077)
+reached phone 20/21. Largest-category proof and Stats' legend-viewport native
+Dynamic Type/text-clipping audit passed. Manual top captures still exposed
+#30. Hevy confirmation was reachable; its pre-audit image exposed #34.
+
+The native Dynamic Type failure's element attachment is the system Cancel
+toolbar control, with a generic SwiftUI.AccessibilityNode description. It
+is not counted as another app defect and no app workaround is adopted for
+it. A separate local text-clipping audit produced an unassigned node and
+an empty-list capture; that remains unresolved diagnostic evidence rather
+than a proven additional app defect. The shipped-test candidate checks the
+scoped max-size confirmation workflow and retains its rendered capture;
+it does not claim that a whole-viewport audit passed. The diagnostic's
+temporary 900s discovery window and diagnostic-only tests never integrate.
+
+A final bounded local diagnostic on unchanged app `e5b858e` captured Volume,
+Muscle split and Consistency at the largest category. Whole-chart viewport
+checks passed (197.836s); manual review nevertheless established #37/#38.
+The synthetic [volume](assets/2026-10-30/weekly-volume-largest-text.png),
+[consistency](assets/2026-10-30/consistency-largest-text.png) and
+[muscle-split](assets/2026-10-30/muscle-split-largest-text.png) captures are
+retained here. No product head was changed by that diagnostic. The two late
+findings remain separately scoped follow-ups with reproduction and next work.
 
 Apple references: [Charts](https://developer.apple.com/design/human-interface-guidelines/charts),
 [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility),
-[Layout](https://developer.apple.com/design/human-interface-guidelines/layout).
+[native audits](https://developer.apple.com/documentation/accessibility/performing-accessibility-audits-for-your-app).
 
-## Verification log
+## Time, stop and follow-up
 
-| Check | Result |
-| --- | --- |
-| Repository state / current ownership | Clean main isolated into an audit worktree; active HealthKit, sync and simulator-discovery changes left with their owners |
-| `git diff --check` after edits | Passed |
-| Local package test attempts through the shared build-slot wrapper | Deferred (exit 75): first memory/swap admission, later another build holding the slot; tests did not run |
-| Hosted package run [40995968096](https://github.com/dfakkeldy/burly/actions/runs/40995968096), head `677d5cd` | Passed: 826 tests in 83 suites, plus 2 migration-spike tests in a separate process |
-| Hosted checks [40996708680](https://github.com/dfakkeldy/burly/actions/runs/40996708680) / [40996703036](https://github.com/dfakkeldy/burly/actions/runs/40996703036), head `a453627` | Both package jobs passed; canonical simulator gate passed phone 17/17 and watch 27/27 at 01:14 ADT |
-| Final first-batch repairs | Verified at `a548cf5`: archive/history/picker, first-save error and retry, legend accessibility and Stats navigation all passed the phone suite; rendered artifacts reviewed |
-| Head `c1eed8f`, [41004967994](https://github.com/dfakkeldy/burly/actions/runs/41004967994) | Package passed; phone 16/19 passed, watch not reached. Failures were the new archive test trying Done inside active system search, the save alert hosted on the inactive parent, and custom chart-legend identifiers hidden by Charts. Repairs preserve all feature assertions and run on the same PR |
-| First delivery | [PR #20](https://github.com/dfakkeldy/burly/pull/20) merged as `7149531`; tested head `a548cf5` passed package 826 + migration 2, phone 19/19 and watch 27/27 in [41010129851](https://github.com/dfakkeldy/burly/actions/runs/41010129851) |
-| Main before this audit | Package job passed; simulator job failed in [40981119642](https://github.com/dfakkeldy/burly/actions/runs/40981119642). Existing simulator-discovery PR #16 also has a failed simulator gate |
-| Existing PR #16, [40985962460 attempt 1](https://github.com/dfakkeldy/burly/actions/runs/40985962460/attempts/1) | Phone 16/16 passed; watch 26/27 passed, failing `testLateActiveSessionRaceReachesSessionConflictViewAndDiscardResolvesIt` at its conflict-heading assertion. Attempt 2 is running under the existing owner; no test bypass or takeover |
+The night window ended at08:00 ADT on October30. The60-minute active quiet
+period was not reached. Implementation, builds, CI/service waits and report
+preparation were separated from active searching; overlapping hosted runs
+were not added together as search time. Earlier checkpoints retain their
+approximate search counters rather than an invented cumulative total.
 
-At 00:43 ADT the archive-name defect reset the quiet-search counter.
-Approximately two active search minutes followed before this checkpoint;
-implementation and CI inspection are excluded. The local save-failure test
-and archive fix are committed and held until the already-running simulator
-gate produces evidence, avoiding cancellation of that run mid-suite.
+Examples:06:16–06:30 was about14 verification/CI minutes with zero quiet
+search minutes. Around3 visual/source minutes found #34 at06:51. The final
+architecture pass added about2 quiet-search minutes; lower-chart visual
+findings at07:26 reset the timer again. That bounded native capture test
+took3.30 test minutes, excluding compilation/admission. Subsequent work was
+verification and reporting, with no new searching or implementation after
+the cutoff. Morning wrap-up deleted the heartbeat and merged only the
+already-verified green #29/#35 heads; #31 stayed draft/red.
 
-The store's all-time single-exercise query still fetches all SetRecords and
-filters by exercise in Swift, as its implementation and existing gated
-50k-row benchmark document. The older integration helper's description of
-that query as SQL-pushed-down is stale. A fresh measurement and possible
-exercise-inverse relationship traversal are follow-up audit work; no
-latency, memory or improvement figure is inferred from the source alone.
-
-## Performance baseline, hosted Xcode 26.6 Debug
-
-The existing benchmarks ran on main `829fe5d` via diagnostic `fe4188c`
-([run 41001270610](https://github.com/dfakkeldy/burly/actions/runs/41001270610)).
-Only their two existing enable flags changed; no app or pipeline code did.
-The fixture held 3,600 sessions, 50,351 sets and 12 exercises.
-
-| Operation | Output | Wall time |
-| --- | --- | --- |
-| All-exercise trailing 90-day sets | 1,173 slices | 0.2349 s |
-| One-exercise all-time sets | 4,306 slices | 8.2453 s |
-| All logged session dates | 3,600 dates | 0.2617 s |
-| Latest-performance digest | 12 exercise entries | 6.1419 s |
-
-Both existing large-fixture seeds took about 157 s. Process high-water RSS
-was 1,130.0 MB after the first seed and 2,330.8 MB after the second seed and
-surrounding suite. These peaks include test/seeding allocations, are not
-per-query measurements, and do not establish shipping-app or device memory.
-The diagnostic suite passed 822 tests plus two separate migration tests;
-its benchmark threshold warnings are signals, not CI failures.
-
-The inverse-query candidate returned the same 4,306 slices in **1.6870 s**
-([41004588146](https://github.com/dfakkeldy/burly/actions/runs/41004588146)),
-versus the 8.2453 s baseline across separate hosted runs. Cold-reopen,
-archive and active-session cases passed. A clean delivery branch, with
-normal environment-gated benchmarks and an additional primed-cache merge
-regression, passed 824 tests plus two migration tests in
-[41007055072](https://github.com/dfakkeldy/burly/actions/runs/41007055072).
-This delivery patch adopts the measured inverse traversal. Its ordinary benchmarks retain their environment gates. Live delivery/merge status is linked from #23; no device speedup or per-query memory reduction is inferred from the hosted runs.
-
-Digest phase profiling
-([41006812710](https://github.com/dfakkeldy/burly/actions/runs/41006812710))
-measured 8.4439 s end-to-end, 8.4568 s for a separate fresh-context fetch,
-and 0.0690 s for pure derivation of the same 12 entries. The fetch dominates;
-a smaller supported persistence projection is the remaining #24 work.
-
-## Rendered review checkpoint
-
-The successful `a453627` simulator artifact was downloaded and inspected.
-`BurlyPhone-statsPounds` exposed #25 and the missing Stats heading;
-`BurlyPhone-consistencyDates` exposed status-bar overlap. Its accessibility
-test nevertheless passed: correct labels and passing numeric assertions
-did not establish that the plotted paths or navigation chrome were correct.
-The next UI run includes a dedicated `BurlyPhone-progressionSeries` capture.
-
-The subsequent `c1eed8f` capture confirms both trends and the Stats heading
-now render correctly. Its custom legend was visible but its identifiers
-were not exposed in Charts' synthesized accessibility representation. The
-legend is now ordinary SwiftUI content with primary-color text and an
-adaptive horizontal/vertical layout. The failed archive-test hierarchy
-also showed iOS 26's active search overlay (native `close` action), so the
-test now exits search before using the catalog toolbar's Done action.
-
-Default watch logging/summary captures were also inspected. Their text and
-controls use the expected hierarchy, but Log set is below the initial
-logging viewport and summary actions require scrolling. The active watch
-session work is kept separate; this is a usability observation, not a
-claim of a failed button or observed physical-device ergonomics. These
-captures show pounds; watch unit synchronization remains the separate
-integration task rather than a new duplicate audit ticket.
-
-Only synthetic fixture data is used. Physical-device testing and Instruments
-traces have not been observed. Later checkpoints must report local tests,
-hosted CI, PR readiness and merges separately.
-
-## Verified first delivery
-
-Head `a548cf5` passed both package jobs and canonical simulator acceptance
-([41010129851](https://github.com/dfakkeldy/burly/actions/runs/41010129851)):
-826 package tests, two migration tests, phone 19/19 and watch 27/27.
-The injected first-save failure/retry and archive-to-history/picker flows
-passed. Its fresh progression capture shows separate trends, readable
-legend labels and the Stats heading. PR #20 merged as `7149531`.
-
-The largest-text Stats/Hevy check is a separate draft diagnostic
-[PR #27](https://github.com/dfakkeldy/burly/pull/27), with test-only changes
-and native Dynamic Type/text-clipping audits. It is not for integration;
-no result or broad HIG compliance is claimed until its evidence is read.
+Four findings remain: #30's draft progression-layout fix needs a completely
+green acceptance gate; #24 needs the supported narrow digest projection;
+#37 needs adaptive lower weekly axes; #38 needs one adaptive muscle legend.
+Each has concrete reproduction/evidence and next work. Unknown native-audit
+flags and retained feature work are kept distinct from these proven defects.
