@@ -96,14 +96,19 @@ final class HealthKitUITests: XCTestCase {
     /// On watchOS it opens as a "Health Access" card whose only button is
     /// Review, then one page per access kind (Write Access, Read Access): an
     /// "All Requested Data Below" switch, a switch per type, and a Next cell
-    /// at the bottom. Next is only in the accessibility tree once scrolled
-    /// into view, so "is the sheet up" is judged by any of its elements, not
-    /// by Next. Allow turns every visible switch on; decline leaves them all
-    /// off and steps through, which is what a person declining does.
+    /// at the bottom; granting read access adds a history page (past 30 days
+    /// or full history) whose Done keeps the default. Next is only in the
+    /// accessibility tree once scrolled into view, so "is the sheet up" is
+    /// judged by any of its elements, not by Next. Allow turns every visible
+    /// switch on; decline leaves them all off and steps through, which is
+    /// what a person declining does.
     private func answerHealthPrompt(_ app: XCUIApplication, allow: Bool) {
         let carousel = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
         let review = carousel.buttons["Review"]
-        let next = carousel.cells["UIA.Health.WatchAuthSheet.ConfigureCell.Button"]
+        // Next/Continue on the access pages, Done on the read-history page.
+        let next = carousel.cells.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'UIA.Health.WatchAuthSheet' AND identifier ENDSWITH '.Button'"
+        )).firstMatch
         let accessPage = carousel.navigationBars
             .matching(NSPredicate(format: "identifier IN %@", ["Write Access", "Read Access"])).firstMatch
         let sheetElement = carousel.descendants(matching: .any)
