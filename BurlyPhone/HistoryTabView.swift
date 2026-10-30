@@ -53,6 +53,8 @@ struct HistoryTabView: View {
                 // load) haven't landed yet.
                 ProgressView()
             } else {
+                // Share this whole-history projection across every lazy row.
+                let recordSessionIDs = prSessionIDs
                 List {
                     if let placeholder = viewModel.namingQueue.first {
                         NavigationLink {
@@ -68,7 +70,7 @@ struct HistoryTabView: View {
                                 NavigationLink {
                                     HistorySessionDetailView(viewModel: viewModel, session: session)
                                 } label: {
-                                    HistorySessionRow(session: session, hasPersonalRecord: prSessionIDs.contains(session.id))
+                                    HistorySessionRow(session: session, hasPersonalRecord: recordSessionIDs.contains(session.id))
                                 }
                                 .accessibilityIdentifier("historyTab.sessionRow.\(session.id.uuidString)")
                             }
