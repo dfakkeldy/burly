@@ -18,12 +18,12 @@ established at this checkpoint.
 | #18: History repeats whole-history work per row | Lazy row closure evaluates the computed `prSessionIDs` for every session | Capture the badge set once before building the list | Source confirms one projection per content evaluation; no measured speedup claimed |
 | #18: badges omit estimated-1RM records and disagree on timestamp ties | Old badge loop compares only weight and sorts only by date | Reuse the core progression rules across exercises | New estimate-only, mixed-exercise, warmup/unattributed and equal-time regressions passed in hosted package CI |
 | #19: consistency days do not announce dates | Every dot's accessibility label is only a workout status | Date label plus status value on each day | 28 distinct date labels and both status values passed the accessibility-tree regression at `a453627` |
-| #21: a failed set save discards the editor draft | The parent catches a write error, then the editor unconditionally dismisses | Return save success and dismiss only on success | Synthetic first-write rejection and retry UI coverage added; runtime result pending |
+| #21: a failed set save discards the editor draft | The parent catches a write error, then the editor unconditionally dismisses | Throw save failures to the active editor, which owns its alert and dismisses only on success | First injected-write test exposed that the retained editor could not present its parent's alert; repaired on the same branch, retry verification pending |
 | #22: archiving an exercise hides its historical name | History loads only active exercise metadata; detail resolves names from that array | Include archived metadata in History; exclude it from selection and naming work | Catalog archive → History name/sets/revision → Add Exercise exclusion regression added; runtime result pending |
 | #23: all-time progression query costs 8.2453 s at 50k sets | Existing hosted scale benchmark; all SetRecords fetched before exercise filtering | Bounded inverse traversal being measured separately | Baseline reproduced; candidate not yet adopted |
 | #24: digest costs 6.1419 s at 50k sets | Existing hosted benchmark exceeds its 3 s signal threshold | Separate performance follow-up | Baseline reproduced; no fix or device timing claimed |
-| #25: progression renders one blue zigzag instead of two trends | Successful simulator's `BurlyPhone-statsPounds` screenshot shows connections between top set and e1RM within each session | Explicit series identities and categorical colors for both trends and PRs | Fix and legend assertions pushed; fresh rendered screenshot pending |
-| #26: Stats has no navigation title and content overlaps status time when scrolled | `BurlyPhone-statsPounds` and `BurlyPhone-consistencyDates` screenshots; Stats alone lacks a NavigationStack | Restore a tab-owned navigation host | Navigation-bar regression and fresh screenshots pending |
+| #25: progression renders one blue zigzag instead of two trends | Successful simulator's `BurlyPhone-statsPounds` screenshot shows connections between top set and e1RM within each session | Explicit series identities and categorical colors for both trends and PRs | `c1eed8f` screenshot confirms independent blue/orange paths and visible legend. Legend moved outside Charts' synthesized accessibility tree; new tree assertions pending |
+| #26: Stats has no navigation title and content overlaps status time when scrolled | `BurlyPhone-statsPounds` and `BurlyPhone-consistencyDates` screenshots; Stats alone lacks a NavigationStack | Restore a tab-owned navigation host | `c1eed8f` navigation assertion and rendered Stats heading verified; the whole suite remains red for separate repairs below |
 
 ## Coverage checkpoint
 
@@ -50,6 +50,7 @@ Apple references: [Charts](https://developer.apple.com/design/human-interface-gu
 | Hosted package run [40995968096](https://github.com/dfakkeldy/burly/actions/runs/40995968096), head `677d5cd` | Passed: 826 tests in 83 suites, plus 2 migration-spike tests in a separate process |
 | Hosted checks [40996708680](https://github.com/dfakkeldy/burly/actions/runs/40996708680) / [40996703036](https://github.com/dfakkeldy/burly/actions/runs/40996703036), head `a453627` | Both package jobs passed; canonical simulator gate passed phone 17/17 and watch 27/27 at 01:14 ADT |
 | Later archive fix and first-save-failure regression | Prepared commits now being pushed for their own package/simulator verification; the earlier green head does not verify these additions |
+| Head `c1eed8f`, [41004967994](https://github.com/dfakkeldy/burly/actions/runs/41004967994) | Package passed; phone 16/19 passed, watch not reached. Failures were the new archive test trying Done inside active system search, the save alert hosted on the inactive parent, and custom chart-legend identifiers hidden by Charts. Repairs preserve all feature assertions and run on the same PR |
 | Delivery checkpoint | [PR #20](https://github.com/dfakkeldy/burly/pull/20) is draft; no merge or auto-merge is enabled while verification is outstanding |
 | Main before this audit | Package job passed; simulator job failed in [40981119642](https://github.com/dfakkeldy/burly/actions/runs/40981119642). Existing simulator-discovery PR #16 also has a failed simulator gate |
 | Existing PR #16, [40985962460 attempt 1](https://github.com/dfakkeldy/burly/actions/runs/40985962460/attempts/1) | Phone 16/16 passed; watch 26/27 passed, failing `testLateActiveSessionRaceReachesSessionConflictViewAndDiscardResolvesIt` at its conflict-heading assertion. Attempt 2 is running under the existing owner; no test bypass or takeover |
@@ -88,6 +89,21 @@ per-query measurements, and do not establish shipping-app or device memory.
 The diagnostic suite passed 822 tests plus two separate migration tests;
 its benchmark threshold warnings are signals, not CI failures.
 
+The inverse-query candidate returned the same 4,306 slices in **1.6870 s**
+([41004588146](https://github.com/dfakkeldy/burly/actions/runs/41004588146)),
+versus the 8.2453 s baseline across separate hosted runs. Cold-reopen,
+archive and active-session cases passed. A clean delivery branch, with
+normal environment-gated benchmarks and an additional primed-cache merge
+regression, passed 824 tests plus two migration tests in
+[41007055072](https://github.com/dfakkeldy/burly/actions/runs/41007055072).
+That patch is prepared separately; no performance merge is claimed here.
+
+Digest phase profiling
+([41006812710](https://github.com/dfakkeldy/burly/actions/runs/41006812710))
+measured 8.4439 s end-to-end, 8.4568 s for a separate fresh-context fetch,
+and 0.0690 s for pure derivation of the same 12 entries. The fetch dominates;
+a smaller supported persistence projection is the remaining #24 work.
+
 ## Rendered review checkpoint
 
 The successful `a453627` simulator artifact was downloaded and inspected.
@@ -96,6 +112,14 @@ The successful `a453627` simulator artifact was downloaded and inspected.
 test nevertheless passed: correct labels and passing numeric assertions
 did not establish that the plotted paths or navigation chrome were correct.
 The next UI run includes a dedicated `BurlyPhone-progressionSeries` capture.
+
+The subsequent `c1eed8f` capture confirms both trends and the Stats heading
+now render correctly. Its custom legend was visible but its identifiers
+were not exposed in Charts' synthesized accessibility representation. The
+legend is now ordinary SwiftUI content with primary-color text and an
+adaptive horizontal/vertical layout. The failed archive-test hierarchy
+also showed iOS 26's active search overlay (native `close` action), so the
+test now exits search before using the catalog toolbar's Done action.
 
 Default watch logging/summary captures were also inspected. Their text and
 controls use the expected hierarchy, but Log set is below the initial

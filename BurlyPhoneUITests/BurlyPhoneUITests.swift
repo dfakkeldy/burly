@@ -267,9 +267,9 @@ final class BurlyPhoneUITests: XCTestCase {
                 "Expected populated scenario to render \(chartIdentifier)"
             )
         }
+        attachScreenshot(from: app, name: "BurlyPhone-progressionSeries")
         XCTAssertTrue(anyElement(app, identifier: "statsTab.progression.legend.topSet").exists)
         XCTAssertTrue(anyElement(app, identifier: "statsTab.progression.legend.estimate").exists)
-        attachScreenshot(from: app, name: "BurlyPhone-progressionSeries")
 
         // Routines shows the seeded routines, each keyed by its id.
         app.tabBars.buttons["Routines"].tap()
