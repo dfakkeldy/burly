@@ -52,6 +52,42 @@ final class BurlyPhoneUITests: XCTestCase {
     private static let addableExerciseID = "6F4E2C1A-0000-4000-8000-00000000000A"
     private static let healthKitWorkoutID = "6F4E2C1A-0000-4000-8000-00000000000B"
 
+    @MainActor
+    func testStatsRefreshesOnForegroundAndPreservesRange() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchEnvironment["BURLY_PHONE_UI_TEST_BACKGROUND_HISTORY"] = "1"
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+        app.tabBars.buttons["Stats"].tap()
+        let range = app.buttons["6M"]
+        XCTAssertTrue(range.waitForExistence(timeout: 10))
+        range.tap()
+        let summary = anyElement(app, identifier: "statsTab.consistency.summary")
+        for _ in 0..<10 {
+            if summary.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(summary.label.hasPrefix("This week: 1"))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        let refreshed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@", "This week: 2"), object: summary
+        )], timeout: 15)
+        let observed = summary.label
+        attachScreenshot(from: app, name: "BurlyPhone-statsAfterForeground")
+        for _ in 0..<10 {
+            if range.isHittable { break }
+            app.swipeDown()
+        }
+        XCTAssertTrue(range.isSelected, "Foregrounding must retain the selected range")
+        // Independently establish the writer ran before judging freshness.
+        app.tabBars.buttons["History"].tap()
+        XCTAssertTrue(anyElement(app, identifier: "historyTab.sessionRow.6F4E2C1A-0000-4000-8000-00000000000C")
+            .waitForExistence(timeout: 10), "Expected the synthetic background write in the real store")
+        XCTAssertEqual(refreshed, .completed, "Stats stayed stale after foregrounding: \(observed)")
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
