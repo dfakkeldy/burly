@@ -30,7 +30,7 @@ import BurlyFixtures
 @testable import BurlyPersistence
 
 let statsBenchmarkIsEnabled =
-    ProcessInfo.processInfo.environment["BURLY_RUN_STATS_BENCHMARK"] == "1"
+    true // Diagnostic branch only: measure existing benchmarks in hosted CI.
 
 @MainActor
 @Suite(

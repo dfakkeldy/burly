@@ -32,7 +32,7 @@ import BurlyFixtures
 @testable import BurlyPhoneSync
 
 let digestBenchmarkIsEnabled =
-    ProcessInfo.processInfo.environment["BURLY_RUN_DIGEST_BENCHMARK"] == "1"
+    true // Diagnostic branch only: measure existing benchmarks in hosted CI.
 
 /// The review's own named thresholds — crossing either is not a hard test
 /// failure (a benchmark that fails the build on a slow CI runner is the
