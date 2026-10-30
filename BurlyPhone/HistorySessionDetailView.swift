@@ -128,7 +128,7 @@ struct HistorySessionDetailView: View {
             }
         }
         .sheet(isPresented: $pickerPresented) {
-            ExercisePicker(exercises: viewModel.historyExercises) { exercise in
+            ExercisePicker(exercises: viewModel.historyExercises.filter { $0.archivedAt == nil }) { exercise in
                 mutate { value in
                     value.items.append(SessionItemData(exerciseID: exercise.id, order: value.items.count))
                 }
@@ -307,7 +307,7 @@ struct NamingQueueView: View {
                 .accessibilityIdentifier("namingQueue.saveName")
             }
             Section("Or merge into") {
-                ForEach(viewModel.historyExercises.filter { $0.id != placeholder.id }) { exercise in
+                ForEach(viewModel.historyExercises.filter { $0.id != placeholder.id && $0.archivedAt == nil }) { exercise in
                     Button(exercise.name) {
                         do { try viewModel.mergePlaceholder(placeholder, into: exercise) }
                         catch { errorMessage = String(describing: error) }

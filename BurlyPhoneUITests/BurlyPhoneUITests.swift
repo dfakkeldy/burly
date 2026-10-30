@@ -563,6 +563,45 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-historySaveRetry")
     }
 
+    @MainActor
+    func testArchivedExerciseKeepsItsHistoryNameButLeavesAddPicker() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        app.tabBars.buttons["Routines"].tap()
+        app.buttons["routinesTab.catalogButton"].tap()
+        let search = app.searchFields["Search exercises"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Back Squat")
+        let archive = app.buttons["catalog.archiveExercise.\(Self.backSquatExerciseID)"]
+        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        archive.tap()
+        let confirm = app.sheets["Archive Back Squat?"]
+            .buttons.matching(identifier: "catalog.confirmArchiveButton").firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(app.staticTexts["catalog.exerciseName.\(Self.backSquatExerciseID)"].waitForNonExistence(timeout: 5))
+        app.buttons["catalog.doneButton"].tap()
+
+        app.tabBars.buttons["History"].tap()
+        let sessionRow = anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)")
+        XCTAssertTrue(sessionRow.waitForExistence(timeout: 10))
+        sessionRow.tap()
+        let name = app.staticTexts["historyDetail.exercise.\(Self.backSquatExerciseID)"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertEqual(name.label, "Back Squat", "Archive must preserve historical exercise names")
+        assertRevision(1, in: app)
+        XCTAssertTrue(anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").exists)
+
+        app.buttons["historyDetail.addExercise"].tap()
+        XCTAssertTrue(app.buttons["historyDetail.exercisePicker.\(Self.benchPressExerciseID)"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["historyDetail.exercisePicker.\(Self.backSquatExerciseID)"].exists)
+        attachScreenshot(from: app, name: "BurlyPhone-archivedExerciseHistory")
+    }
+
     /// Spec §7 acceptance #3, empty side: each independently meaningful
     /// chart has a genuine empty state on a deterministic empty history.
     /// This catches both crashes during chart construction and a misleading
