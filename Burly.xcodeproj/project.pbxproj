@@ -72,7 +72,6 @@
 		CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */; };
 		D8E90E4D6277CB5652B0A304 /* ResumeSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */; };
 		921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */; };
-		F1D73D3CCA9AA52605D5B9ED /* PairedSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B78FFA507F13E69F116CEAEF /* PairedSyncUITests.swift */; };
 		94A77A6BFFAF15718B081B35 /* UnreadableSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */; };
 		EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */; };
 		B4E29C6C90479A29C93AE4FF /* HevyImportEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */; };
@@ -189,7 +188,6 @@
 		8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SaveFailureUITests.swift; sourceTree = "<group>"; };
 		7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeSessionView.swift; sourceTree = "<group>"; };
 		18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeUITests.swift; sourceTree = "<group>"; };
-		B78FFA507F13E69F116CEAEF /* PairedSyncUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairedSyncUITests.swift; sourceTree = "<group>"; };
 		F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UnreadableSessionView.swift; sourceTree = "<group>"; };
 		0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRecoveryUITests.swift; sourceTree = "<group>"; };
 		B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportEntry.swift; sourceTree = "<group>"; };
@@ -284,7 +282,6 @@
 				8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */,
 				8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */,
 				18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */,
-				B78FFA507F13E69F116CEAEF /* PairedSyncUITests.swift */,
 				0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */,
 			);
 			name = BurlyWatchUITests;
@@ -611,7 +608,6 @@
 				20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */,
 				CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */,
 				921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */,
-				F1D73D3CCA9AA52605D5B9ED /* PairedSyncUITests.swift in Sources */,
 				EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

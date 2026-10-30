@@ -67,7 +67,13 @@ Choices worth knowing before changing this:
   leaves data in both on-device stores, and Watch Connectivity between
   simulators is slower and less predictable than the standalone suites, so
   folding it in would make the CI gate flaky. It takes the same simulator lock,
-  and its UI tests skip unless `BURLY_PAIRED_SYNC_UI_TESTS=1`.
+  and its UI test skips unless `BURLY_PAIRED_SYNC_UI_TESTS=1`. It proves the
+  phone half only: a routine built on the real store, its snapshot handed to
+  Watch Connectivity, and the phone's digest applied on the watch. Simulator
+  never delivers a Watch Connectivity file to the receiving app, so the
+  snapshot cannot reach the watch UI between simulators; the full round trip
+  needs paired devices, or a simulator-only snapshot carrier that would be a
+  §5 design change of its own.
 
 This closes the 2026-10-29 follow-up below (watch unit and rest default) and
 the app-wiring half of planning task m4-06. The paired-simulator run is

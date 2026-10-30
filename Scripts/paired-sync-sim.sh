@@ -2,15 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Scripts/paired-sync-sim.sh
 #
-# m4-06 paired-simulator sync acceptance: the real phone and watch apps on
-# the PAIRED "Burly iPhone" / "Burly Watch S11 46mm" simulators, talking
-# over WatchConnectivity on their on-device stores.
+# m4-06 paired-simulator sync check: the real phone and watch apps on the
+# PAIRED "Burly iPhone" / "Burly Watch S11 46mm" simulators, talking over
+# WatchConnectivity on their on-device stores.
 #
-#   1. Phone: build a routine (BurlyPhoneUITests/PairedSyncUITests).
-#   2. Watch: wait for it, log a set, finish (BurlyWatchUITests/PairedSyncUITests).
-#   3. Phone: wait for that session in History.
+#   1. Phone: build a routine (BurlyPhoneUITests/PairedSyncUITests); sync
+#      hands the snapshot to WatchConnectivity and publishes a digest.
+#   2. Watch: wait for its sync log to show the phone's digest applied.
 #
-# Both apps' sync logs (subsystem com.burly.lifting) and the tests'
+# That is as far as simulators go: Simulator never delivers a
+# WatchConnectivity file to the receiving app (Apple documents that file
+# transfers need paired devices), so the snapshot, and with it the routine,
+# cannot reach the watch UI here. The in-process half of the round trip is
+# BurlyKit's SyncHostLoopbackTests.
+#
+# Both apps' sync logs (subsystem com.burly.lifting) and the phone test's
 # screenshots land in Scripts/output/paired/<UTC-timestamp>/.
 #
 # Not part of acceptance-sim.sh: it needs the pair, it leaves data in both
@@ -85,15 +91,12 @@ export TEST_RUNNER_BURLY_PAIRED_SYNC_UI_TESTS=1
 export TEST_RUNNER_BURLY_PAIRED_ROUTINE="$ROUTINE"
 
 phone_dest="platform=iOS Simulator,id=$PHONE"
-watch_dest="platform=watchOS Simulator,id=$WATCH"
 
 xcodebuild build-for-testing "${XCB_FLAGS[@]}" -scheme BurlyPhone -destination "$phone_dest" \
   > "$RUN_DIR/build-phone.log" 2>&1 || fail "BurlyPhone build-for-testing failed (see $RUN_DIR/build-phone.log)"
-xcodebuild build-for-testing "${XCB_FLAGS[@]}" -scheme BurlyWatch -destination "$watch_dest" \
-  > "$RUN_DIR/build-watch.log" 2>&1 || fail "BurlyWatch build-for-testing failed (see $RUN_DIR/build-watch.log)"
 
-# Installed before the phone runs, so its launch push finds the watch app
-# installed and transfers the routine straight away.
+# BurlyPhone's build embeds BurlyWatch. Install it before the phone runs, so
+# the phone's launch push finds the watch app installed.
 xcrun simctl install "$WATCH" "$DERIVED_DATA/Build/Products/Debug-watchsimulator/BurlyWatch.app" \
   || fail "could not install BurlyWatch on $WATCH"
 
@@ -113,13 +116,20 @@ step() {
 }
 
 step 1-phone-routine BurlyPhone "$phone_dest" BurlyPhoneUITests/PairedSyncUITests/testBuildRoutineForWatch
-# The runner terminates each app when its test ends, and a simulator often
-# holds a terminated sender's queued transfer until that app runs again.
-# Relaunch the side that just sent while the other side's test waits; its
-# launch push or outbox retry re-fires on activation anyway.
-xcrun simctl launch "$PHONE" com.burly.lifting -burly-skip-welcome > /dev/null
-step 2-watch-session BurlyWatch "$watch_dest" BurlyWatchUITests/PairedSyncUITests/testPhoneRoutineArrivesAndSessionGoesBack
-xcrun simctl launch "$WATCH" com.burly.lifting.watchkitapp > /dev/null
-step 3-phone-history BurlyPhone "$phone_dest" BurlyPhoneUITests/PairedSyncUITests/testWatchSessionReachesHistory
 
-echo "PASS: '$ROUTINE' went phone -> watch, and its session came back. Output: $RUN_DIR"
+# The runner terminated the phone when its test ended, and a simulator often
+# holds a terminated sender's queued transfers until it runs again, so
+# relaunch it; its launch push and digest re-fire on activation anyway.
+echo "=== 2-watch-digest"
+xcrun simctl launch "$PHONE" com.burly.lifting -burly-skip-welcome > /dev/null
+xcrun simctl launch "$WATCH" com.burly.lifting.watchkitapp > /dev/null
+for _ in $(seq 1 45); do
+  grep -q "applied digest" "$RUN_DIR/watch-sync.log" && break
+  sleep 2
+done
+grep -q "applied digest" "$RUN_DIR/watch-sync.log" \
+  || fail "the watch never applied the phone's digest (see $RUN_DIR/watch-sync.log)"
+grep -q "snapshot v[0-9]* g[0-9]* finished, success true" "$RUN_DIR/phone-sync.log" \
+  || fail "the phone never handed a snapshot to WatchConnectivity (see $RUN_DIR/phone-sync.log)"
+
+echo "PASS: '$ROUTINE' built on the phone, its snapshot handed to WatchConnectivity, and the phone's digest applied on the watch. Output: $RUN_DIR"
