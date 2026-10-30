@@ -855,10 +855,32 @@ public final class SwiftDataStore: BurlyStore {
         since: Date?,
         through: Date?
     ) throws -> [SetRecordSlice] {
-        try fetchSetSlices(
+        if since == nil && through == nil {
+            return try allTimeSetSlices(exerciseID: exerciseID)
+        }
+        return try fetchSetSlices(
             predicate: Self.setRecordFilterPredicate(since: since, through: through),
             exerciseID: exerciseID
         )
+    }
+
+    /// Exercise identity bounds this traversal without the unsupported
+    /// two-hop relationship predicates or an all-SetRecord fetch.
+    private func allTimeSetSlices(exerciseID: UUID) throws -> [SetRecordSlice] {
+        guard let exercise = try model(Exercise.self, id: exerciseID) else { return [] }
+        var slices: [SetRecordSlice] = []
+        for item in exercise.sessionItems {
+            guard let session = item.session, session.state == .logged else { continue }
+            for record in item.sets {
+                slices.append(SetRecordSlice(
+                    sessionID: session.id,
+                    sessionStartedAt: session.startedAt,
+                    exerciseID: exerciseID,
+                    set: try record.snapshot()
+                ))
+            }
+        }
+        return slices
     }
 
     public func loggedSetSlices(

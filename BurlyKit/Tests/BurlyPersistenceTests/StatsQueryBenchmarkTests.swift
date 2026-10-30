@@ -104,7 +104,7 @@ struct StatsQueryBenchmarkTests {
         let (allTimeSlices, allTimeQueryTime, allTimePeak) = try measure {
             try store.loggedSetSlices(exerciseID: seed.benchExerciseID, since: nil, through: nil)
         }
-        print("[m6-01 stats benchmark] loggedSetSlices(one exercise, all-time, full-history fetch + Swift-side filter): \(allTimeSlices.count) slices in \(String(format: "%.4f", allTimeQueryTime))s, process high-water RSS \(formatBytes(allTimePeak))")
+        print("[m6-01 stats benchmark] loggedSetSlices(one exercise, all-time, inverse exercise traversal): \(allTimeSlices.count) slices in \(String(format: "%.4f", allTimeQueryTime))s, process high-water RSS \(formatBytes(allTimePeak))")
         #expect(allTimeSlices.isEmpty == false)
         #expect(allTimeSlices.allSatisfy { $0.exerciseID == seed.benchExerciseID })
 
