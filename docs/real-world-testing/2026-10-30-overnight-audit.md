@@ -26,7 +26,7 @@ All fixtures are synthetic.
 | [#26](https://github.com/dfakkeldy/burly/issues/26): missing Stats navigation host | Title absent and content under status chrome in rendered artifact | NavigationStack around Stats. Merged #20; title and scroll-edge rendering inspected. |
 | [#30](https://github.com/dfakkeldy/burly/issues/30): largest-text Stats clipping | Selected title clipped; fixed-height axes overlapped or ellipsized | Draft #31: wrapping selector, scaled plot, sparse endpoint dates. Local iOS27 targeted test and full title/date-axis captures passed; hosted gate pending after discovery-only failure. |
 | [#32](https://github.com/dfakkeldy/burly/issues/32): Stats stale after activation | Pre-fix native test independently found new History data while Stats stayed at the old count with 6M retained | Draft #29: refresh only requested, visible Stats using its last request. Fixed-head local and hosted regression passed; full hosted suite pending after retained Settings unit-selection timeout. |
-| [#34](https://github.com/dfakkeldy/burly/issues/34): Hevy action ellipsis | Largest-text pre-audit capture shows “Import 3 Workou…” | Draft #35: full-width wrapping title at accessibility sizes. Repair/native verification pending; no completed fix claimed yet. |
+| [#34](https://github.com/dfakkeldy/burly/issues/34): Hevy action ellipsis | Largest-text pre-audit capture shows “Import 3 Workou…” | Draft #35: full-width wrapping title at accessibility sizes. Local max-size confirmation flow and rendered title passed; hosted full gate pending. |
 
 ## Coverage of the six requested areas
 
@@ -49,9 +49,9 @@ features or physical-device acceptance.
 | --- | --- |
 | [#20](https://github.com/dfakkeldy/burly/pull/20), tested `a548cf5`; [41010129851](https://github.com/dfakkeldy/burly/actions/runs/41010129851) | 826 package + 2 migration tests; phone 19/19; watch 27/27. Fresh title/series/legend, retry/revision and archived-history artifacts reviewed. Merged `7149531`. |
 | [#28](https://github.com/dfakkeldy/burly/pull/28), tested `481ecf3`; [41016575153](https://github.com/dfakkeldy/burly/actions/runs/41016575153) | 828 package + 2 migration tests; phone 19/19; watch 27/27. Merged `e5b858e`. Benchmarks retain normal environment gates. |
-| [#29](https://github.com/dfakkeldy/burly/pull/29), `43b3a94`; [41031247128](https://github.com/dfakkeldy/burly/actions/runs/41031247128) | Package checks passed. New foreground regression passed locally on iOS27 (37.867s) and hosted (45.618s). First full run phone 19/20: retained Settings unit-selection wait failed; watch not reached. One unchanged full-gate retry runs. |
-| [#31](https://github.com/dfakkeldy/burly/pull/31), `8588a22`; [41033532615](https://github.com/dfakkeldy/burly/actions/runs/41033532615) | Package checks passed. Targeted iOS27 regression passed, including date axes above the tab bar; rendered title/axes inspected. Hosted attempt1 stopped before app tests at destination discovery; unchanged retry runs. |
-| [#35](https://github.com/dfakkeldy/burly/pull/35), `4772b2f` | Draft repair. Initial Label title repair remained constrained; an invalid three-line height expectation was replaced with clipping and completed-import checks. Current local/hosted result pending. |
+| [#29](https://github.com/dfakkeldy/burly/pull/29), `43b3a94`; [41031247128](https://github.com/dfakkeldy/burly/actions/runs/41031247128) | Package checks passed. New foreground regression passed locally on iOS27 (37.867s) and hosted (45.618s). First full run phone 19/20: retained Settings unit-selection wait failed; watch not reached. Attempt2 stopped at300s destination discovery before app tests. One final unchanged attempt runs; retained CI/test-hardening scope stays separate. |
+| [#31](https://github.com/dfakkeldy/burly/pull/31), `3bc58ba`; [41033532615](https://github.com/dfakkeldy/burly/actions/runs/41033532615) | Package checks passed. Targeted iOS27 regression passed, including date axes above the tab bar; rendered title/axes inspected. Hosted attempt1 stopped before app tests at destination discovery; unchanged retry runs. |
+| [#35](https://github.com/dfakkeldy/burly/pull/35), `61d3029` | Local iOS27 confirmation flow passed60.370s: complete label/viewport fit, readable capture and three synthetic workouts imported. Hosted full gate pending. Initial constrained Label repair was rejected; no global audit pass claimed. |
 
 Local Apple builds/tests used the shared slot wrapper. Earlier attempts
 were deferred on admission; admitted commands used only a dedicated
@@ -104,8 +104,12 @@ Dynamic Type/text-clipping audit passed. Manual top captures still exposed
 The native Dynamic Type failure's element attachment is the system Cancel
 toolbar control, with a generic SwiftUI.AccessibilityNode description. It
 is not counted as another app defect and no app workaround is adopted for
-it. The diagnostic's temporary 900s discovery window and diagnostic-only
-tests are never for integration.
+it. A separate local text-clipping audit produced an unassigned node and
+an empty-list capture; that remains unresolved diagnostic evidence rather
+than a proven additional app defect. The shipped-test candidate checks the
+scoped max-size confirmation workflow and retains its rendered capture;
+it does not claim that a whole-viewport audit passed. The diagnostic's
+temporary 900s discovery window and diagnostic-only tests never integrate.
 
 Apple references: [Charts](https://developer.apple.com/design/human-interface-guidelines/charts),
 [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility),
