@@ -22,8 +22,9 @@ struct StatsTabView: View {
     @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
 
     var body: some View {
-        content
-            .navigationTitle("Stats")
+        NavigationStack {
+            content.navigationTitle("Stats")
+        }
             .task { reloadStats() }
             .onChange(of: progressionRange) { _, _ in reloadStats() }
             .onChange(of: volumeRange) { _, _ in reloadStats() }
@@ -102,16 +103,18 @@ struct StatsTabView: View {
                         ForEach(stats.progression.points, id: \.sessionID) { point in
                             LineMark(
                                 x: .value("Session", point.date),
-                                y: .value(seriesLabel("Top set"), unit.displayValue(of: point.topWeight))
+                                y: .value(seriesLabel("Top set"), unit.displayValue(of: point.topWeight)),
+                                series: .value("Series", "Top set")
                             )
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(by: .value("Series", "Top set"))
                             .symbol(.circle)
 
                             LineMark(
                                 x: .value("Session", point.date),
-                                y: .value(seriesLabel("Estimated 1RM"), unit.displayValue(fromKilograms: point.estimatedOneRepMax))
+                                y: .value(seriesLabel("Estimated 1RM"), unit.displayValue(fromKilograms: point.estimatedOneRepMax)),
+                                series: .value("Series", "Estimated 1RM")
                             )
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(by: .value("Series", "Estimated 1RM"))
                             .symbol(.diamond)
                         }
 
@@ -121,21 +124,21 @@ struct StatsTabView: View {
                                 y: .value(seriesLabel("Personal record"), unit.displayValue(fromKilograms: record.value))
                             )
                             .symbol(record.kind == .topWeight ? .triangle : .square)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(by: .value("Series", "Personal record"))
                         }
                     }
+                    .chartForegroundStyleScale([
+                        "Top set": Color.blue,
+                        "Estimated 1RM": Color.orange,
+                        "Personal record": Color.red
+                    ])
                     .chartYAxisLabel(unit.symbol)
-                    .chartLegend(position: .bottom, alignment: .leading) {
-                        HStack(spacing: 16) {
-                            Label("Top set", systemImage: "circle.fill").foregroundStyle(.blue)
-                            Label("Estimated 1RM", systemImage: "diamond.fill").foregroundStyle(.orange)
-                            Label("Personal record", systemImage: "triangle.fill").foregroundStyle(.red)
-                        }
-                        .font(.caption)
-                    }
+                    .chartLegend(.hidden)
                     .frame(height: 220)
                     .accessibilityIdentifier("statsTab.progression.chart")
                     .accessibilityLabel("Exercise progression chart for \(exercise.name)")
+
+                    progressionLegend
 
                     // A findable, VoiceOver-readable statement of the
                     // chart's headline numbers in the display unit. Worded
@@ -155,6 +158,33 @@ struct StatsTabView: View {
                 )
             }
         }
+    }
+
+    /// Keep legend text in the ordinary accessibility tree, outside the
+    /// chart's synthesized data representation. Narrow/large-text layouts
+    /// can use a vertical legend without squeezing the plot itself.
+    private var progressionLegend: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) { progressionLegendItems }
+            VStack(alignment: .leading, spacing: 6) { progressionLegendItems }
+        }
+        .font(.caption)
+    }
+
+    @ViewBuilder
+    private var progressionLegendItems: some View {
+        legendLabel("Top set", symbol: "circle.fill", color: .blue, id: "topSet")
+        legendLabel("Estimated 1RM", symbol: "diamond.fill", color: .orange, id: "estimate")
+        legendLabel("Personal record", symbol: "triangle.fill", color: .red, id: "record")
+    }
+
+    private func legendLabel(_ title: String, symbol: String, color: Color, id: String) -> some View {
+        Label {
+            Text(title).foregroundStyle(.primary)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(color)
+        }
+        .accessibilityIdentifier("statsTab.progression.legend.\(id)")
     }
 
     private func volumeCard(_ stats: PhoneStatsDashboard) -> some View {
@@ -271,7 +301,9 @@ struct StatsTabView: View {
                         Circle()
                             .fill(day.hasSession ? Color.indigo : Color.secondary.opacity(0.18))
                             .frame(width: 12, height: 12)
-                            .accessibilityLabel(day.hasSession ? "Workout logged" : "No workout")
+                            .accessibilityLabel(day.date.formatted(date: .complete, time: .omitted))
+                            .accessibilityValue(day.hasSession ? "Workout logged" : "No workout")
+                            .accessibilityIdentifier("statsTab.consistency.day.\(day.date.timeIntervalSince1970)")
                     }
                 }
                 .accessibilityElement(children: .contain)

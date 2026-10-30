@@ -47,6 +47,48 @@ struct ExerciseProgressionStatsTests {
         #expect(abs(e1rm - 116.666_666_67) < 0.000_01)
     }
 
+    @Test("history badges include an estimate-only record at an unchanged weight")
+    func recordSessionIDsIncludeEstimateOnlyImprovement() {
+        let slices = [
+            Self.slice(session: Self.sessionA, date: Self.day0, weightKg: 100, reps: 5),
+            Self.slice(session: Self.sessionB, date: Self.day1, weightKg: 100, reps: 10),
+            Self.slice(session: Self.sessionC, date: Self.day2, weightKg: 100, reps: 8)
+        ]
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: slices) == [Self.sessionA, Self.sessionB])
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: Array(slices.reversed())) == [Self.sessionA, Self.sessionB])
+    }
+
+    @Test("history badges separate exercises and ignore warmups and unattributed work")
+    func recordSessionIDsUseExerciseIdentity() {
+        let otherExercise = UUID()
+        let slices = [
+            Self.slice(session: Self.sessionA, date: Self.day0, weightKg: 100, reps: 5),
+            SetRecordSlice(
+                sessionID: Self.sessionB, sessionStartedAt: Self.day1, exerciseID: otherExercise,
+                set: SetRecordData(order: 0, weight: Weight(kg: 20), reps: 5, completedAt: Self.day1)
+            ),
+            Self.slice(session: Self.sessionC, date: Self.day2, weightKg: 200, reps: 20, isWarmup: true),
+            SetRecordSlice(
+                sessionID: Self.sessionC, sessionStartedAt: Self.day2, exerciseID: nil,
+                set: SetRecordData(order: 0, weight: Weight(kg: 300), reps: 20, completedAt: Self.day2)
+            )
+        ]
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: slices) == [Self.sessionA, Self.sessionB])
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: []) == [])
+    }
+
+    @Test("equal-time history badges use the chart's stable session-ID tie break")
+    func recordSessionIDsBreakDateTiesConsistently() {
+        let first = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+        let second = UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
+        let slices = [
+            Self.slice(session: second, date: Self.day0, weightKg: 90, reps: 5),
+            Self.slice(session: first, date: Self.day0, weightKg: 100, reps: 5)
+        ]
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: slices) == [first])
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: Array(slices.reversed())) == [first])
+    }
+
     @Test("one point per session; the warmup's 120 kg is excluded from session A's top weight")
     func sessionPointsExcludeWarmup() {
         let points = ExerciseProgressionStats.sessionPoints(from: Self.slices)

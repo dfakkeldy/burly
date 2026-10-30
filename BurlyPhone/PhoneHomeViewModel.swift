@@ -46,6 +46,7 @@ final class PhoneHomeViewModel {
     private(set) var sessionsState: LoadState = .loading
     private(set) var loggedSessionCount = 0
     private(set) var sessionRows: [SessionData] = []
+    // Archived metadata still names past work; pickers filter it out.
     private(set) var historyExercises: [ExerciseData] = []
     private(set) var namingQueue: [ExerciseData] = []
 
@@ -308,8 +309,8 @@ final class PhoneHomeViewModel {
         do {
             loggedSessionCount = try store.loggedSessionCount()
             sessionRows = try store.sessions(state: .logged)
-            historyExercises = try store.exercises(includingArchived: false)
-            namingQueue = historyExercises.filter(\.needsNaming)
+            historyExercises = try store.exercises(includingArchived: true)
+            namingQueue = historyExercises.filter { $0.needsNaming && $0.archivedAt == nil }
             sessionsState = .loaded
         } catch {
             sessionsState = .failed(String(describing: error))
@@ -340,8 +341,8 @@ final class PhoneHomeViewModel {
 
     private func reloadHistoryExercises() {
         do {
-            historyExercises = try store.exercises(includingArchived: false)
-            namingQueue = historyExercises.filter(\.needsNaming)
+            historyExercises = try store.exercises(includingArchived: true)
+            namingQueue = historyExercises.filter { $0.needsNaming && $0.archivedAt == nil }
             sessionRows = try store.sessions(state: .logged)
         } catch {
             sessionsState = .failed(String(describing: error))

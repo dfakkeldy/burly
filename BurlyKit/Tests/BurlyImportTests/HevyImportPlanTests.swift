@@ -451,6 +451,8 @@ struct HevyImportPlanTests {
         #expect(firstOutcome.matches(first.preview))
         #expect(try store.sessions().count == 3)
         #expect(try store.sessions().allSatisfy { $0.healthKitWorkoutID == nil && $0.origin == .hevyImport })
+        #expect(try store.sessions().compactMap(\.routineName).sorted() == ["Leg Day", "Push Day", "Push Day"])
+        #expect(try store.sessions().allSatisfy { $0.routineID == nil })
 
         let again = try plan(Self.threeWorkouts)
         #expect(again.preview.isNothingNew)

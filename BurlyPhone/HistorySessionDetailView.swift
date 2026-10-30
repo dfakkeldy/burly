@@ -10,6 +10,13 @@ struct HistorySessionDetailView: View {
     @State private var pickerPresented = false
     @State private var errorMessage: String?
     @State private var notesDraft: String
+    #if DEBUG
+    // Exercise the existing error path against a synthetic UI-test store.
+    // Never enabled for the real store or included in release builds.
+    @State private var failNextSaveForUITest =
+        ProcessInfo.processInfo.environment["BURLY_PHONE_UI_TEST_SCENARIO"] == "populated"
+        && ProcessInfo.processInfo.environment["BURLY_PHONE_UI_TEST_FAIL_HISTORY_SAVE_ONCE"] == "1"
+    #endif
     /// Spec §9 #2: set rows render in the Settings display unit.
     @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
 
@@ -39,7 +46,7 @@ struct HistorySessionDetailView: View {
                         ForEach(item.sets.sorted { $0.order < $1.order }) { set in
                             NavigationLink {
                                 HistorySetEditor(set: set, unit: unit) { updated in
-                                    mutate { session in
+                                    try commitMutation { session in
                                         guard let itemIndex = session.items.firstIndex(where: { $0.id == item.id }),
                                               let setIndex = session.items[itemIndex].sets.firstIndex(where: { $0.id == updated.id }) else { return }
                                         session.items[itemIndex].sets[setIndex] = updated
@@ -121,7 +128,7 @@ struct HistorySessionDetailView: View {
             }
         }
         .sheet(isPresented: $pickerPresented) {
-            ExercisePicker(exercises: viewModel.historyExercises) { exercise in
+            ExercisePicker(exercises: viewModel.historyExercises.filter { $0.archivedAt == nil }) { exercise in
                 mutate { value in
                     value.items.append(SessionItemData(exerciseID: exercise.id, order: value.items.count))
                 }
@@ -143,10 +150,20 @@ struct HistorySessionDetailView: View {
     }
 
     private func mutate(_ change: (inout SessionData) -> Void) {
+        do { try commitMutation(change) }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func commitMutation(_ change: (inout SessionData) -> Void) throws {
         var updated = session
         change(&updated)
-        do { session = try viewModel.saveHistoryEdit(updated) }
-        catch { errorMessage = String(describing: error) }
+        #if DEBUG
+        if failNextSaveForUITest {
+            failNextSaveForUITest = false
+            throw CocoaError(.fileWriteUnknown)
+        }
+        #endif
+        session = try viewModel.saveHistoryEdit(updated)
     }
 
     private func reindexItems(_ session: inout SessionData) {
@@ -172,7 +189,7 @@ private struct HistorySetEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     let set: SetRecordData
-    let onSave: (SetRecordData) -> Void
+    let onSave: (SetRecordData) throws -> Void
     /// Latched for the editor's lifetime, not read live. The parent
     /// re-creates this view whenever it re-renders (including after a unit
     /// change made in the Settings tab while this screen stays pushed), but
@@ -188,9 +205,10 @@ private struct HistorySetEditor: View {
     @State private var weight: String
     @State private var reps: String
     @State private var isWarmup: Bool
+    @State private var errorMessage: String?
     @FocusState private var focusedField: Field?
 
-    init(set: SetRecordData, unit: WeightUnit, onSave: @escaping (SetRecordData) -> Void) {
+    init(set: SetRecordData, unit: WeightUnit, onSave: @escaping (SetRecordData) throws -> Void) {
         self.set = set
         self.onSave = onSave
         let text = unit.formattedNumber(set.weight)
@@ -222,8 +240,12 @@ private struct HistorySetEditor: View {
                     updated.setWeight(newWeight)
                     updated.reps = repetitions
                     updated.isWarmup = isWarmup
-                    onSave(updated)
-                    dismiss()
+                    do {
+                        try onSave(updated)
+                        dismiss()
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
                 }
                 // Disabled rather than a silent no-op: text Save cannot
                 // read (including ambiguous "1,000", which parse refuses)
@@ -232,6 +254,14 @@ private struct HistorySetEditor: View {
                 .disabled(enteredWeight == nil || enteredReps == nil)
                 .accessibilityIdentifier("historyDetail.saveSet")
             }
+        }
+        .alert("Couldn’t save edit", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
         }
     }
 
@@ -289,7 +319,7 @@ struct NamingQueueView: View {
                 .accessibilityIdentifier("namingQueue.saveName")
             }
             Section("Or merge into") {
-                ForEach(viewModel.historyExercises.filter { $0.id != placeholder.id }) { exercise in
+                ForEach(viewModel.historyExercises.filter { $0.id != placeholder.id && $0.archivedAt == nil }) { exercise in
                     Button(exercise.name) {
                         do { try viewModel.mergePlaceholder(placeholder, into: exercise) }
                         catch { errorMessage = String(describing: error) }
