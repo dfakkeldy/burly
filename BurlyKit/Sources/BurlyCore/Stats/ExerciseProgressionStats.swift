@@ -63,7 +63,11 @@ public enum ExerciseProgressionStats {
     /// Uses the same chronology, warmup exclusion and estimate tie rules
     /// as the single-exercise chart.
     public static func personalRecordSessionIDs(from slices: [SetRecordSlice]) -> Set<UUID> {
-        let byExercise = Dictionary(grouping: slices.filter { $0.exerciseID != nil }) { $0.exerciseID! }
+        var byExercise: [UUID: [SetRecordSlice]] = [:]
+        for slice in slices {
+            guard let exerciseID = slice.exerciseID else { continue }
+            byExercise[exerciseID, default: []].append(slice)
+        }
         var sessionIDs = Set<UUID>()
         for exerciseSlices in byExercise.values {
             let points = sessionPoints(from: exerciseSlices)

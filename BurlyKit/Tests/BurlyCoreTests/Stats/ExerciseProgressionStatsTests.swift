@@ -55,7 +55,7 @@ struct ExerciseProgressionStatsTests {
             Self.slice(session: Self.sessionC, date: Self.day2, weightKg: 100, reps: 8)
         ]
         #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: slices) == [Self.sessionA, Self.sessionB])
-        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: slices.reversed()) == [Self.sessionA, Self.sessionB])
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: Array(slices.reversed())) == [Self.sessionA, Self.sessionB])
     }
 
     @Test("history badges separate exercises and ignore warmups and unattributed work")
@@ -86,7 +86,7 @@ struct ExerciseProgressionStatsTests {
             Self.slice(session: first, date: Self.day0, weightKg: 100, reps: 5)
         ]
         #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: slices) == [first])
-        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: slices.reversed()) == [first])
+        #expect(ExerciseProgressionStats.personalRecordSessionIDs(from: Array(slices.reversed())) == [first])
     }
 
     @Test("one point per session; the warmup's 120 kg is excluded from session A's top weight")
