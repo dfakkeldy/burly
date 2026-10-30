@@ -161,15 +161,21 @@ final class SessionConflictUITests: XCTestCase {
         // routine list renders normally.
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
-        // Clears WatchDemoSeed's quiet-period gate (1.0 s) with margin, so
+        // Clears WatchDemoSeed's quiet-period gate (1.5 s) with margin, so
         // this tap -- not any shell-side reload -- is what the fault fires
         // on.
         Thread.sleep(forTimeInterval: 4)
-        legDayRow.tap()
+        XCTAssertFalse(
+            app.staticTexts["resumeSession.heading"].exists,
+            "The fault fired on a shell reload before the tap, not on SessionEntryView's pre-check"
+        )
+        let conflictHeading = app.staticTexts["sessionConflict.heading"]
+        tapRoutineRow(legDayRow, in: app) {
+            conflictHeading.exists || app.staticTexts["exercisePage.name"].exists
+        }
 
         // SessionEntryView's own defensive pre-check is where the fault's
         // now-injected active session gets caught.
-        let conflictHeading = app.staticTexts["sessionConflict.heading"]
         XCTAssertTrue(
             conflictHeading.waitForExistence(timeout: 10),
             "Expected the late-active-session race to still be caught by SessionEntryView's own defensive check"
@@ -206,9 +212,15 @@ final class SessionConflictUITests: XCTestCase {
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
         XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
         Thread.sleep(forTimeInterval: 4)
-        legDayRow.tap()
-
+        XCTAssertFalse(
+            app.staticTexts["resumeSession.heading"].exists,
+            "The fault fired on a shell reload before the tap, not on SessionEntryView's pre-check"
+        )
         let conflictHeading = app.staticTexts["sessionConflict.heading"]
+        tapRoutineRow(legDayRow, in: app) {
+            conflictHeading.exists || app.staticTexts["exercisePage.name"].exists
+        }
+
         XCTAssertTrue(conflictHeading.waitForExistence(timeout: 10))
 
         attachScreenshot(from: app, name: "BurlyWatch-sessionConflictView-race-finish")
@@ -276,6 +288,32 @@ final class SessionConflictUITests: XCTestCase {
             app.staticTexts["resumeSession.heading"].exists,
             "A resolved fixture must never be recreated just because the relaunch's environment still names the same scenario"
         )
+    }
+
+    /// Taps a routine row, tapping again only while the app never left the
+    /// routine list. On CI (2026-10-30) watchOS drew the row's press state
+    /// for a synthesized tap without committing its NavigationLink, and the
+    /// list sat untouched. A tap that never commits makes no store call, so
+    /// a quiet-period fault stays armed for the next tap. Re-taps go to the
+    /// row's centre as a screen coordinate, which never fails if the row
+    /// has just gone, and each is logged as an activity so an app that
+    /// always needs two taps shows up in the result bundle.
+    private func tapRoutineRow(
+        _ row: XCUIElement,
+        in app: XCUIApplication,
+        maxTaps: Int = 3,
+        until arrived: () -> Bool
+    ) {
+        let frame = row.frame
+        let center = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
+        row.tap()
+        for tap in 1..<maxTaps {
+            if waitFor(timeout: 5, { arrived() || !row.exists }) { return }
+            XCTContext.runActivity(named: "Re-tapping the routine row: tap \(tap) did not navigate") { _ in
+                center.tap()
+            }
+        }
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
