@@ -1,14 +1,15 @@
 # Burly overnight audit — October 30, 2026
 
-Checkpoint while the overnight audit continues. Started 00:03 ADT from
-`829fe5d` on `origin/main`; there is no nightly branch. The hard stop is
-08:00 ADT / 11:00 UTC. This is evidence from the exercised flows, not an
-exhaustive audit or release sign-off.
+The audit covered bugs, code, performance, architecture, HIG/accessibility
+and usability. It started00:03 ADT from `829fe5d` on `origin/main` (no nightly
+branch); the window ended08:00 ADT /11:00UTC. Morning wrap-up delivered
+already-tested heads and finalized this record. All fixtures are synthetic.
+This is evidence from exercised flows, not an exhaustive release sign-off.
 
-Fifteen confirmed defects are tracked under fourteen issues. Nine are
-merged; three focused fixes are undergoing native verification; the
-digest and two late lower-chart findings have concrete follow-up scopes.
-All fixtures are synthetic.
+**Fifteen confirmed defects under fourteen issues: eleven fixed and merged,
+one focused draft fix blocked by its full acceptance gate, and three open
+implementation follow-ups.** The heartbeat was deleted at morning wrap-up;
+there is no later-night continuation.
 
 ## Findings and delivery
 
@@ -24,9 +25,9 @@ All fixtures are synthetic.
 | [#24](https://github.com/dfakkeldy/burly/issues/24): slow latest-performance digest | Full-history materialization dominates pure derivation at 50k sets | Open. Rejected a non-improving prefetch variant; narrower projection is experimental, not integrated. |
 | [#25](https://github.com/dfakkeldy/burly/issues/25): one zigzag instead of separate trends | Rendered artifact connected top-set and e1RM points within each session | Explicit series/colors, with ordinary adaptive legend outside Charts' synthesized tree. Merged #20; fresh rendering and legend assertions passed. |
 | [#26](https://github.com/dfakkeldy/burly/issues/26): missing Stats navigation host | Title absent and content under status chrome in rendered artifact | NavigationStack around Stats. Merged #20; title and scroll-edge rendering inspected. |
-| [#30](https://github.com/dfakkeldy/burly/issues/30): largest-text Stats clipping | Selected title clipped; fixed-height axes overlapped or ellipsized | Draft #31: wrapping selector, scaled plot, sparse endpoint dates. Local iOS27 targeted test and full title/date-axis captures passed; hosted gate pending after discovery-only failure. |
-| [#32](https://github.com/dfakkeldy/burly/issues/32): Stats stale after activation | Pre-fix native test independently found new History data while Stats stayed at the old count with 6M retained | Draft #29: refresh only requested, visible Stats using its last request. Fixed-head local and hosted regression passed; full hosted suite pending after retained Settings unit-selection timeout. |
-| [#34](https://github.com/dfakkeldy/burly/issues/34): Hevy action ellipsis | Largest-text pre-audit capture shows “Import 3 Workou…” | Draft #35: full-width wrapping title at accessibility sizes. Local max-size confirmation flow and rendered title passed; hosted full gate pending. |
+| [#30](https://github.com/dfakkeldy/burly/issues/30): largest-text Stats clipping | Selected title clipped; fixed-height axes overlapped or ellipsized | Draft #31: local render/test and hosted phone20/20 passed; watch26/27 failed an existing countdown-skip assertion. Not merged; obtain a fully green canonical gate. |
+| [#32](https://github.com/dfakkeldy/burly/issues/32): Stats stale after activation | Pre-fix native test independently found new History data while Stats stayed at the old count with6M retained | Merged #29: refresh only requested, visible Stats using its last request. Package828+2, phone20/20 and watch27/27 passed. |
+| [#34](https://github.com/dfakkeldy/burly/issues/34): Hevy action ellipsis | Largest-text pre-audit capture shows “Import3Workou…” | Merged #35: full-width wrapping title at accessibility sizes. Local rendered/import flow and hosted package828+2, phone20/20, watch27/27 passed. |
 | [#37](https://github.com/dfakkeldy/burly/issues/37): unreadable lower weekly axes | Largest-text Weekly volume shows colliding Y/unit labels; Volume/Consistency week dates collapse to repeated ellipses | Open follow-up. Adapt lower plot space/date density and verify all volume ranges; separate from progression #31. |
 | [#38](https://github.com/dfakkeldy/burly/issues/38): Muscle split legends overlap | Automatic categorical legend overflows its fixed210pt chart and draws across the explicit percentage list | Open follow-up. Use one adaptive legend/value presentation preserving group/color/percentage meaning. |
 
@@ -70,9 +71,9 @@ reproducible defect.
 | --- | --- |
 | [#20](https://github.com/dfakkeldy/burly/pull/20), tested `a548cf5`; [41010129851](https://github.com/dfakkeldy/burly/actions/runs/41010129851) | 826 package + 2 migration tests; phone 19/19; watch 27/27. Fresh title/series/legend, retry/revision and archived-history artifacts reviewed. Merged `7149531`. |
 | [#28](https://github.com/dfakkeldy/burly/pull/28), tested `481ecf3`; [41016575153](https://github.com/dfakkeldy/burly/actions/runs/41016575153) | 828 package + 2 migration tests; phone 19/19; watch 27/27. Merged `e5b858e`. Benchmarks retain normal environment gates. |
-| [#29](https://github.com/dfakkeldy/burly/pull/29), `43b3a94`; [41031247128](https://github.com/dfakkeldy/burly/actions/runs/41031247128) | Package checks passed. New foreground regression passed locally on iOS27 (37.867s) and hosted (45.618s). First full run phone 19/20: retained Settings unit-selection wait failed; watch not reached. Attempt2 stopped at300s destination discovery before app tests. One final unchanged attempt runs; retained CI/test-hardening scope stays separate. |
-| [#31](https://github.com/dfakkeldy/burly/pull/31), `3bc58ba`; [41033532615](https://github.com/dfakkeldy/burly/actions/runs/41033532615) | Package checks passed. Targeted iOS27 regression passed, including date axes above the tab bar; rendered title/axes inspected. Hosted attempt1 stopped before app tests at destination discovery; unchanged retry runs. |
-| [#35](https://github.com/dfakkeldy/burly/pull/35), `61d3029` | Local iOS27 confirmation flow passed60.370s: complete label/viewport fit, readable capture and three synthetic workouts imported. Hosted full gate pending. Initial constrained Label repair was rejected; no global audit pass claimed. |
+| [#29](https://github.com/dfakkeldy/burly/pull/29), tested `43b3a94`; [41031247128 attempt3](https://github.com/dfakkeldy/burly/actions/runs/41031247128/attempts/3) | 828 package+2 migration tests; phone20/20; watch27/27 passed. Local foreground regression also passed37.867s. Merged `d2c4dec` at08:22 ADT. Earlier attempts failed Settings unit-selection timing and destination discovery; the final unchanged head passed the full gate. |
+| [#31](https://github.com/dfakkeldy/burly/pull/31), `3bc58ba`; [41038544280](https://github.com/dfakkeldy/burly/actions/runs/41038544280) | Package checks and phone20/20 passed, including largest-text regression29.972s; local rendered title/axis review passed. Watch26/27 failed `LoggingScreenUITests.testRestTimerCountsDownAdjustsAndSkips` at the countdown-skip assertion. No watch source changed, but cause is unproven. Draft/unmerged; investigate on current main respecting watch ownership, then restore the complete gate without weakening its assertion. |
+| [#35](https://github.com/dfakkeldy/burly/pull/35), tested `61d3029`; [41038464378](https://github.com/dfakkeldy/burly/actions/runs/41038464378) | 828 package+2 migration tests; phone20/20; watch27/27 passed. Local max-size flow passed60.370s with complete label/viewport fit, readable capture and three synthetic workouts imported. Merged `519cc12` at08:22 ADT. No global accessibility-audit compliance claim. |
 
 Local Apple builds/tests used the shared slot wrapper. Earlier attempts
 were deferred on admission; admitted commands used only a dedicated
@@ -145,15 +146,25 @@ Apple references: [Charts](https://developer.apple.com/design/human-interface-gu
 [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility),
 [native audits](https://developer.apple.com/documentation/accessibility/performing-accessibility-audits-for-your-app).
 
-## Time and stopping rule
+## Time, stop and follow-up
 
-The wall-clock night window is distinct from active searching. Setup,
-implementation, builds, CI/service waits and artifact verification pause
-the quiet-search timer. Checkpoints retain approximate search counts;
-concurrent CI durations are not added as searching time.
+The night window ended at08:00 ADT on October30. The60-minute active quiet
+period was not reached. Implementation, builds, CI/service waits and report
+preparation were separated from active searching; overlapping hosted runs
+were not added together as search time. Earlier checkpoints retain their
+approximate search counters rather than an invented cumulative total.
 
-New findings reset the counter around 05:47/06:00 ADT and again at 06:51 for
-#34. The 06:16–06:30 interval was roughly 14 verification/CI minutes and zero
-quiet-search minutes; approximately 3 minutes of visual/source
-classification in 06:46–06:52 found #34. The lower-card visual findings at07:26 reset the timer again. No60-minute
-active quiet period has been established. Final results and the morning stop remain to be recorded.
+Examples:06:16–06:30 was about14 verification/CI minutes with zero quiet
+search minutes. Around3 visual/source minutes found #34 at06:51. The final
+architecture pass added about2 quiet-search minutes; lower-chart visual
+findings at07:26 reset the timer again. That bounded native capture test
+took3.30 test minutes, excluding compilation/admission. Subsequent work was
+verification and reporting, with no new searching or implementation after
+the cutoff. Morning wrap-up deleted the heartbeat and merged only the
+already-verified green #29/#35 heads; #31 stayed draft/red.
+
+Four findings remain: #30's draft progression-layout fix needs a completely
+green acceptance gate; #24 needs the supported narrow digest projection;
+#37 needs adaptive lower weekly axes; #38 needs one adaptive muscle legend.
+Each has concrete reproduction/evidence and next work. Unknown native-audit
+flags and retained feature work are kept distinct from these proven defects.
