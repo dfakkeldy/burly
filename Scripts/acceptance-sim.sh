@@ -495,7 +495,8 @@ xcrun simctl bootstatus "$WATCH_UDID" -b
 # "Unable to find a device matching the provided destination specifier".
 # Poll -showdestinations until the device appears, and fail with the
 # simulator inventory in the log instead of a bare destination error.
-DESTINATION_WAIT_SECONDS=$((5 * 60))
+# Diagnostic-only dependency on PR #16: allow its verified discovery window.
+DESTINATION_WAIT_SECONDS=$((15 * 60))
 
 wait_for_destination() {
   local scheme="$1" device_name="$2" udid="$3"
