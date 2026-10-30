@@ -617,8 +617,8 @@ public protocol BurlyStore: AnyObject {
     // - `loggedSetSlices(exerciseID:since:through:)` requires a concrete
     //   `exerciseID` — there is no all-exercises form that takes an
     //   arbitrary optional `Date`. `since`/`through` stay optional here
-    //   only because the exercise bound itself keeps the query SQL-pushed-
-    //   down and cheap even at "all-time" (see the method's doc).
+    //   because an all-time request traverses that exercise's inverse
+    //   relationships instead of every stored SetRecord (see below).
     // - `loggedSetSlices(window:through:calendar:)` is the only
     //   all-exercises form, and it takes a `TrailingWindow` — a small,
     //   closed domain type with no `Date` in its public API at all (see
@@ -647,17 +647,12 @@ public protocol BurlyStore: AnyObject {
     ///     is unbounded below — legal here specifically because `exerciseID`
     ///     is mandatory, so the caller has still named a specific slice of
     ///     the domain even when this call's own bound is wide open (the PR
-    ///     chart's "all" range, spec §7 #1). **This is the one shape that is
-    ///     not SQL-pushed-down**: the runner-predicate fix (see
-    ///     `SwiftDataStore.setRecordFilterPredicate`'s doc for the full
-    ///     mechanism — two relationship-predicate shapes were tried and
-    ///     both rejected by SwiftData/CoreData) moved exercise scoping into
-    ///     a Swift-side filter, so `since: nil` fetches every `SetRecord` in
-    ///     the store and filters after, bounded by the store's total size,
-    ///     not that exercise's row count (2.41 s, 187.1 MB process
-    ///     high-water RSS at 50,351 SetRecords for one exercise's 4,306-row
-    ///     full history, measured by `StatsQueryBenchmarkTests` — see that
-    ///     file for how to reproduce and current numbers).
+    ///     chart's "all" range, spec §7 #1). With both dates nil, the
+    ///     implementation looks up the exercise by UUID and follows its
+    ///     session-item inverse, keeping the read scoped to that exercise.
+    ///     When either date is supplied, dates are filtered in SQL and the
+    ///     exercise is filtered in Swift; no unsupported two-hop predicate
+    ///     is introduced. See `StatsQueryBenchmarkTests` for scale evidence.
     ///   - through: upper bound, inclusive; `nil` is unbounded above — the
     ///     common case, since every §7 range reads "since X, through now"
     ///     and callers do not have to compute "now" just to bound it.

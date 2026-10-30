@@ -855,10 +855,32 @@ public final class SwiftDataStore: BurlyStore {
         since: Date?,
         through: Date?
     ) throws -> [SetRecordSlice] {
-        try fetchSetSlices(
+        if since == nil && through == nil {
+            return try allTimeSetSlices(exerciseID: exerciseID)
+        }
+        return try fetchSetSlices(
             predicate: Self.setRecordFilterPredicate(since: since, through: through),
             exerciseID: exerciseID
         )
+    }
+
+    /// Exercise identity bounds this traversal without the unsupported
+    /// two-hop relationship predicates or an all-SetRecord fetch.
+    private func allTimeSetSlices(exerciseID: UUID) throws -> [SetRecordSlice] {
+        guard let exercise = try model(Exercise.self, id: exerciseID) else { return [] }
+        var slices: [SetRecordSlice] = []
+        for item in exercise.sessionItems {
+            guard let session = item.session, session.state == .logged else { continue }
+            for record in item.sets {
+                slices.append(SetRecordSlice(
+                    sessionID: session.id,
+                    sessionStartedAt: session.startedAt,
+                    exerciseID: exerciseID,
+                    set: try record.snapshot()
+                ))
+            }
+        }
+        return slices
     }
 
     public func loggedSetSlices(
@@ -873,10 +895,10 @@ public final class SwiftDataStore: BurlyStore {
         )
     }
 
-    /// Shared fetch/map body for both `loggedSetSlices` overloads above —
-    /// they differ only in how the (date-only) predicate and `exerciseID`
-    /// are produced. `exerciseID`, when given, is applied entirely below in
-    /// Swift, not in `predicate` — see `setRecordFilterPredicate`'s doc for
+    /// Shared fetch/map body for date-bounded queries and the explicit
+    /// all-history projection. The unbounded single-exercise path above
+    /// instead follows the exercise's inverse relationships. `exerciseID`,
+    /// when given, is applied below in Swift, not in `predicate` — see `setRecordFilterPredicate`'s doc for
     /// why relationship traversal was pulled out of the `#Predicate`
     /// entirely (the runner-predicate fix).
     private func fetchSetSlices(
@@ -903,9 +925,9 @@ public final class SwiftDataStore: BurlyStore {
                 // captured in a `#Predicate` (see the protocol doc). The
                 // date bound already applied above is what keeps this from
                 // degenerating into a full-history scan for every
-                // date-bounded range — the one range that cannot bound
-                // itself by date (all-time, one exercise) pays for that
-                // with a full fetch; see `setRecordFilterPredicate`'s doc.
+                // date-bounded range. Unbounded single-exercise reads use
+                // the inverse traversal above; only allLoggedSetSlices
+                // deliberately asks this helper for the full table.
                 session.state == .logged,
                 // The only exercise filter — not a backup for a predicate
                 // check, since the predicate no longer touches the
@@ -1141,26 +1163,11 @@ public final class SwiftDataStore: BurlyStore {
     /// check behind the (now-removed) predicate pushdown; it is now the
     /// only exercise filter, not a backup one.
     ///
-    /// **This has a real, measured performance cost**, not a hidden one:
-    /// the PR chart's "all-time, one exercise" query — the one range that
-    /// cannot bound itself by date — regresses from the exercise-pushed-down
-    /// shape's 0.51 s / 40 MB back to a full-history fetch. Re-measured on
-    /// `StatsQueryBenchmarkTests`' 50k-row store (50,351 SetRecords, 3,600
-    /// sessions) after this fix: **2.41 s, process high-water RSS 187.1 MB**
-    /// for the same 4,306-row result (up from 29.5 MB after the preceding
-    /// trailing-window query in the same run — see that file's `measure`
-    /// doc for why "process high-water," not "this call's own peak," is the
-    /// honest framing). This regresses materially past the fix brief's ~1 s
-    /// concern threshold, and is reported here loudly rather than hidden:
-    /// the two-step fetch is the only predicate shape SwiftData/CoreData
-    /// accepts on both the runner and Darwin 27, so restoring the
-    /// pushed-down performance means either a different query shape (e.g. a
-    /// denormalized `exerciseID` column directly on `SetRecord`, avoiding
-    /// the relationship traversal a `#Predicate` entirely) or waiting on a
-    /// CoreData/SwiftData fix — both out of scope for this hotfix. Every
-    /// date-bounded query (which is every other §7 range) is unaffected,
-    /// because dates were never the problem: in the same benchmark run, the
-    /// trailing-90-day query across all exercises ran in 0.11 s.
+    /// This fallback originally made all-time single-exercise queries fetch
+    /// every SetRecord before filtering. Those requests now bypass this
+    /// predicate through `allTimeSetSlices(exerciseID:)`, which follows the
+    /// exercise's inverse relationships. Date-bounded requests keep the
+    /// supported date-only predicate and Swift-side exercise filter.
     private static func setRecordFilterPredicate(
         since: Date?,
         through: Date?

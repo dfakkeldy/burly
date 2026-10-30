@@ -15,7 +15,7 @@
 //
 // This extension is the one obvious, correct path: it always fetches via
 // `loggedSetSlices(exerciseID:since: nil, through: nil)` — the exercise-
-// bounded, SQL-pushed-down all-time query — regardless of `displayRange`,
+// bounded all-time inverse traversal — regardless of `displayRange`,
 // so the precondition can never be violated by a caller going through it.
 // `ExerciseProgressionStats.personalRecords` stays public (fixture-truth
 // tests in BurlyCoreTests construct `[ExerciseSessionPoint]` by hand and

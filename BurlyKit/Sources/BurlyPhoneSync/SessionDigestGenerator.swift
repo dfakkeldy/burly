@@ -29,9 +29,9 @@
 // non-relationship-hydrating shape every other §7 query uses, restricted to
 // `.logged` sessions, at a cost proportional to total logged `SetRecord`
 // count. It does not loop `loggedSetSlices(exerciseID:since:through:)` once
-// per catalog exercise: that method already fetches the entire table
-// internally per call (see its doc), so a per-exercise loop would pay for
-// the whole table once per exercise instead of once total.
+// per catalog exercise: the digest derives one complete latest-per-exercise
+// result from a single current history projection rather than assembling
+// separate per-exercise reads.
 import Foundation
 import BurlyCore
 import BurlyPersistence
