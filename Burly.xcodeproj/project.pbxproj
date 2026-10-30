@@ -709,7 +709,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
-				INFOPLIST_KEY_WKBackgroundModes = "workout-processing";
+				INFOPLIST_FILE = BurlyWatch/Info.plist;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKApplication = YES;
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.burly.lifting;
@@ -743,7 +743,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
-				INFOPLIST_KEY_WKBackgroundModes = "workout-processing";
+				INFOPLIST_FILE = BurlyWatch/Info.plist;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKApplication = YES;
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.burly.lifting;
