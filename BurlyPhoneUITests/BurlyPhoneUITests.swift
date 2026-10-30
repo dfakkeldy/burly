@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import XCTest
+import UIKit
 
 /// Exercises the iPhone app shell (spec m5-01): the four-tab shell, the
 /// one-time first-launch welcome with both paths, and the persisted choice
@@ -51,6 +52,37 @@ final class BurlyPhoneUITests: XCTestCase {
     private static let pullUpExerciseID = "10000000-0000-4000-8000-000000000023"
     private static let addableExerciseID = "6F4E2C1A-0000-4000-8000-00000000000A"
     private static let healthKitWorkoutID = "6F4E2C1A-0000-4000-8000-00000000000B"
+
+    @MainActor
+    func testStatsLargestTextWrapsExerciseAndScalesChart() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome", "-UIPreferredContentSizeCategoryName",
+            UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        app.tabBars.buttons["Stats"].tap()
+        let menu = app.buttons["statsTab.progression.exercisePicker"]
+        for _ in 0..<10 {
+            if menu.exists && menu.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(menu.isHittable)
+        menu.tap()
+        let bench = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Barbell Bench Press")).firstMatch
+        XCTAssertTrue(bench.waitForExistence(timeout: 10))
+        bench.tap()
+        XCTAssertEqual(menu.value as? String, "Barbell Bench Press")
+        XCTAssertGreaterThan(menu.frame.height, 100, "The long selected title must have space to wrap at largest text")
+        attachScreenshot(from: app, name: "BurlyPhone-largestTextExercise")
+        let chart = anyElement(app, identifier: "statsTab.progression.chart")
+        XCTAssertTrue(chart.exists)
+        XCTAssertGreaterThan(chart.frame.height, 400, "Plot and axes must scale with text")
+        for _ in 0..<12 {
+            if chart.isHittable { break }
+            app.swipeUp()
+        }
+        attachScreenshot(from: app, name: "BurlyPhone-largestTextProgression")
+    }
 
     override func setUpWithError() throws {
         continueAfterFailure = false
