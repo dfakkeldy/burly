@@ -87,6 +87,19 @@ struct DigestGenerationBenchmarkTests {
         #expect(payload.snapshotVersion == 42)
         #expect(Set(payload.ackedSessionIDs) == acked)
 
+        // Diagnostic-only phase measurement in a fresh context. The first
+        // generate() above remains the original end-to-end benchmark.
+        let phaseStore = try SwiftDataStore(kind: .phone, at: .file(url))
+        let (phaseSlices, fetchSeconds, fetchPeak) = try measureDigestBenchmark {
+            try phaseStore.allLoggedSetSlices()
+        }
+        let (phaseEntries, computeSeconds, computePeak) = measureDigestBenchmark {
+            SessionDigestGenerator.latestPerformancePerExercise(from: phaseSlices)
+        }
+        #expect(phaseEntries == payload.lastPerformance)
+        print("[digest phase diagnostic] fresh-context fetch: \(phaseSlices.count) slices, \(String(format: "%.4f", fetchSeconds))s, process high-water RSS \(formatDigestBenchmarkBytes(fetchPeak))")
+        print("[digest phase diagnostic] pure derivation: \(phaseEntries.count) entries, \(String(format: "%.4f", computeSeconds))s, process high-water RSS \(formatDigestBenchmarkBytes(computePeak))")
+
         if seconds > wallTimeThresholdSeconds {
             print("""
             \n\
