@@ -436,6 +436,18 @@ final class PhoneHomeViewModel {
         }
     }
 
+    /// A visible dashboard must refresh on activation without resetting
+    /// its controls or querying Stats before it was first requested.
+    func refreshStatsIfRequested() {
+        guard let request = lastStatsRequest else { return }
+        loadStats(
+            progressionRange: request.progressionRange,
+            volumeRange: request.volumeRange,
+            muscleWindowWeeks: request.muscleWindowWeeks,
+            exerciseID: request.exerciseID
+        )
+    }
+
     // MARK: - Stats (§7; bounded store queries + BurlyCore computation)
 
     /// Loads the four phone-only §7 charts. This is intentionally a

@@ -106,7 +106,9 @@ struct MainTabView: View {
                 viewModel.loadSessionsForDisplay()
             case .routines:
                 viewModel.loadRoutinesForDisplay()
-            case .stats, .settings:
+            case .stats:
+                viewModel.refreshStatsIfRequested()
+            case .settings:
                 break
             }
         }
