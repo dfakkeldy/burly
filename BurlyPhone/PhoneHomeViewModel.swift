@@ -60,6 +60,36 @@ final class PhoneHomeViewModel {
     /// user will see without guessing which ranges they had picked.
     @ObservationIgnored private var lastStatsRequest: StatsRequest?
 
+    #if DEBUG
+    @ObservationIgnored private var simulatedBackgroundHistory = false
+
+    /// Synthetic UI-test writer; never reaches the on-device store.
+    func simulateBackgroundHistoryIfRequested() {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["BURLY_PHONE_UI_TEST_SCENARIO"] == "populated",
+              environment["BURLY_PHONE_UI_TEST_BACKGROUND_HISTORY"] == "1",
+              lastStatsRequest != nil, !simulatedBackgroundHistory else { return }
+        simulatedBackgroundHistory = true
+        do {
+            guard let exercise = try store.exercises(includingArchived: false)
+                .first(where: { $0.name == "Back Squat" }) else {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
+            let now = Date()
+            try store.createSession(SessionData(
+                id: UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000C")!,
+                routineName: "Synthetic background workout", startedAt: now, endedAt: now,
+                state: .logged, origin: .hevyImport,
+                items: [SessionItemData(exerciseID: exercise.id, order: 0, sets: [
+                    SetRecordData(order: 0, weight: Weight(kg: 50), reps: 5, completedAt: now)
+                ])]
+            ))
+        } catch {
+            statsState = .failed("Synthetic background writer failed: \(error.localizedDescription)")
+        }
+    }
+    #endif
+
     private struct StatsRequest {
         let progressionRange: PhoneStatsProgressionRange
         let volumeRange: PhoneStatsVolumeRange
@@ -404,6 +434,18 @@ final class PhoneHomeViewModel {
                 exerciseID: request.exerciseID
             )
         }
+    }
+
+    /// A visible dashboard must refresh on activation without resetting
+    /// its controls or querying Stats before it was first requested.
+    func refreshStatsIfRequested() {
+        guard let request = lastStatsRequest else { return }
+        loadStats(
+            progressionRange: request.progressionRange,
+            volumeRange: request.volumeRange,
+            muscleWindowWeeks: request.muscleWindowWeeks,
+            exerciseID: request.exerciseID
+        )
     }
 
     // MARK: - Stats (§7; bounded store queries + BurlyCore computation)

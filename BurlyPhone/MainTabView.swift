@@ -96,6 +96,9 @@ struct MainTabView: View {
         // just re-running the same loads the initial `.task` runs, plus the
         // visible tab's rows so a background writer's changes show up.
         .onChange(of: scenePhase) { _, newPhase in
+            #if DEBUG
+            if newPhase == .background { viewModel.simulateBackgroundHistoryIfRequested() }
+            #endif
             guard newPhase == .active else { return }
             viewModel.load()
             switch selection {
@@ -103,7 +106,9 @@ struct MainTabView: View {
                 viewModel.loadSessionsForDisplay()
             case .routines:
                 viewModel.loadRoutinesForDisplay()
-            case .stats, .settings:
+            case .stats:
+                viewModel.refreshStatsIfRequested()
+            case .settings:
                 break
             }
         }
