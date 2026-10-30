@@ -96,12 +96,12 @@ final class HealthKitUITests: XCTestCase {
     /// On watchOS it opens as a "Health Access" card whose only button is
     /// Review, then one page per access kind (Write Access, Read Access): an
     /// "All Requested Data Below" switch, a switch per type, and a Next cell
-    /// at the bottom; granting read access adds a history page (past 30 days
-    /// or full history) whose Done keeps the default. Next is only in the
-    /// accessibility tree once scrolled into view, so "is the sheet up" is
-    /// judged by any of its elements, not by Next. Allow turns every visible
-    /// switch on; decline leaves them all off and steps through, which is
-    /// what a person declining does.
+    /// at the bottom; granting read access adds a history page whose Done
+    /// waits for a choice, and the test picks the narrower past 30 days.
+    /// Next is only in the accessibility tree once scrolled into view, so "is
+    /// the sheet up" is judged by any of its elements, not by Next. Allow
+    /// turns every visible switch on; decline leaves them all off and steps
+    /// through, which is what a person declining does.
     private func answerHealthPrompt(_ app: XCUIApplication, allow: Bool) {
         let carousel = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
         let review = carousel.buttons["Review"]
@@ -115,11 +115,21 @@ final class HealthKitUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH 'UIA.Health.WatchAuthSheet'")).firstMatch
         let sheetIsUp = { review.exists || accessPage.exists || sheetElement.exists }
 
+        // Done stays disabled until a history range is picked.
+        let pastMonth = carousel.cells["Past 30 Days"]
+
         XCTAssertTrue(review.waitForExistence(timeout: 20), "Expected the Health sheet at the first session start")
         review.tap()
         var steps = ["Review"]
+        var pickedHistory = false
         let deadline = Date().addingTimeInterval(90)
         while Date() < deadline, waitFor(timeout: 5, sheetIsUp) {
+            if !pickedHistory, pastMonth.exists {
+                pastMonth.tap()
+                pickedHistory = true
+                steps.append("Past 30 Days")
+                continue
+            }
             if allow,
                let off = carousel.switches.allElementsBoundByIndex
                    .first(where: { "\($0.value ?? "")" == "0" && $0.isHittable }) {
