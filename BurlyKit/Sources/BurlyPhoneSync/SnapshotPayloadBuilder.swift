@@ -8,8 +8,25 @@
 // which is deliberately app/domain-agnostic (its own brief: "payload kinds
 // injected, no Burly domain imports").
 import Foundation
+import BurlyCore
 import BurlyPersistence
 import BurlySync
+
+/// The phone Settings rows the watch follows (schema 2). They live in the
+/// phone app's preferences, not the store, so the host app supplies them.
+public struct PhoneWatchSettings: Sendable, Equatable {
+    public var displayUnit: WeightUnit
+    /// Clamped onto §3's grid, like every other rest value.
+    public var restDefault: TimeInterval
+
+    public init(
+        displayUnit: WeightUnit = .kilograms,
+        restDefault: TimeInterval = RestDuration.globalDefault
+    ) {
+        self.displayUnit = displayUnit
+        self.restDefault = RestDuration.clamped(restDefault)
+    }
+}
 
 public enum SnapshotPayloadBuilder {
     /// Builds the §5 `snapshot` payload at `version` from current store
@@ -29,13 +46,26 @@ public enum SnapshotPayloadBuilder {
     /// does. A `needsNaming` placeholder the watch just created and the
     /// phone hasn't merged yet is never archived, so it always rides along
     /// normally.
+    ///
+    /// `settings` are read when the snapshot is built, like the store, so a
+    /// push always carries the phone's current unit and rest default.
     @MainActor
-    public static func build(version: Int, from store: any BurlyStore) throws -> BurlySnapshotPayloadDTO {
+    public static func build(
+        version: Int,
+        from store: any BurlyStore,
+        settings: PhoneWatchSettings = PhoneWatchSettings()
+    ) throws -> BurlySnapshotPayloadDTO {
         let routines = try store.routines(includingArchived: false)
         let referencedExerciseIDs = Set(routines.flatMap { $0.items.compactMap(\.exerciseID) })
         let exercises = try store.exercises(includingArchived: true).filter {
             $0.archivedAt == nil || referencedExerciseIDs.contains($0.id)
         }
-        return BurlySnapshotPayloadDTO(version: version, exercises: exercises, routines: routines)
+        return BurlySnapshotPayloadDTO(
+            version: version,
+            exercises: exercises,
+            routines: routines,
+            displayUnit: settings.displayUnit,
+            restDefault: settings.restDefault
+        )
     }
 }

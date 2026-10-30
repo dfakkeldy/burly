@@ -14,21 +14,52 @@ import BurlyCore
 /// interpretation (including how receivers discard stale snapshots) belongs
 /// to the later sync state machine; this payload only preserves the fact on
 /// the wire. Both curated and custom exercises are present in `exercises`.
+///
+/// ## Phone settings the watch follows (schema 2)
+///
+/// `displayUnit` and `restDefault` are the phone's §9 Settings rows that the
+/// watch must honour: weights render in the phone's unit, and §3's rest
+/// ladder ends at the phone's global default instead of a hardcoded 90 s.
+/// They ride the snapshot rather than the digest because the snapshot is
+/// already "everything the watch needs to start a workout", replaced as a
+/// whole and versioned, so a settings change is one more reason to push it.
+///
+/// They are the one deliberate exception to "wire payloads require fields
+/// the domain decoders default". A schema-1 sender predates them and meant
+/// exactly kg and the §3 90 s default, so a schema-1 body decodes to those.
+/// Schema 2 requires both keys; `BurlySyncEnvelope` enforces that per
+/// version, so a truncated schema-2 snapshot is still malformed.
+///
+/// `restDefault` is clamped onto §3's 15 s–5 min, 15 s grid rather than
+/// rejected: an off-grid value has an obvious nearest answer, and refusing
+/// the whole snapshot over it would also refuse every routine in it.
 public struct BurlySnapshotPayloadDTO: Sendable, Equatable, Codable {
     /// A non-negative, monotonically increasing catalog/routine version.
     public let version: Int
     public let exercises: [ExerciseData]
     public let routines: [RoutineData]
+    /// The phone's display unit. Storage stays canonical kg on both sides.
+    public let displayUnit: WeightUnit
+    /// The phone's §3 global rest default, always on the §3 grid.
+    public let restDefault: TimeInterval
 
-    public init(version: Int, exercises: [ExerciseData], routines: [RoutineData]) {
+    public init(
+        version: Int,
+        exercises: [ExerciseData],
+        routines: [RoutineData],
+        displayUnit: WeightUnit = .kilograms,
+        restDefault: TimeInterval = RestDuration.globalDefault
+    ) {
         precondition(version >= 0, "Snapshot version must be non-negative.")
         self.version = version
         self.exercises = exercises
         self.routines = routines
+        self.displayUnit = displayUnit
+        self.restDefault = RestDuration.clamped(restDefault)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, exercises, routines
+        case version, exercises, routines, displayUnit, restDefault
     }
 
     /// Wire payloads require fields that the domain `*Data` decoders default,
@@ -58,6 +89,25 @@ public struct BurlySnapshotPayloadDTO: Sendable, Equatable, Codable {
         self.version = version
         exercises = try container.decode([ExerciseData].self, forKey: .exercises)
         routines = try container.decode([RoutineData].self, forKey: .routines)
+        // Presence is the envelope's per-schema decision (see the type doc).
+        displayUnit = try container.decodeIfPresent(WeightUnit.self, forKey: .displayUnit) ?? .kilograms
+        restDefault = RestDuration.clamped(
+            try container.decodeIfPresent(TimeInterval.self, forKey: .restDefault) ?? RestDuration.globalDefault
+        )
+    }
+}
+
+/// Schema 2's addition to a snapshot body: both phone settings must be
+/// present. Validates only; `BurlySnapshotPayloadDTO` does the decoding.
+struct StrictSnapshotSettings: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case displayUnit, restDefault
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try container.require(.displayUnit)
+        try container.require(.restDefault)
     }
 }
 

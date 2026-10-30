@@ -308,4 +308,81 @@ struct WatchWorkingSetTests {
         #expect(try store.session(id: unacked.id) != nil)
         #expect(try store.loggedSessionsAwaitingAck().map(\.id) == [unacked.id])
     }
+
+    // MARK: - Steady-state re-apply and phone settings (schema 2)
+
+    @Test("a v_n → v_n+1 re-apply updates existing rows and the phone settings together")
+    func steadyStateReapplyUpdatesRowsAndSettings() throws {
+        let store = try makeStore(.watch)
+        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        let routine = Fixture.routine(name: "Legs", over: [squat])
+        #expect(try store.replaceWatchWorkingSet(BurlySnapshotPayloadDTO(
+            version: 1,
+            exercises: [squat],
+            routines: [routine]
+        )))
+        #expect(try store.watchSyncState().displayUnit == .kilograms)
+        #expect(try store.watchSyncState().restDefault == 90)
+
+        var renamed = squat
+        renamed.name = "Back Squat"
+        var retitled = routine
+        retitled.name = "Leg Day"
+        #expect(try store.replaceWatchWorkingSet(BurlySnapshotPayloadDTO(
+            version: 2,
+            exercises: [renamed],
+            routines: [retitled],
+            displayUnit: .pounds,
+            restDefault: 150
+        )))
+
+        #expect(try store.exercise(id: squat.id)?.name == "Back Squat")
+        #expect(try store.routine(id: routine.id)?.name == "Leg Day")
+        let state = try store.watchSyncState()
+        #expect(state.lastAppliedSnapshotVersion == 2)
+        #expect(state.displayUnit == .pounds)
+        #expect(state.restDefault == 150)
+    }
+
+    @Test("a stale snapshot returns false and changes neither rows nor settings")
+    func staleSnapshotIsRefusedWholesale() throws {
+        let store = try makeStore(.watch)
+        let squat = Fixture.exercise(name: "Squat", muscleGroups: [.quads])
+        #expect(try store.replaceWatchWorkingSet(BurlySnapshotPayloadDTO(
+            version: 5,
+            exercises: [squat],
+            routines: [],
+            displayUnit: .pounds,
+            restDefault: 120
+        )))
+
+        var renamed = squat
+        renamed.name = "Stale"
+        #expect(try store.replaceWatchWorkingSet(BurlySnapshotPayloadDTO(
+            version: 5,
+            exercises: [renamed],
+            routines: [],
+            displayUnit: .kilograms,
+            restDefault: 60
+        )) == false)
+
+        #expect(try store.exercise(id: squat.id)?.name == "Squat")
+        let state = try store.watchSyncState()
+        #expect(state.displayUnit == .pounds)
+        #expect(state.restDefault == 120)
+    }
+
+    @Test("a journal written before the settings existed reads them as the defaults")
+    func preSettingsJournalReadsDefaults() throws {
+        let container = try BurlyContainer.make(.watch, at: .inMemory)
+        let seedContext = ModelContext(container)
+        let legacy = #"{"schemaVersion":1,"lastAppliedSnapshotVersion":7,"lastAckedSessionIDs":[]}"#
+        seedContext.insert(WatchSyncJournal(payload: Data(legacy.utf8)))
+        try seedContext.save()
+
+        let state = try SwiftDataStore(container: container).watchSyncState()
+        #expect(state.lastAppliedSnapshotVersion == 7)
+        #expect(state.displayUnit == .kilograms)
+        #expect(state.restDefault == RestDuration.globalDefault)
+    }
 }

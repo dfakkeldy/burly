@@ -96,8 +96,10 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
             return .heldNeedsAppUpdate(version: header.schemaVersion)
         }
         switch header.schemaVersion {
-        case 1:
-            return decodeVersion1(data, using: decoder)
+        case 1, 2:
+            // Schema 2 is additive: the same bodies, plus two required
+            // snapshot settings that schema 1 implies (kg, §3 90 s).
+            return decodeVersions1And2(data, using: decoder)
         default:
             return .malformed(.unsupportedOlderSchemaVersion(header.schemaVersion))
         }
@@ -110,22 +112,22 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
         let schemaVersion: Int
     }
 
-    /// Decodes all version-1 details in the second and final JSON pass. The
-    /// header-only first pass is intentionally the only work done for held
-    /// future versions.
-    private static func decodeVersion1(
+    /// Decodes all version-1 and version-2 details in the second and final
+    /// JSON pass. The header-only first pass is intentionally the only work
+    /// done for held future versions.
+    private static func decodeVersions1And2(
         _ data: Data,
         using decoder: JSONDecoder
     ) -> BurlySyncDecodeResult {
         do {
-            let envelope = try decoder.decode(Version1Envelope.self, from: data)
+            let envelope = try decoder.decode(VersionedEnvelope.self, from: data)
             return .decoded(
                 BurlySyncEnvelope(
                     schemaVersion: envelope.schemaVersion,
                     payload: envelope.payload
                 )
             )
-        } catch let error as Version1DecodingError {
+        } catch let error as VersionedDecodingError {
             switch error {
             case let .unknownKind(rawValue):
                 return .malformed(.unknownKind(rawValue))
@@ -137,7 +139,7 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
         }
     }
 
-    private struct Version1Envelope: Decodable {
+    private struct VersionedEnvelope: Decodable {
         let schemaVersion: Int
         let payload: BurlySyncPayload
 
@@ -150,12 +152,15 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
             schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
             let rawKind = try container.decode(String.self, forKey: .kind)
             guard let kind = BurlySyncPayloadKind(rawValue: rawKind) else {
-                throw Version1DecodingError.unknownKind(rawKind)
+                throw VersionedDecodingError.unknownKind(rawKind)
             }
 
             do {
                 switch kind {
                 case .snapshot:
+                    if schemaVersion >= 2 {
+                        _ = try container.decode(StrictSnapshotSettings.self, forKey: .payload)
+                    }
                     payload = .snapshot(try container.decode(BurlySnapshotPayloadDTO.self, forKey: .payload))
                 case .session:
                     payload = .session(try container.decode(BurlySessionPayloadDTO.self, forKey: .payload))
@@ -163,12 +168,12 @@ public struct BurlySyncEnvelope: Sendable, Equatable, Encodable {
                     payload = .digest(try container.decode(BurlyDigestPayloadDTO.self, forKey: .payload))
                 }
             } catch {
-                throw Version1DecodingError.invalidPayload(kind)
+                throw VersionedDecodingError.invalidPayload(kind)
             }
         }
     }
 
-    private enum Version1DecodingError: Error {
+    private enum VersionedDecodingError: Error {
         case unknownKind(String)
         case invalidPayload(BurlySyncPayloadKind)
     }

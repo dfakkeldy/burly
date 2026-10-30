@@ -143,7 +143,7 @@ struct BurlySyncWireContractTests {
 
         #expect(BurlySyncEnvelope.decode(missingIsWarmup) == .malformed(.invalidPayload(.digest)))
 
-        let expected = BurlySyncEnvelope(payload: .digest(
+        let expected = BurlySyncEnvelope(schemaVersion: 1, payload: .digest(
             BurlyDigestPayloadDTO(
                 snapshotVersion: 3,
                 lastPerformance: [
@@ -221,7 +221,7 @@ struct BurlySyncWireContractTests {
         }
         """.data(using: .utf8)!
 
-        let expected = BurlySyncEnvelope(payload: .digest(
+        let expected = BurlySyncEnvelope(schemaVersion: 1, payload: .digest(
             BurlyDigestPayloadDTO(snapshotVersion: 0, lastPerformance: [], ackedSessionIDs: [])
         ))
         #expect(BurlySyncEnvelope.decode(json) == .decoded(expected))

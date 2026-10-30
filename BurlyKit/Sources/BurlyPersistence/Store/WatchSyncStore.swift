@@ -15,19 +15,28 @@ public struct WatchSyncStateData: Sendable, Equatable, Codable {
     public var schemaVersion: Int
     public var lastAppliedSnapshotVersion: Int?
     public var lastAckedSessionIDs: Set<UUID>
+    /// The phone's display unit from the last applied snapshot. Kilograms
+    /// until one arrives, matching the phone's own default.
+    public var displayUnit: WeightUnit
+    /// The phone's §3 global rest default from the last applied snapshot.
+    public var restDefault: TimeInterval
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, lastAppliedSnapshotVersion, lastAckedSessionIDs
+        case schemaVersion, lastAppliedSnapshotVersion, lastAckedSessionIDs, displayUnit, restDefault
     }
 
     public init(
         schemaVersion: Int = 1,
         lastAppliedSnapshotVersion: Int? = nil,
-        lastAckedSessionIDs: Set<UUID> = []
+        lastAckedSessionIDs: Set<UUID> = [],
+        displayUnit: WeightUnit = .kilograms,
+        restDefault: TimeInterval = RestDuration.globalDefault
     ) {
         self.schemaVersion = schemaVersion
         self.lastAppliedSnapshotVersion = lastAppliedSnapshotVersion
         self.lastAckedSessionIDs = lastAckedSessionIDs
+        self.displayUnit = displayUnit
+        self.restDefault = RestDuration.clamped(restDefault)
     }
 
     public init(from decoder: any Decoder) throws {
@@ -36,10 +45,15 @@ public struct WatchSyncStateData: Sendable, Equatable, Codable {
         guard version == 0 || version == 1 else {
             throw WatchSyncStateDecodingError.unsupportedSchemaVersion(version)
         }
+        // The two settings are additive within journal schema 1: a journal
+        // written before they existed reads as the defaults, which is what
+        // the watch was showing then.
         self.init(
             schemaVersion: 1,
             lastAppliedSnapshotVersion: try container.decodeIfPresent(Int.self, forKey: .lastAppliedSnapshotVersion),
-            lastAckedSessionIDs: try container.decodeIfPresent(Set<UUID>.self, forKey: .lastAckedSessionIDs) ?? []
+            lastAckedSessionIDs: try container.decodeIfPresent(Set<UUID>.self, forKey: .lastAckedSessionIDs) ?? [],
+            displayUnit: try container.decodeIfPresent(WeightUnit.self, forKey: .displayUnit) ?? .kilograms,
+            restDefault: try container.decodeIfPresent(TimeInterval.self, forKey: .restDefault) ?? RestDuration.globalDefault
         )
     }
 }
