@@ -85,27 +85,21 @@ struct HistoryTabView: View {
         HistoryWeekGroup.groups(from: viewModel.sessionRows)
     }
 
-    /// A row earns the lightweight history badge only when one of its working
-    /// sets exceeds every earlier logged set for the same exercise. The Stats
-    /// projection remains the detailed PR authority; this keeps the list
-    /// honest without adding a second persistence surface.
+    /// History and Stats use the same two record kinds and tie rules.
     private var prSessionIDs: Set<UUID> {
-        var bestWeightByExercise: [UUID: Double] = [:]
-        var records = Set<UUID>()
-        for session in viewModel.sessionRows.sorted(by: { $0.startedAt < $1.startedAt }) {
-            var isRecord = false
-            for item in session.items {
-                guard let exerciseID = item.exerciseID else { continue }
-                for set in item.sets where !set.isWarmup {
-                    if set.weightKg > bestWeightByExercise[exerciseID, default: -.infinity] {
-                        isRecord = true
-                        bestWeightByExercise[exerciseID] = set.weightKg
-                    }
+        let slices = viewModel.sessionRows.flatMap { session in
+            session.items.flatMap { item in
+                item.sets.map { set in
+                    SetRecordSlice(
+                        sessionID: session.id,
+                        sessionStartedAt: session.startedAt,
+                        exerciseID: item.exerciseID,
+                        set: set
+                    )
                 }
             }
-            if isRecord { records.insert(session.id) }
         }
-        return records
+        return ExerciseProgressionStats.personalRecordSessionIDs(from: slices)
     }
 }
 
