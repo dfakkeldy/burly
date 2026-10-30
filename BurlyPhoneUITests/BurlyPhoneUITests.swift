@@ -71,16 +71,18 @@ final class BurlyPhoneUITests: XCTestCase {
         let bench = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Barbell Bench Press")).firstMatch
         XCTAssertTrue(bench.waitForExistence(timeout: 10))
         bench.tap()
-        XCTAssertEqual(menu.value as? String, "Barbell Bench Press")
-        XCTAssertGreaterThan(menu.frame.height, 100, "The long selected title must have space to wrap at largest text")
+        let selectedMenu = app.buttons.matching(identifier: "statsTab.progression.exercisePicker")
+            .matching(NSPredicate(format: "value == %@", "Barbell Bench Press")).firstMatch
+        XCTAssertTrue(selectedMenu.waitForExistence(timeout: 15))
+        XCTAssertGreaterThan(selectedMenu.frame.height, 100, "The long selected title must have space to wrap at largest text")
         attachScreenshot(from: app, name: "BurlyPhone-largestTextExercise")
         let chart = anyElement(app, identifier: "statsTab.progression.chart")
-        XCTAssertTrue(chart.exists)
-        XCTAssertGreaterThan(chart.frame.height, 400, "Plot and axes must scale with text")
-        for _ in 0..<12 {
-            if chart.isHittable { break }
+        for _ in 0..<16 {
+            if chart.exists && chart.isHittable { break }
             app.swipeUp()
         }
+        XCTAssertTrue(chart.exists)
+        XCTAssertGreaterThan(chart.frame.height, 400, "Plot and axes must scale with text")
         attachScreenshot(from: app, name: "BurlyPhone-largestTextProgression")
     }
 
