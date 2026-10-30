@@ -53,42 +53,6 @@ final class BurlyPhoneUITests: XCTestCase {
     private static let addableExerciseID = "6F4E2C1A-0000-4000-8000-00000000000A"
     private static let healthKitWorkoutID = "6F4E2C1A-0000-4000-8000-00000000000B"
 
-    @MainActor
-    func testStatsLargestTextWrapsExerciseAndScalesChart() throws {
-        let app = XCUIApplication()
-        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
-        app.launchArguments += ["-burly-skip-welcome", "-UIPreferredContentSizeCategoryName",
-            UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
-        app.launch()
-        app.tabBars.buttons["Stats"].tap()
-        let menu = app.buttons["statsTab.progression.exercisePicker"]
-        for _ in 0..<10 {
-            if menu.exists && menu.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(menu.isHittable)
-        menu.tap()
-        let bench = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Barbell Bench Press")).firstMatch
-        XCTAssertTrue(bench.waitForExistence(timeout: 10))
-        bench.tap()
-        let selectedMenu = app.buttons.matching(identifier: "statsTab.progression.exercisePicker")
-            .matching(NSPredicate(format: "value == %@", "Barbell Bench Press")).firstMatch
-        XCTAssertTrue(selectedMenu.waitForExistence(timeout: 15))
-        XCTAssertGreaterThan(selectedMenu.frame.height, 100, "The long selected title must have space to wrap at largest text")
-        attachScreenshot(from: app, name: "BurlyPhone-largestTextExercise")
-        let chart = anyElement(app, identifier: "statsTab.progression.chart")
-        let tabBar = app.tabBars.firstMatch
-        for _ in 0..<16 {
-            if chart.exists && chart.frame.maxY < tabBar.frame.minY { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(chart.exists)
-        XCTAssertGreaterThan(chart.frame.height, 400, "Plot and axes must scale with text")
-        XCTAssertLessThan(chart.frame.maxY, tabBar.frame.minY, "The date axis must scroll above the tab bar")
-        XCTAssertGreaterThan(chart.frame.maxY, app.frame.midY, "The plot must still be visible in the evidence capture")
-        attachScreenshot(from: app, name: "BurlyPhone-largestTextProgression")
-    }
-
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -648,6 +612,42 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertTrue(app.buttons["historyDetail.exercisePicker.\(Self.benchPressExerciseID)"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["historyDetail.exercisePicker.\(Self.backSquatExerciseID)"].exists)
         attachScreenshot(from: app, name: "BurlyPhone-archivedExerciseHistory")
+    }
+
+    @MainActor
+    func testStatsLargestTextWrapsExerciseAndScalesChart() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome", "-UIPreferredContentSizeCategoryName",
+            UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        app.tabBars.buttons["Stats"].tap()
+        let menu = app.buttons["statsTab.progression.exercisePicker"]
+        for _ in 0..<10 {
+            if menu.exists && menu.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(menu.isHittable)
+        menu.tap()
+        let bench = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Barbell Bench Press")).firstMatch
+        XCTAssertTrue(bench.waitForExistence(timeout: 10))
+        bench.tap()
+        let selectedMenu = app.buttons.matching(identifier: "statsTab.progression.exercisePicker")
+            .matching(NSPredicate(format: "value == %@", "Barbell Bench Press")).firstMatch
+        XCTAssertTrue(selectedMenu.waitForExistence(timeout: 15))
+        XCTAssertGreaterThan(selectedMenu.frame.height, 100, "The long selected title must have space to wrap at largest text")
+        attachScreenshot(from: app, name: "BurlyPhone-largestTextExercise")
+        let chart = anyElement(app, identifier: "statsTab.progression.chart")
+        let tabBar = app.tabBars.firstMatch
+        for _ in 0..<16 {
+            if chart.exists && chart.frame.maxY < tabBar.frame.minY { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(chart.exists)
+        XCTAssertGreaterThan(chart.frame.height, 400, "Plot and axes must scale with text")
+        XCTAssertLessThan(chart.frame.maxY, tabBar.frame.minY, "The date axis must scroll above the tab bar")
+        XCTAssertGreaterThan(chart.frame.maxY, app.frame.midY, "The plot must still be visible in the evidence capture")
+        attachScreenshot(from: app, name: "BurlyPhone-largestTextProgression")
     }
 
     /// Spec §7 acceptance #3, empty side: each independently meaningful
