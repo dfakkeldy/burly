@@ -43,6 +43,25 @@ The existing HealthKit, sync, simulator/test hardening and privacy-readiness
 PRs remain separate. This audit does not establish completion of those
 features or physical-device acceptance.
 
+## Architecture evidence
+
+The final read-only pass checked concrete boundaries rather than treating
+module names as evidence of separation:
+
+| Boundary | Owning source / observed guard | Consequence |
+| --- | --- | --- |
+| Store isolation | `BurlyStore`, `SwiftDataStore` and `PhoneSyncCoordinator` are `@MainActor`; store methods return domain value types | Narrow expensive synchronous reads while retaining their executor/strict error contract. A detached call to the same store is not an isolation-safe optimization. |
+| Import parsing | `HevyImportModel.read` parses data/catalog in a detached task and returns a `Sendable` ParsedExport; store-backed planning returns to the main actor | The parser has a separate execution path without sending a SwiftData context to it. No cancellation/resource claim was established by this source pass. |
+| Reusable sync seams | Package manifest keeps `BurlySyncMachine` and `BurlySyncAdapters` dependency-free; seam tests inspect source imports and the target declarations | Domain binding sits above these seams. The green package suite includes these guards; app wiring remains separate work. |
+| Journal recovery | File-backed sync state protects load/save with an instance NSLock, rejects an existing journal with no valid record, and validates checksums/identity bounds | Malformed journal-line decoding is deliberate recovery, not evidence by itself of an ignored write failure. Corruption-matrix tests cover fallback and compaction. This is not a cross-process locking audit. |
+
+The digest publisher still invokes synchronous full-history generation from
+the main actor. The measured fetch cost motivates #24's narrower projection;
+no UI stall, dropped-frame count or physical-device trace was observed here.
+Optional watch metadata and engine-error paths were inspected without
+changing the separately retained watch scope. This pass found no additional
+reproducible defect.
+
 ## Verification and exact delivered heads
 
 | Delivery / run | Result |
