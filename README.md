@@ -4,7 +4,8 @@ Burly is a free, open-source, watch-first lifting tracker for iPhone and
 Apple Watch.
 
 **Status: under active development.** Nothing here is ready for daily
-use. There is no App Store listing and no Fastlane pipeline.
+use. There is no App Store listing yet; its text and the lane that uploads it
+live in `fastlane/` (see DECISIONS.md).
 
 ## What works today
 

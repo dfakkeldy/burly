@@ -1,0 +1,20 @@
+Burly is a lifting tracker built for Apple Watch. Start a routine on your wrist, log each set with a tap, and let the rest timer tell you when to go again. Your iPhone is where you plan routines and look back at your training.
+
+ON APPLE WATCH
+• Log sets from your wrist, with your last weight and reps right there
+• A rest timer between sets
+• Finish or discard a workout, or pick it up again where you left off
+• Save each finished workout to Apple Health, with heart rate and energy from the watch's sensors, if you allow it
+
+ON IPHONE
+• Build routines from a catalog of exercises, or add your own
+• History grouped by week, with an editor for sets, warm-ups, exercises and notes
+• Stats for exercise progression, weekly volume, muscle split and consistency
+• Kilograms or pounds, and your own default rest time
+• Import your history from a Hevy CSV export, with a preview before anything is saved
+
+PRIVATE BY DESIGN
+No account, no ads, no analytics and no tracking. Your workouts stay on your iPhone and Apple Watch, which talk to each other directly. Burly itself never sends your data anywhere.
+
+FREE AND OPEN SOURCE
+Burly is free software under the GNU General Public License, version 3 or later. The complete source code is on GitHub.

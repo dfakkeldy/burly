@@ -1,0 +1,9 @@
+No account or sign-in is needed, and the app has no in-app purchases.
+
+To try it: on iPhone, open the Routines tab and create a routine with an exercise or two. It appears on the paired Apple Watch, where you start it (or start an Empty session), log sets with the Log set button, and end the workout from the ... menu with End workout, then Finish.
+
+Apple Health: the watch asks for Health access the first time a workout starts. With access, a finished workout is saved to Health with heart rate and active energy. If access is declined, workouts still log and save inside Burly; nothing else changes.
+
+Import from Hevy (iPhone, Settings) is optional and needs a CSV export from the Hevy app.
+
+Burly is free, open-source software (GPL-3.0-or-later): https://github.com/dfakkeldy/burly

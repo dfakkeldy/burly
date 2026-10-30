@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The App Store listing as code. Builds still upload with xcodebuild from
+# .github/workflows/release.yml; these lanes only edit the store page:
+# metadata/ (text), screenshots/ (once captured) and the review notes.
+# See DECISIONS.md, 2026-10-30.
+#
+#   bundle exec fastlane check_listing   # offline: App Store length limits
+#   bundle exec fastlane listing         # upload; needs the ASC_* key env vars
+#
+# `listing` never uploads a binary and never submits for review.
+
+default_platform(:ios)
+
+# App Store Connect's limits, in characters.
+LISTING_LIMITS = {
+  "subtitle.txt" => 30,
+  "promotional_text.txt" => 170,
+  "keywords.txt" => 100,
+  "description.txt" => 4000,
+}.freeze
+
+REQUIRED_LISTING_FILES = %w[description.txt keywords.txt support_url.txt privacy_url.txt].freeze
+
+platform :ios do
+  desc "Check every locale's listing text against App Store Connect's limits"
+  lane :check_listing do
+    problems = []
+    Dir.glob(File.join(__dir__, "metadata", "*")).select { |dir| File.directory?(dir) }.each do |dir|
+      locale = File.basename(dir)
+      next if locale == "review_information"
+
+      REQUIRED_LISTING_FILES.each do |file|
+        path = File.join(dir, file)
+        problems << "#{locale}/#{file} is missing or empty" unless File.exist?(path) && !File.read(path).strip.empty?
+      end
+      LISTING_LIMITS.each do |file, limit|
+        path = File.join(dir, file)
+        next unless File.exist?(path)
+
+        length = File.read(path).strip.length
+        problems << "#{locale}/#{file} is #{length} characters (limit #{limit})" if length > limit
+      end
+    end
+    UI.user_error!("Listing problems:\n#{problems.join("\n")}") unless problems.empty?
+    UI.success("Listing text is within App Store Connect's limits")
+  end
+
+  desc "Upload the listing to App Store Connect (no binary, no submission)"
+  desc "Needs ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY (the .p8 text)."
+  desc "Optional: BURLY_APP_VERSION (the App Store version to edit or create, default 1.0.0)"
+  desc "and REVIEW_CONTACT_FIRST_NAME/LAST_NAME/EMAIL/PHONE, kept out of this public repo."
+  lane :listing do
+    check_listing
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_PRIVATE_KEY")
+    )
+
+    review = { notes: File.read(File.join(__dir__, "metadata", "review_information", "notes.txt")).strip }
+    contact = {
+      first_name: ENV["REVIEW_CONTACT_FIRST_NAME"],
+      last_name: ENV["REVIEW_CONTACT_LAST_NAME"],
+      email_address: ENV["REVIEW_CONTACT_EMAIL"],
+      phone_number: ENV["REVIEW_CONTACT_PHONE"],
+    }
+    review.merge!(contact) if contact.values.all? { |value| value && !value.empty? }
+
+    screenshots = File.join(__dir__, "screenshots")
+    deliver(
+      api_key: api_key,
+      app_version: ENV.fetch("BURLY_APP_VERSION", "1.0.0"),
+      skip_binary_upload: true,
+      skip_screenshots: Dir.glob(File.join(screenshots, "**", "*.png")).empty?,
+      overwrite_screenshots: true,
+      app_review_information: review,
+      submit_for_review: false,
+      run_precheck_before_submit: false,
+      force: true # no HTML preview to confirm in CI
+    )
+  end
+end

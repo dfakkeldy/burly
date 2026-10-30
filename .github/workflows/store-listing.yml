@@ -1,0 +1,70 @@
+name: Store listing
+
+# The App Store listing as code (fastlane/metadata, fastlane/screenshots).
+# Builds upload from release.yml; this only edits the store page.
+#
+# - pull_request: checks the listing text against App Store Connect's limits.
+#   Offline, no secrets.
+# - workflow_dispatch: uploads the listing with the ASC API key secrets. Never
+#   uploads a binary and never submits for review. Only people with write
+#   access can dispatch it, and the job is guarded so a pull_request event can
+#   never reach the secrets (see release.yml for the same reasoning).
+on:
+  pull_request:
+    paths:
+      - 'fastlane/**'
+      - 'Gemfile'
+      - 'Gemfile.lock'
+      - '.github/workflows/store-listing.yml'
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: 'App Store version to edit or create'
+        required: true
+        default: '1.0.0'
+
+concurrency:
+  group: store-listing-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check listing text
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - run: bundle exec fastlane check_listing
+
+  upload:
+    name: Upload listing to App Store Connect
+    needs: check
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - name: Upload with fastlane deliver
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          BURLY_APP_VERSION: ${{ inputs.app_version }}
+          # Optional; App Review needs a contact before submission. Kept in
+          # secrets so personal details stay out of this public repo.
+          REVIEW_CONTACT_FIRST_NAME: ${{ secrets.REVIEW_CONTACT_FIRST_NAME }}
+          REVIEW_CONTACT_LAST_NAME: ${{ secrets.REVIEW_CONTACT_LAST_NAME }}
+          REVIEW_CONTACT_EMAIL: ${{ secrets.REVIEW_CONTACT_EMAIL }}
+          REVIEW_CONTACT_PHONE: ${{ secrets.REVIEW_CONTACT_PHONE }}
+        run: bundle exec fastlane listing
