@@ -325,6 +325,7 @@ public enum HevyCSVImporter {
 
             sessions.append(SessionData(
                 id: sessionID,
+                routineName: accumulator.title,
                 startedAt: accumulator.startDate,
                 endedAt: accumulator.endDate,
                 state: .logged,

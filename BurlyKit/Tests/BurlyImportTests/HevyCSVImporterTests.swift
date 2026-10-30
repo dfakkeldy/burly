@@ -31,6 +31,26 @@ struct HevyCSVImporterTests {
         CivilDateTime(dayCount: Self.referenceStartDate.dayCount + dayOffset, minuteOfDay: minuteOfDay)
     }
 
+    @Test("workout titles survive as display names without linking a routine")
+    func workoutTitleSurvivesImport() throws {
+        let title = "Upper body, \"Day A\" — séance"
+        let fixture = FixtureSession(
+            title: title,
+            start: start(),
+            durationMinutes: 30,
+            exercises: [FixtureExercise(
+                title: "Bench Press (Barbell)", muscle: "Chest",
+                sets: [FixtureSet(weightKg: 80, reps: 5)]
+            )]
+        )
+        let result = try HevyCSVImporter.parse(
+            csv: HevyCSVGenerator.generate(sessions: [fixture]), catalog: try loadCatalog()
+        )
+        let session = try #require(result.sessions.first)
+        #expect(session.routineName == title)
+        #expect(session.routineID == nil)
+    }
+
     // MARK: - Bodyweight / warmup (acceptance #1)
 
     @Test("a 0/empty weight_kg column maps to the 0 kg bodyweight convention")
