@@ -388,8 +388,15 @@ private struct HevyImportPreviewView: View {
                     .accessibilityIdentifier("hevyImport.doneButton")
                 } else {
                     Button(action: onImport) {
-                        Label(importTitle, systemImage: "square.and.arrow.down")
-                            .frame(maxWidth: .infinity)
+                        Label {
+                            Text(importTitle)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("hevyImport.importButton")

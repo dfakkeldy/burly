@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import XCTest
+import UIKit
 
 /// The Hevy CSV import flow end to end (spec §8; task m7-02): welcome ->
 /// Import from Hevy -> preview -> import -> summary -> History, then the
@@ -43,6 +44,42 @@ final class ImportUITests: XCTestCase {
     private static let scenarioEmpty = "empty"
     private static let fixtureKey = "BURLY_PHONE_UI_TEST_HEVY_FIXTURE"
     private static let fixtureSynthetic = "synthetic"
+
+    func testLargestTextImportActionWrapsAndImports() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
+        app.launchEnvironment[Self.fixtureKey] = Self.fixtureSynthetic
+        app.launchArguments += ["-burly-skip-welcome", "-UIPreferredContentSizeCategoryName",
+            UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        app.tabBars.buttons["Settings"].tap()
+        let importRow = element(app, "settingsTab.importRow")
+        XCTAssertTrue(importRow.waitForExistence(timeout: 10))
+        importRow.tap()
+        let heading = app.staticTexts["hevyImport.intro.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(heading.frame.height, 35, "The largest text override must reach the app")
+        let choose = app.buttons["hevyImport.chooseFileButton"]
+        for _ in 0..<16 {
+            if choose.exists && choose.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(choose.isHittable)
+        choose.tap()
+        let action = app.buttons["hevyImport.importButton"]
+        for _ in 0..<24 {
+            if action.exists && action.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(action.isHittable)
+        XCTAssertEqual(action.label, "Import 3 Workouts")
+        XCTAssertGreaterThan(action.frame.height, 160, "The largest title needs more than the previously truncated two lines")
+        attachScreenshot(from: app, name: "BurlyPhone-largestTextImportAction")
+        action.tap()
+        XCTAssertTrue(element(app, "hevyImport.summary.heading").waitForExistence(timeout: 30))
+        XCTAssertEqual(element(app, "hevyImport.summary.workoutsAdded").value as? String, "3")
+    }
 
     func testWelcomeImportPreviewMatchesSummaryThenReimportAddsNothing() throws {
         continueAfterFailure = false
