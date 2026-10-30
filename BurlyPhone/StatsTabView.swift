@@ -271,7 +271,9 @@ struct StatsTabView: View {
                         Circle()
                             .fill(day.hasSession ? Color.indigo : Color.secondary.opacity(0.18))
                             .frame(width: 12, height: 12)
-                            .accessibilityLabel(day.hasSession ? "Workout logged" : "No workout")
+                            .accessibilityLabel(day.date.formatted(date: .complete, time: .omitted))
+                            .accessibilityValue(day.hasSession ? "Workout logged" : "No workout")
+                            .accessibilityIdentifier("statsTab.consistency.day.\(day.date.timeIntervalSince1970)")
                     }
                 }
                 .accessibilityElement(children: .contain)

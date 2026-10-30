@@ -557,6 +557,31 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-statsEmpty")
     }
 
+    @MainActor
+    func testConsistencyDaysExposeDatesAndWorkoutStatus() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+        app.tabBars.buttons["Stats"].tap()
+
+        let days = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "statsTab.consistency.day.")
+        )
+        for _ in 0..<12 {
+            if days.firstMatch.exists { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(days.firstMatch.waitForExistence(timeout: 15))
+        let elements = days.allElementsBoundByIndex
+        XCTAssertEqual(elements.count, 28)
+        XCTAssertEqual(Set(elements.map(\.label)).count, 28, "Every day must announce a distinct date")
+        let statuses = Set(elements.compactMap { $0.value as? String })
+        XCTAssertEqual(statuses, ["Workout logged", "No workout"])
+        XCTAssertTrue(elements.allSatisfy { !$0.label.isEmpty && $0.label != "Workout logged" && $0.label != "No workout" })
+        attachScreenshot(from: app, name: "BurlyPhone-consistencyDates")
+    }
+
     /// Finding 6, fail-closed side: once a scenario is recognized, a seed
     /// that cannot be built must surface as the storage error state — never
     /// fall through to the on-device store, never render as an ordinary
