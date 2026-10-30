@@ -89,74 +89,63 @@ final class HealthKitUITests: XCTestCase {
         legDayRow.tap()
     }
 
-    /// The Health sheet is system UI hosted over the app; its button labels
-    /// are matched by text because it carries no identifiers of ours.
+    /// The Health sheet is system UI, hosted by the watch's Carousel process
+    /// rather than the app, so it is found there by Health's own
+    /// identifiers.
     ///
     /// On watchOS it opens as a "Health Access" card whose only button is
-    /// Review; the per-type screen behind it carries the answer, possibly
-    /// below the fold. Each label is tapped at most once, in order, and a
-    /// failed answer attaches both accessibility trees so the next run can
-    /// name the real buttons.
+    /// Review, then one page per access kind (write, then read): a switch per
+    /// type and a Next cell that ends the last page. Allow turns every switch
+    /// on; decline leaves them all off and steps through, which is what a
+    /// person declining does.
     private func answerHealthPrompt(_ app: XCUIApplication, allow: Bool) {
-        let hosts = [app, XCUIApplication(bundleIdentifier: "com.apple.Carousel")]
-        let steps = allow
-            ? ["Review", "Turn On All", "Turn On All Categories", "Allow", "Next", "Done"]
-            : ["Review", "Don’t Allow", "Don't Allow", "Not Now", "Done"]
-        let answers: Set<String> = allow
-            ? ["Allow", "Done"]
-            : ["Don’t Allow", "Don't Allow", "Not Now", "Done", "Close", "Cancel"]
-        var tapped: [String] = []
-        var swipes = 0
-        let deadline = Date().addingTimeInterval(45)
-        while Date() < deadline, !tapped.contains(where: answers.contains) {
-            if let label = tapFirst(hosts, labels: steps.filter { !tapped.contains($0) }) {
-                tapped.append(label)
-                swipes = 0
-                Thread.sleep(forTimeInterval: 1)
+        let carousel = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let review = carousel.buttons["Review"]
+        let toggles = carousel.switches.matching(identifier: "UIA.Health.WatchAuthSheet.SwitchOutlet")
+        let next = carousel.cells["UIA.Health.WatchAuthSheet.ConfigureCell.Button"]
+
+        XCTAssertTrue(review.waitForExistence(timeout: 20), "Expected the Health sheet at the first session start")
+        review.tap()
+        var steps = ["Review"]
+        let deadline = Date().addingTimeInterval(60)
+        // A page that no longer shows Next within a few seconds means the
+        // sheet has closed.
+        while Date() < deadline, next.waitForExistence(timeout: 5) {
+            if allow {
+                for _ in 0..<4 {
+                    let off = toggles.allElementsBoundByIndex.filter { "\($0.value ?? "")" == "0" }
+                    if let toggle = off.first(where: { $0.isHittable }) {
+                        toggle.tap()
+                        steps.append("on")
+                    } else if off.isEmpty {
+                        break
+                    } else {
+                        carousel.swipeUp()
+                    }
+                }
+            }
+            if !next.isHittable {
+                carousel.swipeUp()
                 continue
             }
-            if !tapped.isEmpty, swipes < 6 {
-                // The answer buttons can sit below the type toggles.
-                app.swipeUp()
-                swipes += 1
-            } else if !allow, !tapped.isEmpty, let label = tapFirst(hosts, labels: ["Close", "Cancel"]) {
-                // Dismissing the review without turning anything on.
-                tapped.append(label)
-            }
-            Thread.sleep(forTimeInterval: 0.5)
+            steps.append(next.label)
+            next.tap()
+            Thread.sleep(forTimeInterval: 1)
         }
         attachScreenshot(from: app, name: allow ? "BurlyWatch-health-allowed" : "BurlyWatch-health-declined")
-        let answered = tapped.contains(where: answers.contains)
-        if !answered {
-            for (name, host) in zip(["app", "carousel"], hosts) {
+        if next.exists || review.exists {
+            for (name, host) in [("app", app), ("carousel", carousel)] {
                 let tree = XCTAttachment(string: host.debugDescription)
                 tree.name = "health-sheet-tree-\(name)"
                 tree.lifetime = .keepAlways
                 add(tree)
             }
+            XCTFail("Health sheet still showing after \(steps)")
         }
-        XCTAssertTrue(answered, "Expected to answer the Health sheet at the first session start; tapped \(tapped)")
-        let logButton = app.buttons["logSetButton"]
         XCTAssertTrue(
-            waitFor(timeout: 10) { logButton.exists && logButton.isHittable },
+            app.buttons["logSetButton"].waitForExistence(timeout: 10),
             "Expected the logging screen after the Health sheet"
         )
-    }
-
-    /// Looks in the app first, then in the watch's system shell, in case
-    /// the sheet is hosted outside the app's accessibility tree. Returns the
-    /// label it tapped.
-    private func tapFirst(_ hosts: [XCUIApplication], labels: [String]) -> String? {
-        for label in labels {
-            for host in hosts {
-                let button = host.buttons[label]
-                if button.exists, button.isHittable {
-                    button.tap()
-                    return label
-                }
-            }
-        }
-        return nil
     }
 
     private func logOneSet(_ app: XCUIApplication) {
