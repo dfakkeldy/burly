@@ -72,6 +72,7 @@
 		CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */; };
 		D8E90E4D6277CB5652B0A304 /* ResumeSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */; };
 		921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */; };
+		F1D73D3CCA9AA52605D5B9ED /* PairedSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B78FFA507F13E69F116CEAEF /* PairedSyncUITests.swift */; };
 		94A77A6BFFAF15718B081B35 /* UnreadableSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */; };
 		EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */; };
 		B4E29C6C90479A29C93AE4FF /* HevyImportEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */; };
@@ -80,6 +81,7 @@
 		5845CF35C913070F9B7DC824 /* HevyImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3977FDEC11E10ABAC071362D /* HevyImportView.swift */; };
 		EDBAF78E0925F15C703E299B /* HevySyntheticFixture.csv in Resources */ = {isa = PBXBuildFile; fileRef = 5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */; };
 		4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B93D51444666972BC5B477A8 /* ImportUITests.swift */; };
+		7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */; };
 		B03EFAC4CE507E8E5A27456F /* BurlyImport in Frameworks */ = {isa = PBXBuildFile; productRef = EE2761409B9545392090D8F1 /* BurlyImport */; };
 		6FFE781D13B074329398E691 /* BurlyPhoneSync in Frameworks */ = {isa = PBXBuildFile; productRef = 22884904E09A66F1F8C220C3 /* BurlyPhoneSync */; };
 		303590180BFFF7874C72D48D /* BurlySyncAdapters in Frameworks */ = {isa = PBXBuildFile; productRef = DFBAB7B67833CCD7540A36D3 /* BurlySyncAdapters */; };
@@ -187,6 +189,7 @@
 		8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SaveFailureUITests.swift; sourceTree = "<group>"; };
 		7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeSessionView.swift; sourceTree = "<group>"; };
 		18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeUITests.swift; sourceTree = "<group>"; };
+		B78FFA507F13E69F116CEAEF /* PairedSyncUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairedSyncUITests.swift; sourceTree = "<group>"; };
 		F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UnreadableSessionView.swift; sourceTree = "<group>"; };
 		0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRecoveryUITests.swift; sourceTree = "<group>"; };
 		B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportEntry.swift; sourceTree = "<group>"; };
@@ -195,6 +198,7 @@
 		3977FDEC11E10ABAC071362D /* HevyImportView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportView.swift; sourceTree = "<group>"; };
 		5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = HevySyntheticFixture.csv; sourceTree = "<group>"; };
 		B93D51444666972BC5B477A8 /* ImportUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImportUITests.swift; sourceTree = "<group>"; };
+		E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairedSyncUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -280,6 +284,7 @@
 				8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */,
 				8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */,
 				18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */,
+				B78FFA507F13E69F116CEAEF /* PairedSyncUITests.swift */,
 				0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */,
 			);
 			name = BurlyWatchUITests;
@@ -345,6 +350,7 @@
 				E096219D3CBCC86425088168 /* BurlyPhoneUITests.swift */,
 				831A69A7A453C868EB8BC404 /* SettingsUITests.swift */,
 				B93D51444666972BC5B477A8 /* ImportUITests.swift */,
+				E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */,
 			);
 			name = BurlyPhoneUITests;
 			path = BurlyPhoneUITests;
@@ -605,6 +611,7 @@
 				20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */,
 				CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */,
 				921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */,
+				F1D73D3CCA9AA52605D5B9ED /* PairedSyncUITests.swift in Sources */,
 				EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -616,6 +623,7 @@
 				258796C96795AAD47DC0760B /* BurlyPhoneUITests.swift in Sources */,
 				052946BFA2912DD9B70C62B2 /* SettingsUITests.swift in Sources */,
 				4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */,
+				7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
