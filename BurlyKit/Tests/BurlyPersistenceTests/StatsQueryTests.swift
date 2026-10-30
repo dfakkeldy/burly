@@ -93,6 +93,31 @@ struct StatsQueryTests {
         #expect(try reopened.loggedSetSlices(exerciseID: UUID(), since: nil, through: nil).isEmpty)
     }
 
+    @Test("all-time exercise reads follow a placeholder merge after inverse caches were read")
+    func allTimeProjectionFollowsMergeImmediately() throws {
+        let store = try makeStore()
+        var placeholder = Fixture.exercise(name: "Custom", origin: .custom)
+        placeholder.needsNaming = true
+        let destination = Fixture.exercise(name: "Row")
+        try store.createExercise(placeholder)
+        try store.createExercise(destination)
+        let session = loggedSession(
+            exercise: placeholder, startedAt: Fixture.epoch,
+            completedAt: Fixture.epoch, weightKg: 60, reps: 8
+        )
+        try store.createSession(session)
+        #expect(try store.loggedSetSlices(exerciseID: placeholder.id, since: nil, through: nil).count == 1)
+        #expect(try store.loggedSetSlices(exerciseID: destination.id, since: nil, through: nil).isEmpty)
+
+        try store.mergePlaceholderExercise(id: placeholder.id, into: destination.id, at: Fixture.epoch)
+
+        #expect(try store.loggedSetSlices(exerciseID: placeholder.id, since: nil, through: nil).isEmpty)
+        let merged = try store.loggedSetSlices(exerciseID: destination.id, since: nil, through: nil)
+        #expect(merged.map(\.sessionID) == [session.id])
+        #expect(merged.map(\.set.weight.kg) == [60])
+        #expect(merged.allSatisfy { $0.exerciseID == destination.id })
+    }
+
     // MARK: - Date bounds (exercise-bounded form)
 
     @Test("since/through bound completedAt: a set outside the window is excluded, one at each edge is included")
