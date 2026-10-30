@@ -55,10 +55,24 @@ final class PhoneAppModel {
         #endif
         do {
             let store = try SwiftDataStore.phone()
+            Self.applyCuratedCatalog(to: store)
             storeResult = .success(store)
             startSync(store)
         } catch {
             storeResult = .failure(error)
+        }
+    }
+
+    /// §9's curated catalog, before sync's launch push reads the store. It
+    /// inserts only on a newer seed version and never touches an existing
+    /// exercise, so every later launch is a no-op. A failure leaves the app
+    /// usable with custom exercises, so it is logged, not surfaced.
+    private static func applyCuratedCatalog(to store: SwiftDataStore) {
+        do {
+            try SeedLoader.applyBundled(to: store)
+        } catch {
+            Logger(subsystem: "com.burly.lifting", category: "catalog")
+                .error("curated catalog not applied: \(String(describing: error), privacy: .public)")
         }
     }
 
