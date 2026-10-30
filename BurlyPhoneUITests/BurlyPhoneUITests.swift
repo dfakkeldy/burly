@@ -255,6 +255,7 @@ final class BurlyPhoneUITests: XCTestCase {
         // assertions intentionally do not inspect chart-renderer internals;
         // they prove each chart's data branch rather than its empty branch.
         app.tabBars.buttons["Stats"].tap()
+        XCTAssertTrue(app.navigationBars["Stats"].waitForExistence(timeout: 5), "Stats needs its own navigation host")
         for chartIdentifier in [
             "statsTab.progression.chart",
             "statsTab.volume.chart",
@@ -266,6 +267,9 @@ final class BurlyPhoneUITests: XCTestCase {
                 "Expected populated scenario to render \(chartIdentifier)"
             )
         }
+        XCTAssertTrue(anyElement(app, identifier: "statsTab.progression.legend.topSet").exists)
+        XCTAssertTrue(anyElement(app, identifier: "statsTab.progression.legend.estimate").exists)
+        attachScreenshot(from: app, name: "BurlyPhone-progressionSeries")
 
         // Routines shows the seeded routines, each keyed by its id.
         app.tabBars.buttons["Routines"].tap()

@@ -22,8 +22,9 @@ struct StatsTabView: View {
     @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
 
     var body: some View {
-        content
-            .navigationTitle("Stats")
+        NavigationStack {
+            content.navigationTitle("Stats")
+        }
             .task { reloadStats() }
             .onChange(of: progressionRange) { _, _ in reloadStats() }
             .onChange(of: volumeRange) { _, _ in reloadStats() }
@@ -102,16 +103,18 @@ struct StatsTabView: View {
                         ForEach(stats.progression.points, id: \.sessionID) { point in
                             LineMark(
                                 x: .value("Session", point.date),
-                                y: .value(seriesLabel("Top set"), unit.displayValue(of: point.topWeight))
+                                y: .value(seriesLabel("Top set"), unit.displayValue(of: point.topWeight)),
+                                series: .value("Series", "Top set")
                             )
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(by: .value("Series", "Top set"))
                             .symbol(.circle)
 
                             LineMark(
                                 x: .value("Session", point.date),
-                                y: .value(seriesLabel("Estimated 1RM"), unit.displayValue(fromKilograms: point.estimatedOneRepMax))
+                                y: .value(seriesLabel("Estimated 1RM"), unit.displayValue(fromKilograms: point.estimatedOneRepMax)),
+                                series: .value("Series", "Estimated 1RM")
                             )
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(by: .value("Series", "Estimated 1RM"))
                             .symbol(.diamond)
                         }
 
@@ -121,14 +124,21 @@ struct StatsTabView: View {
                                 y: .value(seriesLabel("Personal record"), unit.displayValue(fromKilograms: record.value))
                             )
                             .symbol(record.kind == .topWeight ? .triangle : .square)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(by: .value("Series", "Personal record"))
                         }
                     }
+                    .chartForegroundStyleScale([
+                        "Top set": Color.blue,
+                        "Estimated 1RM": Color.orange,
+                        "Personal record": Color.red
+                    ])
                     .chartYAxisLabel(unit.symbol)
                     .chartLegend(position: .bottom, alignment: .leading) {
                         HStack(spacing: 16) {
                             Label("Top set", systemImage: "circle.fill").foregroundStyle(.blue)
+                                .accessibilityIdentifier("statsTab.progression.legend.topSet")
                             Label("Estimated 1RM", systemImage: "diamond.fill").foregroundStyle(.orange)
+                                .accessibilityIdentifier("statsTab.progression.legend.estimate")
                             Label("Personal record", systemImage: "triangle.fill").foregroundStyle(.red)
                         }
                         .font(.caption)
