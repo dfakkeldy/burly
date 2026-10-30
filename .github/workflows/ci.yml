@@ -3,6 +3,9 @@ name: CI
 on:
   push:
   pull_request:
+    # `labeled` so adding the sim-acceptance label starts the simulator job
+    # on a PR; the other three are the pull_request defaults.
+    types: [opened, synchronize, reopened, labeled]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -79,9 +82,17 @@ jobs:
 
   sim-acceptance:
     name: Simulator acceptance
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Every push to main, plus any PR labelled sim-acceptance, so a change
+    # that only the simulator can judge is proven before it merges.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'sim-acceptance'))
     runs-on: macos-26
-    timeout-minutes: 45
+    # On 2026-10-29 the phone suite alone (16 tests) took 27 minutes here,
+    # on top of about 10 minutes of booting and building; at 45 the job was
+    # cancelled before the watch suite ran.
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

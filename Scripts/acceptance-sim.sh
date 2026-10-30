@@ -489,6 +489,37 @@ log "resolved '$WATCH_NAME' -> $WATCH_UDID"
 xcrun simctl bootstatus "$IPHONE_UDID" -b
 xcrun simctl bootstatus "$WATCH_UDID" -b
 
+# A booted device is not yet a device xcodebuild can see. On a fresh CI
+# runner (2026-10-29, macos-26 image 20261021) xcodebuild listed no
+# simulators at all right after both boots finished and failed with
+# "Unable to find a device matching the provided destination specifier".
+# Poll -showdestinations until the device appears, and fail with the
+# simulator inventory in the log instead of a bare destination error.
+DESTINATION_WAIT_SECONDS=$((5 * 60))
+
+wait_for_destination() {
+  local scheme="$1" device_name="$2" udid="$3"
+  local deadline=$((SECONDS + DESTINATION_WAIT_SECONDS)) destinations
+  while true; do
+    # Captured, not piped into `grep -q`: under pipefail an early grep exit
+    # can SIGPIPE xcodebuild and turn a match into a failure.
+    destinations="$(xcodebuild -showdestinations -project "$PROJECT" -scheme "$scheme" 2>/dev/null || true)"
+    if [[ "$destinations" == *"id:$udid"* ]]; then
+      return 0
+    fi
+    if (( SECONDS >= deadline )); then
+      log "FATAL: xcodebuild still cannot see '$device_name' ($udid) for $scheme after ${DESTINATION_WAIT_SECONDS}s; simulator inventory follows."
+      xcrun simctl list devices >&2 || true
+      exit 70
+    fi
+    log "waiting for xcodebuild to see '$device_name' ($udid) for $scheme"
+    sleep 15
+  done
+}
+
+wait_for_destination BurlyPhone "$IPHONE_NAME" "$IPHONE_UDID"
+wait_for_destination BurlyWatch "$WATCH_NAME" "$WATCH_UDID"
+
 # ---------------------------------------------------------------------------
 # Build both app targets.
 # ---------------------------------------------------------------------------

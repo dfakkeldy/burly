@@ -125,6 +125,10 @@ struct SettingsView: View {
                 Image(systemName: "heart.text.square")
                     .foregroundStyle(.pink)
             }
+            // One element, not text plus icon: on iOS 26 an uncombined
+            // Label hands its identifier to the decorative icon, which is
+            // never hittable.
+            .accessibilityElement(children: .combine)
             .accessibilityIdentifier("settingsTab.healthRow")
 
             Button {
@@ -170,6 +174,7 @@ struct SettingsView: View {
     private var aboutSection: some View {
         Section {
             LabeledContent("Version", value: Self.versionString)
+                .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("settingsTab.versionRow")
 
             Link(destination: Self.sourceCodeURL) {
