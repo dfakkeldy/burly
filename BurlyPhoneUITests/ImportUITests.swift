@@ -74,11 +74,13 @@ final class ImportUITests: XCTestCase {
         }
         XCTAssertTrue(action.isHittable)
         XCTAssertEqual(action.label, "Import 3 Workouts")
-        XCTAssertGreaterThan(action.frame.height, 160, "The largest title needs more than the previously truncated two lines")
         attachScreenshot(from: app, name: "BurlyPhone-largestTextImportAction")
+        try app.performAccessibilityAudit(for: .textClipped)
         action.tap()
         XCTAssertTrue(element(app, "hevyImport.summary.heading").waitForExistence(timeout: 30))
-        XCTAssertEqual(element(app, "hevyImport.summary.workoutsAdded").value as? String, "3")
+        let added = scrollTo(app, "hevyImport.summary.workoutsAdded")
+        XCTAssertTrue(added.exists)
+        XCTAssertEqual(added.value as? String, "3")
     }
 
     func testWelcomeImportPreviewMatchesSummaryThenReimportAddsNothing() throws {

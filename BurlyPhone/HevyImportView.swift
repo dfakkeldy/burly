@@ -279,6 +279,8 @@ private struct HevyImportPreviewView: View {
     let onChooseAnother: () -> Void
     let onDone: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private var preview: HevyImportPreview { plan.preview }
 
     var body: some View {
@@ -388,15 +390,16 @@ private struct HevyImportPreviewView: View {
                     .accessibilityIdentifier("hevyImport.doneButton")
                 } else {
                     Button(action: onImport) {
-                        Label {
+                        if dynamicTypeSize.isAccessibilitySize {
                             Text(importTitle)
                                 .lineLimit(nil)
+                                .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
-                        } icon: {
-                            Image(systemName: "square.and.arrow.down")
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Label(importTitle, systemImage: "square.and.arrow.down")
+                                .frame(maxWidth: .infinity)
                         }
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("hevyImport.importButton")
