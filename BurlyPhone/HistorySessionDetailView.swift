@@ -46,7 +46,7 @@ struct HistorySessionDetailView: View {
                         ForEach(item.sets.sorted { $0.order < $1.order }) { set in
                             NavigationLink {
                                 HistorySetEditor(set: set, unit: unit) { updated in
-                                    mutate { session in
+                                    try commitMutation { session in
                                         guard let itemIndex = session.items.firstIndex(where: { $0.id == item.id }),
                                               let setIndex = session.items[itemIndex].sets.firstIndex(where: { $0.id == updated.id }) else { return }
                                         session.items[itemIndex].sets[setIndex] = updated
@@ -149,23 +149,21 @@ struct HistorySessionDetailView: View {
         item.exerciseID?.uuidString ?? "unattributed"
     }
 
-    @discardableResult
-    private func mutate(_ change: (inout SessionData) -> Void) -> Bool {
+    private func mutate(_ change: (inout SessionData) -> Void) {
+        do { try commitMutation(change) }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func commitMutation(_ change: (inout SessionData) -> Void) throws {
         var updated = session
         change(&updated)
-        do {
-            #if DEBUG
-            if failNextSaveForUITest {
-                failNextSaveForUITest = false
-                throw CocoaError(.fileWriteUnknown)
-            }
-            #endif
-            session = try viewModel.saveHistoryEdit(updated)
-            return true
-        } catch {
-            errorMessage = String(describing: error)
-            return false
+        #if DEBUG
+        if failNextSaveForUITest {
+            failNextSaveForUITest = false
+            throw CocoaError(.fileWriteUnknown)
         }
+        #endif
+        session = try viewModel.saveHistoryEdit(updated)
     }
 
     private func reindexItems(_ session: inout SessionData) {
@@ -191,7 +189,7 @@ private struct HistorySetEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     let set: SetRecordData
-    let onSave: (SetRecordData) -> Bool
+    let onSave: (SetRecordData) throws -> Void
     /// Latched for the editor's lifetime, not read live. The parent
     /// re-creates this view whenever it re-renders (including after a unit
     /// change made in the Settings tab while this screen stays pushed), but
@@ -207,9 +205,10 @@ private struct HistorySetEditor: View {
     @State private var weight: String
     @State private var reps: String
     @State private var isWarmup: Bool
+    @State private var errorMessage: String?
     @FocusState private var focusedField: Field?
 
-    init(set: SetRecordData, unit: WeightUnit, onSave: @escaping (SetRecordData) -> Bool) {
+    init(set: SetRecordData, unit: WeightUnit, onSave: @escaping (SetRecordData) throws -> Void) {
         self.set = set
         self.onSave = onSave
         let text = unit.formattedNumber(set.weight)
@@ -241,7 +240,12 @@ private struct HistorySetEditor: View {
                     updated.setWeight(newWeight)
                     updated.reps = repetitions
                     updated.isWarmup = isWarmup
-                    if onSave(updated) { dismiss() }
+                    do {
+                        try onSave(updated)
+                        dismiss()
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
                 }
                 // Disabled rather than a silent no-op: text Save cannot
                 // read (including ambiguous "1,000", which parse refuses)
@@ -250,6 +254,14 @@ private struct HistorySetEditor: View {
                 .disabled(enteredWeight == nil || enteredReps == nil)
                 .accessibilityIdentifier("historyDetail.saveSet")
             }
+        }
+        .alert("Couldn’t save edit", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
         }
     }
 
