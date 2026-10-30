@@ -63,6 +63,7 @@ final class SessionViewModel {
     private let store: BurlyStore
     private let haptics: HapticPlaying
     private let now: () -> Date
+    private let onSessionLogged: @MainActor (UUID) -> Void
 
     /// The item currently on screen. `nil` only for a brand-new "Empty
     /// session" with nothing added yet (§2 Start).
@@ -166,15 +167,20 @@ final class SessionViewModel {
     ///   first frame; "Keep going" from there clears it and falls through
     ///   to the ordinary pager -- i.e. resuming anyway -- exactly like
     ///   declining-then-changing-your-mind should behave.
+    ///
+    /// - Parameter onSessionLogged: called once Finish's save has durably
+    ///   stored the session as logged -- the §5 outbox's immediate send.
     init(
         engine: SessionEngine,
         store: BurlyStore,
         haptics: HapticPlaying = HapticPlayer(),
         now: @escaping () -> Date = Date.init,
-        startInSummary: Bool = false
+        startInSummary: Bool = false,
+        onSessionLogged: @escaping @MainActor (UUID) -> Void = { _ in }
     ) {
         self.engine = engine
         self.store = store
+        self.onSessionLogged = onSessionLogged
         self.haptics = haptics
         self.now = now
         // m2-06 review round 2, finding "new defect": the page-selection
@@ -592,6 +598,7 @@ final class SessionViewModel {
     private func persistFinish() {
         do {
             try store.saveActiveSession(engine.session)
+            onSessionLogged(engine.session.id)
             finishSaveError = nil
             play(pendingFinishHaptics)
             pendingFinishHaptics = []

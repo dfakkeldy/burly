@@ -7,28 +7,28 @@
 // failure on a genuine first launch therefore cannot gate the welcome, and
 // the user reaches a choice before storage is even touched.
 //
-// The store is resolved lazily, when the tab shell is actually entered, and
-// the result is held in `@State` — the lifetime-stable owner. The old eager
-// factory in `init` coupled store lifetime to a SwiftUI view initializer,
-// which SwiftUI is free to re-run; here the `.task` lives on the shell
-// branch, so it fires exactly when that branch appears (welcome dismissed
-// or skipped), and `body` only ever switches on the already-resolved
-// `storeResult`. A failed resolution shows `StoreUnavailableView` with a
-// Retry that re-attempts construction and replaces `storeResult`.
+// The store is owned by `PhoneAppModel` (one store per process, shared with
+// sync — see that file), never by a view initializer, which SwiftUI is free
+// to re-run. A returning user's store is already open from launch; on a
+// first launch the shell's `.task` resolves it when that branch appears
+// (welcome dismissed or skipped), and `body` only ever switches on the
+// already-resolved `storeResult`. A failed resolution shows
+// `StoreUnavailableView` with a Retry that re-attempts construction.
 
 import SwiftUI
 import BurlyPersistence
 
 @MainActor
 struct ContentView: View {
-    @State private var storeResult: Result<BurlyStore, Error>?
+    let model: PhoneAppModel
     @State private var showWelcome: Bool
     /// Set when the welcome's "Import from Hevy" dismissed it (m7-02): the
     /// shell opens the import screen over the tabs once the store resolves,
     /// so the import and the tabs share the one store instance.
     @State private var importOnShellEntry = false
 
-    init() {
+    init(model: PhoneAppModel) {
+        self.model = model
         // The reset seam must run before the flag is first read, so the
         // relaunch test starts from the genuine uncompleted state (m5-01
         // review finding 5). No-op on real launches.
@@ -54,50 +54,25 @@ struct ContentView: View {
                 // skipped (finding 1). The guard makes re-entry a no-op;
                 // Retry re-runs `resolveStore()` on demand.
                 .task {
-                    guard storeResult == nil else { return }
-                    resolveStore()
+                    guard model.storeResult == nil else { return }
+                    model.resolveStore()
                 }
         }
     }
 
     @ViewBuilder
     private var shellContent: some View {
-        if let storeResult {
+        if let storeResult = model.storeResult {
             switch storeResult {
             case .success(let store):
-                MainTabView(store: store, presentsHevyImportOnAppear: importOnShellEntry)
+                MainTabView(store: store, sync: model.sync, presentsHevyImportOnAppear: importOnShellEntry)
             case .failure(let error):
                 StoreUnavailableView(message: String(describing: error)) {
-                    resolveStore()
+                    model.resolveStore()
                 }
             }
         } else {
             ProgressView()
-        }
-    }
-
-    /// Builds the phone store exactly once per entry into the tab shell and
-    /// stores the result in `@State` — never recomputed from `body`, which
-    /// SwiftUI re-evaluates freely. The DEBUG branch consults
-    /// `PhoneDemoSeed` first so UI tests get deterministic in-memory
-    /// scenarios; a recognized scenario that fails to seed comes back as a
-    /// `.failure` here and renders the unavailable view, never the
-    /// on-device store (m5-01 review finding 6).
-    private func resolveStore() {
-        // Already resolved: keep the existing store. Retry reaches this
-        // only with `.failure` (or `.success` from a race), so an existing
-        // working store is never discarded and rebuilt.
-        if case .success = storeResult { return }
-        #if DEBUG
-        if let seeded = PhoneDemoSeed.requestedStore() {
-            storeResult = seeded
-            return
-        }
-        #endif
-        do {
-            storeResult = .success(try SwiftDataStore.phone())
-        } catch {
-            storeResult = .failure(error)
         }
     }
 }

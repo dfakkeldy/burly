@@ -17,6 +17,8 @@ struct ExercisePageView: View {
     let viewModel: SessionViewModel
     let item: SessionItemData
 
+    @Environment(\.watchSettings) private var settings
+
     private var isCurrent: Bool { item.id == viewModel.currentItemID }
 
     var body: some View {
@@ -65,8 +67,7 @@ struct ExercisePageView: View {
     /// non-numeric placeholder -- never a stale or fabricated number.
     private var ghostText: String {
         guard let ghost = viewModel.ghost(for: item.id) else { return "No previous data" }
-        let pounds = (ghost.weight.pounds * 2).rounded() / 2
-        return String(format: "Last: %.1f lb × %d", pounds, ghost.reps)
+        return "Last: \(settings.displayUnit.formatted(ghost.weight)) × \(ghost.reps)"
     }
 
     @ViewBuilder

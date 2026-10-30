@@ -23,6 +23,51 @@ action needs an Apple ID session) and, for now, the age rating questionnaire.
 Both are one-time answers in App Store Connect. The privacy answer is "Data Not
 Collected", matching PRIVACY.md and the apps' privacy manifests.
 
+## 2026-10-29 — Sync is wired into both apps; the snapshot carries the unit and rest default
+
+Phone and watch now exchange data. Each app owns one store and one sync host,
+built at launch from its app delegate (Watch Connectivity can wake either app
+with no view on screen): `PhoneSyncHost` binds `PhoneSyncCoordinator` to the
+WCSession adapter, `WatchSyncHost` does the same for `WatchSyncCoordinator`,
+and the watch delegate hands every Watch Connectivity background task to the
+adapter's `hasContentPending` completion rule. UI-test scenario launches get
+their seeded store and no sync, so the standalone UI suites never touch
+WCSession.
+
+Snapshot schema 2 adds the phone's display unit and global rest default. A
+schema-1 body decodes as kilograms and 90 s, the only values a schema-1 phone
+could have meant; schema 2 requires both keys. The rest default is clamped onto
+§3's grid rather than rejected, because rejecting it would also reject every
+routine in the same snapshot. The watch stores both in its sync journal, in the
+same save as the working set they arrived with, so a snapshot and its settings
+can never be applied separately. Before the first snapshot the watch shows
+kilograms, the phone's own default; it used to hardcode pounds. The crown step
+follows the unit (1.25 kg or 2.5 lb, §2's two defaults).
+
+Choices worth knowing before changing this:
+
+- **Every envelope goes out at schema 2**, sessions and digests included, even
+  though only the snapshot changed. An older peer holds them and shows "update
+  Burly" (§5) instead of reading them. The two apps ship in one bundle, so the
+  mismatch only lasts until both update, and the watch keeps every session
+  until it is acknowledged.
+- **The launch push waits for WCSession activation**, because transfers before
+  activation fail. When the watch app is installed, the install edge is the
+  launch push; firing both would cancel and resend the same version.
+- **A snapshot transfer that cannot start counts as a finished transfer.** The
+  adapter reports it as an event rather than throwing, and the host echoes it
+  to the coordinator so the outstanding-transfer slot clears.
+- **Sync failures never reach an edit.** Edits are durable in the store first;
+  the host logs a failed push, and §5's triggers re-send from store truth.
+- **No legacy phone-sync paths are wired.** The two-file layout that
+  `FileBackedPhoneSyncStatePersisting` can migrate was never constructed by a
+  shipped build, so no device has those files to migrate.
+
+This closes the 2026-10-29 follow-up below (watch unit and rest default) and
+the app-wiring half of planning task m4-06. The paired-simulator run is
+evidence for §5 acceptance #2, not a substitute for the kill-mid-transfer
+review that task still owns.
+
 ## 2026-10-29 — Hevy import: the preview is the write plan
 
 Spec §8 acceptance #4 asks that the preview's numbers match the import's result

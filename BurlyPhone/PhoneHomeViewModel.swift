@@ -16,11 +16,18 @@
 // session query must not disable Routines — each tab renders only its own
 // domain's state, so one failure never replaces valid content in an
 // unrelated tab.
+//
+// Every write here that changes what the watch sees tells the sync host
+// (m4-06): routine and catalog edits (and the watch-facing Settings rows,
+// in SettingsView) are §5 "routine/catalog edits" that push a snapshot;
+// history edits refresh the digest. The host debounces both and never
+// lets a sync failure reach the edit, which is already durable.
 
 import Foundation
 import BurlyCore
 import BurlyImport
 import BurlyPersistence
+import BurlyPhoneSync
 import Observation
 
 @MainActor
@@ -98,9 +105,11 @@ final class PhoneHomeViewModel {
     }
 
     private let store: BurlyStore
+    private let sync: PhoneSyncHost?
 
-    init(store: BurlyStore) {
+    init(store: BurlyStore, sync: PhoneSyncHost? = nil) {
         self.store = store
+        self.sync = sync
     }
 
     // MARK: - Bounded shell snapshot (finding 3)
@@ -168,6 +177,7 @@ final class PhoneHomeViewModel {
             updatedAt: .now
         )
         try store.createRoutine(draft)
+        sync?.catalogDidChange()
         let rows = try store.routines(includingArchived: false)
         routineRows = rows
         hasRoutines = !rows.isEmpty
@@ -296,6 +306,7 @@ final class PhoneHomeViewModel {
             origin: .custom
         )
         try store.createExercise(exercise)
+        sync?.catalogDidChange()
         let rows = try store.exercises(includingArchived: false)
         catalogExercises = rows
         catalogState = .loaded
@@ -307,11 +318,15 @@ final class PhoneHomeViewModel {
 
     func archiveExercise(id: UUID) throws {
         try store.archiveExercise(id: id, at: .now)
+        sync?.catalogDidChange()
         catalogExercises = try store.exercises(includingArchived: false)
         catalogState = .loaded
     }
 
+    /// Every routine mutation but create ends here, so this is also where
+    /// the watch hears about it.
     private func refreshRoutinesAfterMutation() throws {
+        sync?.catalogDidChange()
         routineRows = try store.routines(includingArchived: false)
         hasRoutines = !routineRows.isEmpty
         routinesState = .loaded
@@ -351,6 +366,7 @@ final class PhoneHomeViewModel {
     /// invariant owner: it increments revision and never writes HealthKit.
     func saveHistoryEdit(_ session: SessionData) throws -> SessionData {
         let revision = try store.applyPhoneEdit(session)
+        sync?.historyDidChange()
         var saved = session
         saved.revision = revision
         if let index = sessionRows.firstIndex(where: { $0.id == saved.id }) {
@@ -361,11 +377,16 @@ final class PhoneHomeViewModel {
 
     func namePlaceholder(_ exercise: ExerciseData, as name: String) throws {
         try store.namePlaceholderExercise(id: exercise.id, name: name)
+        sync?.catalogDidChange()
         reloadHistoryExercises()
     }
 
     func mergePlaceholder(_ exercise: ExerciseData, into destination: ExerciseData) throws {
         try store.mergePlaceholderExercise(id: exercise.id, into: destination.id, at: .now)
+        // The merge rewrites history onto the destination exercise and
+        // retires the placeholder: both the digest and the catalog change.
+        sync?.catalogDidChange()
+        sync?.historyDidChange()
         reloadHistoryExercises()
     }
 
@@ -415,14 +436,19 @@ final class PhoneHomeViewModel {
     /// Refreshes everything an import can change, whether or not it finished:
     /// the shell counts, History rows, the catalog (new customs), and the
     /// Stats dashboard if it has been loaded — so History and Stats show the
-    /// imported workouts as soon as the import screen closes.
-    ///
-    /// Sync: the phone app does not own a `PhoneSyncCoordinator` yet, so no
-    /// history change in this view model (`saveHistoryEdit`, placeholder
-    /// naming, routine edits) notifies one today. When that wiring lands,
-    /// this is where `historyDidChange()` (digest refresh) and
-    /// `catalogDidChange()` (new customs in the next snapshot) belong.
+    /// imported workouts as soon as the import screen closes. The watch
+    /// hears about both halves: new customs reach the next snapshot, and the
+    /// imported history reaches the digest (ghost rows, prefill).
     func refreshAfterHevyImport() {
+        sync?.catalogDidChange()
+        sync?.historyDidChange()
+        refreshAfterExternalHistoryChange()
+    }
+
+    /// History changed under the tabs (an import, or a session that arrived
+    /// from the watch): reload counts, History rows, the catalog (a watch
+    /// placeholder may have arrived) and a loaded Stats dashboard.
+    func refreshAfterExternalHistoryChange() {
         load()
         loadSessionsForDisplay()
         loadCatalogForDisplay()

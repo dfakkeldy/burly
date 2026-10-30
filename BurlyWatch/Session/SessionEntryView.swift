@@ -73,6 +73,10 @@ struct SessionEntryView: View {
     let store: BurlyStore
 
     @Environment(\.dismiss) private var dismiss
+    /// The phone's rest default and unit (sync snapshot): every engine built
+    /// here goes through `settings.engine(for:)`.
+    @Environment(\.watchSettings) private var settings
+    @Environment(\.sessionLogged) private var sessionLogged
 
     private enum Phase {
         case checking
@@ -95,7 +99,12 @@ struct SessionEntryView: View {
             case .conflict(let existing):
                 SessionConflictView(existing: existing, store: store, onResolved: start)
             case .ready(let engine, let startInSummary):
-                LoggingScreenView(engine: engine, store: store, startInSummary: startInSummary)
+                LoggingScreenView(
+                    engine: engine,
+                    store: store,
+                    startInSummary: startInSummary,
+                    onSessionLogged: sessionLogged
+                )
             case .unreadableSession(let sessionID):
                 UnreadableSessionView {
                     discardUnreadableSession(sessionID)
@@ -137,7 +146,7 @@ struct SessionEntryView: View {
                     phase = .failed("This workout is no longer available.")
                     return
                 }
-                phase = .ready(SessionEngine(session: existing), startInSummary: enterSummary)
+                phase = .ready(settings.engine(for: existing), startInSummary: enterSummary)
             } catch BurlyStoreError.unreadableActiveSessionJournal(let corruptID) {
                 phase = .unreadableSession(sessionID: corruptID)
             } catch {
@@ -161,7 +170,7 @@ struct SessionEntryView: View {
 
         switch route {
         case .emptySession:
-            let engine = SessionEngine(session: SessionBuilder.emptySession(clock: SystemWallClock()))
+            let engine = settings.engine(for: SessionBuilder.emptySession(clock: SystemWallClock()))
             saveAndEnter(engine)
         case .start(let routineID, _):
             do {
@@ -170,7 +179,7 @@ struct SessionEntryView: View {
                     return
                 }
                 let session = SessionBuilder.session(from: routine, clock: SystemWallClock())
-                saveAndEnter(SessionEngine(session: session))
+                saveAndEnter(settings.engine(for: session))
             } catch {
                 phase = .failed(String(describing: error))
             }

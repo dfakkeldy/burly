@@ -6,15 +6,19 @@
 
 import SwiftUI
 import BurlyPersistence
+import BurlyWatchSyncRuntime
 
 @MainActor
 struct ContentView: View {
     @State private var viewModel: WatchHomeViewModel
     private let store: BurlyStore
+    /// `nil` in UI-test scenarios and previews (see WatchAppModel).
+    private let sync: WatchSyncHost?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(store: BurlyStore) {
+    init(store: BurlyStore, sync: WatchSyncHost? = nil) {
         self.store = store
+        self.sync = sync
         _viewModel = State(initialValue: WatchHomeViewModel(store: store))
     }
 
@@ -26,14 +30,16 @@ struct ContentView: View {
                 }
         }
         .task { viewModel.load() }
-        // Shell-level reload mechanics (m2-01 review finding 4.1): a
-        // relaunch from the background is the one lifecycle signal this
-        // shell can already observe without the sync transport (M4), which
-        // is what will eventually invalidate state on its own. No timers,
-        // no polling -- just re-running the same `load()` the initial
-        // `.task` already runs.
+        // Sync invalidates the shell on its own (m4-06): every applied
+        // snapshot (routines arrive, §5's "waiting for iPhone" unlocks) or
+        // digest (acked sessions pruned, "last done" text) bumps this.
+        .onChange(of: sync?.workingSetGeneration) { viewModel.load() }
+        // Shell-level reload mechanics (m2-01 review finding 4.1), plus §5's
+        // outbox retry "on every app activation". No timers, no polling --
+        // just re-running the same `load()` the initial `.task` runs.
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
+            sync?.appDidBecomeActive()
             viewModel.load()
         }
     }
@@ -44,7 +50,7 @@ struct ContentView: View {
         case .loading:
             ProgressView()
         case .waitingForPhone:
-            WaitingForPhoneView()
+            WaitingForPhoneView(needsAppUpdate: sync?.heldSchemaVersion != nil)
         case .resumable(let preview):
             // §2 Resume gate (m2-06): takes priority over the routine list
             // itself -- see `WatchHomeViewModel`'s doc. Reload on

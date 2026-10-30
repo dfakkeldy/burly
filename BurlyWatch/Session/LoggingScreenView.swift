@@ -39,8 +39,18 @@ struct LoggingScreenView: View {
     ///   `SessionViewModel.init` -- see its doc. m2-06's Resume-decline path
     ///   (`SessionEntryView`'s `.resume(sessionID:enterSummary: true)`)
     ///   is the only caller that passes `true`.
-    init(engine: SessionEngine, store: BurlyStore, startInSummary: Bool = false) {
-        _viewModel = State(initialValue: SessionViewModel(engine: engine, store: store, startInSummary: startInSummary))
+    init(
+        engine: SessionEngine,
+        store: BurlyStore,
+        startInSummary: Bool = false,
+        onSessionLogged: @escaping @MainActor (UUID) -> Void = { _ in }
+    ) {
+        _viewModel = State(initialValue: SessionViewModel(
+            engine: engine,
+            store: store,
+            startInSummary: startInSummary,
+            onSessionLogged: onSessionLogged
+        ))
     }
 
     var body: some View {

@@ -22,6 +22,8 @@ struct SessionConflictView: View {
     let store: BurlyStore
     let onResolved: () -> Void
 
+    @Environment(\.watchSettings) private var settings
+    @Environment(\.sessionLogged) private var sessionLogged
     @State private var isFinishing = false
     @State private var isShowingDiscardConfirm = false
     @State private var errorMessage: String?
@@ -81,9 +83,10 @@ struct SessionConflictView: View {
         isFinishing = true
         errorMessage = nil
         do {
-            var engine = SessionEngine(session: existing)
+            var engine = settings.engine(for: existing)
             _ = try engine.finish()
             try store.saveActiveSession(engine.session)
+            sessionLogged(engine.session.id)
             onResolved()
         } catch {
             errorMessage = String(describing: error)

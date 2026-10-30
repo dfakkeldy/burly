@@ -36,6 +36,8 @@ struct SessionSummaryView: View {
     let onDiscard: () -> Void
     let onDone: () -> Void
 
+    @Environment(\.watchSettings) private var settings
+
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
@@ -118,7 +120,7 @@ struct SessionSummaryView: View {
     }
 
     private var volumeText: String {
-        String(format: "%.0f lb", summary.totalVolumeLb.rounded())
+        settings.displayUnit.formattedVolume(kilograms: summary.totalVolumeKg)
     }
 }
 

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Loads the watch home's state from the store (spec §2 Start, §5 fresh
-// install). BurlySync's snapshot/digest transport is a later milestone --
-// routines can only reach the watch store through it (routine authoring is
-// phone-only, §9), so an empty routine list today always means "nothing has
-// arrived from the iPhone yet," exactly the §5 "waiting for iPhone" case.
+// install). Routines reach the watch store only through the phone's sync
+// snapshot (routine authoring is phone-only, §9), so an empty routine list
+// always means "nothing has arrived from the iPhone yet," exactly the §5
+// "waiting for iPhone" case. `ContentView` reloads this after every applied
+// snapshot or digest.
 //
 // ## Resume (m2-06)
 //

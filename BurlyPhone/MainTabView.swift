@@ -18,6 +18,7 @@
 
 import SwiftUI
 import BurlyPersistence
+import BurlyPhoneSync
 
 @MainActor
 struct MainTabView: View {
@@ -39,10 +40,13 @@ struct MainTabView: View {
     /// `isHevyImportPresented` with `true`, which SwiftUI may not present
     /// reliably on the very first render).
     @State private var pendingHevyImport: Bool
+    /// `nil` in UI-test scenarios and previews (see PhoneAppModel).
+    private let sync: PhoneSyncHost?
 
-    init(store: BurlyStore, presentsHevyImportOnAppear: Bool = false) {
-        _viewModel = State(initialValue: PhoneHomeViewModel(store: store))
+    init(store: BurlyStore, sync: PhoneSyncHost? = nil, presentsHevyImportOnAppear: Bool = false) {
+        _viewModel = State(initialValue: PhoneHomeViewModel(store: store, sync: sync))
         _pendingHevyImport = State(initialValue: presentsHevyImportOnAppear)
+        self.sync = sync
     }
 
     var body: some View {
@@ -65,7 +69,7 @@ struct MainTabView: View {
                     Label("Stats", systemImage: "chart.bar.xaxis")
                         .accessibilityIdentifier("tab.stats")
                 }
-            SettingsView()
+            SettingsView(sync: sync)
                 .tag(ShellTab.settings)
                 .tabItem {
                     Label("Settings", systemImage: "gearshape")
@@ -74,7 +78,12 @@ struct MainTabView: View {
         }
         // Bounded shell snapshot (existence/count only — finding 3), fired
         // when the tabs appear. Rows load in each tab's own `.task`.
-        .task { viewModel.load() }
+        .task {
+            viewModel.load()
+            // A session arriving from the watch is a history change the
+            // user did not make here; refresh what the tabs show.
+            sync?.onHistoryChanged = { [viewModel] in viewModel.refreshAfterExternalHistoryChange() }
+        }
         .onAppear {
             guard pendingHevyImport else { return }
             pendingHevyImport = false
@@ -90,16 +99,18 @@ struct MainTabView: View {
         }
         // Shell-level reload mechanics (m5-01 review finding 2, mirroring
         // the watch shell's m2-01 finding 4.1): a relaunch from the
-        // background is the one lifecycle signal this shell can already
-        // observe without the sync transport (M4), which is what will
-        // eventually invalidate state on its own. No timers, no polling —
-        // just re-running the same loads the initial `.task` runs, plus the
-        // visible tab's rows so a background writer's changes show up.
+        // background still reloads, as it did before sync: a session that
+        // arrived while the app was suspended was ingested by the sync host,
+        // which also calls back on its own when the app is running. No
+        // timers, no polling — just re-running the same loads the initial
+        // `.task` runs, plus the visible tab's rows. Foregrounding is also
+        // §5's chance for the daily snapshot push.
         .onChange(of: scenePhase) { _, newPhase in
             #if DEBUG
             if newPhase == .background { viewModel.simulateBackgroundHistoryIfRequested() }
             #endif
             guard newPhase == .active else { return }
+            sync?.sceneDidBecomeActive()
             viewModel.load()
             switch selection {
             case .history:

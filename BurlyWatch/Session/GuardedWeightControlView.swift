@@ -8,10 +8,10 @@
 // `.adjust` while locked, so this is belt-and-suspenders, not the only
 // guard).
 //
-// Weight is displayed in pounds (Dan's imperial/US context; no unit
-// setting exists yet -- that is phone-side, later work) via `Weight
-// .pounds`, rounded to the nearest 0.5 lb for display only, exactly as
-// that property's doc requires ("never round-trip back into kg").
+// Weight is displayed in the phone's unit (sync snapshot schema 2, via the
+// `watchSettings` environment) through `WeightUnit.formatted`, one decimal
+// place, display only -- the engine's `Weight` stays canonical kg and is
+// never re-parsed from this text.
 //
 // `isUnset` (m2-03 review finding 3): true when the §2 prefill ladder came
 // back `.empty` and the lifter has not armed-and-adjusted a real value yet.
@@ -31,6 +31,7 @@ struct GuardedWeightControlView: View {
     let onAdjustSteps: (Int) -> Void
 
     @State private var crownRotation: Double = 0
+    @Environment(\.watchSettings) private var settings
 
     var body: some View {
         VStack(spacing: 6) {
@@ -114,25 +115,21 @@ struct GuardedWeightControlView: View {
         }
     }
 
-    private var displayPounds: Double {
-        (weight.pounds * 2).rounded() / 2
-    }
-
     /// Honest placeholder while unset and untouched (m2-03 review finding
     /// 3) -- once armed, the control is showing a real, editable number
     /// (0 lb by default, same as any other weight), so the dash only
     /// applies to the locked, never-yet-armed state.
     private var weightText: String {
         guard isUnset, !isArmed else {
-            return String(format: "%.1f lb", displayPounds)
+            return settings.displayUnit.formatted(weight)
         }
-        return "– lb"
+        return "– \(settings.displayUnit.symbol)"
     }
 
     private var accessibilityValueText: String {
         let lockWord = isArmed ? "armed" : "locked"
         guard isUnset, !isArmed else {
-            return "\(String(format: "%.1f lb", displayPounds)), \(lockWord)"
+            return "\(settings.displayUnit.formatted(weight)), \(lockWord)"
         }
         return "not set, \(lockWord)"
     }

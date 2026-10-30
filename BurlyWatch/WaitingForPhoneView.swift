@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Spec §5: "Fresh install (watch): empty store + no digest renders a
 // 'waiting for iPhone' state; arrival of snapshot + digest unlocks the
-// routine list." BurlySync doesn't implement that transport yet (later
-// milestone) -- this view is what an empty watch store shows until it does.
+// routine list." This is what an empty watch store shows until the phone's
+// first snapshot arrives. If the phone sent a snapshot from a newer Burly
+// (§5: held, never partly read), it says to update instead of waiting.
 
 import SwiftUI
 
 struct WaitingForPhoneView: View {
+    var needsAppUpdate = false
+
     var body: some View {
         // Scroll-capable so large Dynamic Type can't clip the instructions
         // unreachably (m2-01 review finding 6.1).
@@ -26,7 +29,9 @@ struct WaitingForPhoneView: View {
                     // contract here, so BurlyWatchUITests keeps both
                     // (m2-01 review finding 6.2).
                     .accessibilityIdentifier("waitingForPhoneView.headline")
-                Text("Open Burly on your iPhone to sync your routines.")
+                Text(needsAppUpdate
+                    ? "Your iPhone has a newer version of Burly. Update Burly on Apple Watch to sync your routines."
+                    : "Open Burly on your iPhone to sync your routines.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

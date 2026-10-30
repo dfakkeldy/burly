@@ -47,7 +47,7 @@ final class LoggingScreenUITests: XCTestCase {
         XCTAssertTrue(logButton.waitForExistence(timeout: 5))
 
         // Set 1 of 3 -- prefill from the seeded digest's index 0 (100 kg × 8).
-        assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "220.5 lb", reps: "8")
+        assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "100.0 kg", reps: "8")
 
         // §2 acceptance #3: the weight control's accessibility value
         // exposes locked/armed state.
@@ -65,11 +65,11 @@ final class LoggingScreenUITests: XCTestCase {
         )
 
         // Set 2 of 3 -- digest index 1 (102.5 kg × 7).
-        assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "226.0 lb", reps: "7")
+        assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "102.5 kg", reps: "7")
         logButton.tap()
 
         // Set 3 of 3 -- digest index 2 (105 kg × 6).
-        assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "231.5 lb", reps: "6")
+        assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "105.0 kg", reps: "6")
         logButton.tap()
 
         attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-threeSetsLogged")
@@ -111,11 +111,13 @@ final class LoggingScreenUITests: XCTestCase {
 
         // Deterministic regardless of the real wall-clock time the test
         // took: 3 sets logged (the swapped-in item has none), and
-        // volume = 100×8 + 102.5×7 + 105×6 kg -> ≈4734 lb.
+        // volume = 100×8 + 102.5×7 + 105×6 = 2147.5 kg -> "2148 kg". These
+        // UI tests run without sync, so the watch shows its pre-sync
+        // default unit, kilograms (the phone's default too).
         let setsRow = anyElement(app, identifier: "sessionSummary.sets")
         XCTAssertTrue(setsRow.label.contains("3"), "Expected 3 total sets, got '\(setsRow.label)'")
         let volumeRow = anyElement(app, identifier: "sessionSummary.volume")
-        XCTAssertTrue(volumeRow.label.contains("4734"), "Expected ~4734 lb total volume, got '\(volumeRow.label)'")
+        XCTAssertTrue(volumeRow.label.contains("2148 kg"), "Expected 2148 kg total volume, got '\(volumeRow.label)'")
 
         attachScreenshot(from: app, name: "BurlyWatch-endWorkoutSummary")
 
@@ -145,7 +147,7 @@ final class LoggingScreenUITests: XCTestCase {
     ///
     /// Also m2-03 review finding 3: an honestly-empty prefill must never
     /// render as an invented bodyweight×8. This test previously asserted
-    /// the *invented* fallback ("0.0 lb" weight, an implicit "8" reps) --
+    /// the *invented* fallback ("0.0" weight, an implicit "8" reps) --
     /// it now asserts the honest placeholder and that Log set stays
     /// disabled until the lifter enters a real value.
     func testAbsentDigestRendersEmptyGhostsAcrossPages() throws {
