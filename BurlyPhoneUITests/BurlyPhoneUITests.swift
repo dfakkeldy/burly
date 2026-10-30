@@ -588,7 +588,14 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         confirm.tap()
         XCTAssertTrue(app.staticTexts["catalog.exerciseName.\(Self.backSquatExerciseID)"].waitForNonExistence(timeout: 5))
-        app.buttons["catalog.doneButton"].tap()
+        // The iOS 26 search overlay hides the catalog's navigation toolbar.
+        // Its native close action restores Done before leaving the sheet.
+        let closeSearch = app.buttons["close"]
+        XCTAssertTrue(closeSearch.waitForExistence(timeout: 5))
+        closeSearch.tap()
+        let done = app.buttons["catalog.doneButton"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
 
         app.tabBars.buttons["History"].tap()
         let sessionRow = anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)")

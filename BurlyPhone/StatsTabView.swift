@@ -133,19 +133,12 @@ struct StatsTabView: View {
                         "Personal record": Color.red
                     ])
                     .chartYAxisLabel(unit.symbol)
-                    .chartLegend(position: .bottom, alignment: .leading) {
-                        HStack(spacing: 16) {
-                            Label("Top set", systemImage: "circle.fill").foregroundStyle(.blue)
-                                .accessibilityIdentifier("statsTab.progression.legend.topSet")
-                            Label("Estimated 1RM", systemImage: "diamond.fill").foregroundStyle(.orange)
-                                .accessibilityIdentifier("statsTab.progression.legend.estimate")
-                            Label("Personal record", systemImage: "triangle.fill").foregroundStyle(.red)
-                        }
-                        .font(.caption)
-                    }
+                    .chartLegend(.hidden)
                     .frame(height: 220)
                     .accessibilityIdentifier("statsTab.progression.chart")
                     .accessibilityLabel("Exercise progression chart for \(exercise.name)")
+
+                    progressionLegend
 
                     // A findable, VoiceOver-readable statement of the
                     // chart's headline numbers in the display unit. Worded
@@ -165,6 +158,33 @@ struct StatsTabView: View {
                 )
             }
         }
+    }
+
+    /// Keep legend text in the ordinary accessibility tree, outside the
+    /// chart's synthesized data representation. Narrow/large-text layouts
+    /// can use a vertical legend without squeezing the plot itself.
+    private var progressionLegend: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) { progressionLegendItems }
+            VStack(alignment: .leading, spacing: 6) { progressionLegendItems }
+        }
+        .font(.caption)
+    }
+
+    @ViewBuilder
+    private var progressionLegendItems: some View {
+        legendLabel("Top set", symbol: "circle.fill", color: .blue, id: "topSet")
+        legendLabel("Estimated 1RM", symbol: "diamond.fill", color: .orange, id: "estimate")
+        legendLabel("Personal record", symbol: "triangle.fill", color: .red, id: "record")
+    }
+
+    private func legendLabel(_ title: String, symbol: String, color: Color, id: String) -> some View {
+        Label {
+            Text(title).foregroundStyle(.primary)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(color)
+        }
+        .accessibilityIdentifier("statsTab.progression.legend.\(id)")
     }
 
     private func volumeCard(_ stats: PhoneStatsDashboard) -> some View {
