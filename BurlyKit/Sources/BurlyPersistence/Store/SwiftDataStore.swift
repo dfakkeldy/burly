@@ -903,14 +903,17 @@ public final class SwiftDataStore: BurlyStore {
     /// entirely (the runner-predicate fix).
     private func fetchSetSlices(
         predicate: Predicate<SetRecord>?,
-        exerciseID: UUID?
+        exerciseID: UUID?,
+        prefetchExercises: Bool = true
     ) throws -> [SetRecordSlice] {
         var descriptor = FetchDescriptor<SetRecord>(predicate: predicate)
         // One batched prefetch instead of one fault per row: every slice
         // needs its parent `SessionItem` (for the exercise reference) and
         // that item's `Session` (for `state`/`startedAt`) — the two hops
         // this query exists to avoid amplifying (see the protocol doc).
-        descriptor.relationshipKeyPathsForPrefetching = [\.sessionItem, \.sessionItem?.session, \.sessionItem?.exercise]
+        var relationships: [PartialKeyPath<SetRecord>] = [\.sessionItem, \.sessionItem?.session]
+        if prefetchExercises { relationships.append(\.sessionItem?.exercise) }
+        descriptor.relationshipKeyPathsForPrefetching = relationships
 
         // Not a `compactMap`: `SetRecord.snapshot()` throws on a corrupted
         // stored weight (m1-06 review, finding M5), and a stats query
@@ -979,7 +982,7 @@ public final class SwiftDataStore: BurlyStore {
         // through: nil)` already produces internally for a single exercise
         // (see that method's and the protocol doc's cost note) — this is
         // that same fetch, paid for once instead of once per exercise.
-        try fetchSetSlices(predicate: nil, exerciseID: nil)
+        try fetchSetSlices(predicate: nil, exerciseID: nil, prefetchExercises: false)
     }
 
     // MARK: - Phone-shell existence/count (m5-01; bounded)
