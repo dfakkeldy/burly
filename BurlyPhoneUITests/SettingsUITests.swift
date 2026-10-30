@@ -140,7 +140,10 @@ final class SettingsUITests: XCTestCase {
 
         for _ in 0..<8 { decrement.tap() }
         XCTAssertTrue(contains(restRow, "0:15"), "Expected the 15 s floor, got \(accessibleText(of: restRow))")
-        XCTAssertFalse(decrement.isEnabled, "Expected Decrement to stop at the 15 s floor")
+        // iOS 26 still reports a Stepper's bounded button as enabled, so
+        // prove the floor by behaviour: one more tap changes nothing.
+        decrement.tap()
+        XCTAssertTrue(contains(restRow, "0:15"), "Expected Decrement to stop at the 15 s floor, got \(accessibleText(of: restRow))")
     }
 
     // MARK: - §9 #2 render path
