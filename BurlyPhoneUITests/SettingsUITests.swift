@@ -130,12 +130,17 @@ final class SettingsUITests: XCTestCase {
         let restRow = scrollToElement(app, identifier: "settingsTab.restDefaultRow")
         XCTAssertTrue(contains(restRow, "1:30"), "Expected 1:30 on a reset launch, got \(accessibleText(of: restRow))")
 
-        restRow.buttons["Increment"].tap()
+        // iOS 26 gives a Stepper's buttons their own identifiers, the
+        // row's plus "-Increment" / "-Decrement", as siblings of the row.
+        let increment = app.buttons["settingsTab.restDefaultRow-Increment"]
+        let decrement = app.buttons["settingsTab.restDefaultRow-Decrement"]
+
+        increment.tap()
         XCTAssertTrue(contains(restRow, "1:45"), "Expected one 15 s step up, got \(accessibleText(of: restRow))")
 
-        for _ in 0..<8 { restRow.buttons["Decrement"].tap() }
+        for _ in 0..<8 { decrement.tap() }
         XCTAssertTrue(contains(restRow, "0:15"), "Expected the 15 s floor, got \(accessibleText(of: restRow))")
-        XCTAssertFalse(restRow.buttons["Decrement"].isEnabled, "Expected Decrement to stop at the 15 s floor")
+        XCTAssertFalse(decrement.isEnabled, "Expected Decrement to stop at the 15 s floor")
     }
 
     // MARK: - §9 #2 render path

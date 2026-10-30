@@ -66,9 +66,10 @@ struct SyncHostLoopbackTests {
 
     @Test("an unacknowledged session is re-sent on app activation unless WatchConnectivity still holds it")
     func outboxRetriesOnActivation() async throws {
-        let rig = try Rig()
+        // Logged on an earlier launch and never acknowledged: the host
+        // rebuilds its outbox from the store.
         let session = SessionData(startedAt: .now, endedAt: .now, state: .logged, origin: .live, items: [])
-        try rig.watch.createSession(session)
+        let rig = try Rig(seedWatch: { try $0.createSession(session) })
         try await rig.activateBoth()
 
         // Activation itself retried the outbox.
@@ -138,9 +139,15 @@ private struct Rig {
     let phoneHost: PhoneSyncHost
     let watchHost: WatchSyncHost
 
-    init(settings: PhoneWatchSettings = PhoneWatchSettings()) throws {
+    /// `seedWatch` runs before the watch host exists: what it stores is
+    /// what an earlier launch left behind.
+    init(
+        settings: PhoneWatchSettings = PhoneWatchSettings(),
+        seedWatch: (SwiftDataStore) throws -> Void = { _ in }
+    ) throws {
         phone = try SwiftDataStore(kind: .phone, at: .inMemory)
         watch = try SwiftDataStore(kind: .watch, at: .inMemory)
+        try seedWatch(watch)
         phoneHost = PhoneSyncHost(
             store: phone,
             session: phoneSession,
