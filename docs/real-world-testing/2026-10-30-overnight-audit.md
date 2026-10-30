@@ -5,9 +5,9 @@ Checkpoint while the overnight audit continues. Started 00:03 ADT from
 08:00 ADT / 11:00 UTC. This is evidence from the exercised flows, not an
 exhaustive audit or release sign-off.
 
-Thirteen confirmed defects are tracked under twelve issues. Nine are
+Fifteen confirmed defects are tracked under fourteen issues. Nine are
 merged; three focused fixes are undergoing native verification; the
-remaining digest performance defect has a separate implementation plan.
+digest and two late lower-chart findings have concrete follow-up scopes.
 All fixtures are synthetic.
 
 ## Findings and delivery
@@ -28,6 +28,9 @@ All fixtures are synthetic.
 | [#32](https://github.com/dfakkeldy/burly/issues/32): Stats stale after activation | Pre-fix native test independently found new History data while Stats stayed at the old count with 6M retained | Draft #29: refresh only requested, visible Stats using its last request. Fixed-head local and hosted regression passed; full hosted suite pending after retained Settings unit-selection timeout. |
 | [#34](https://github.com/dfakkeldy/burly/issues/34): Hevy action ellipsis | Largest-text pre-audit capture shows “Import 3 Workou…” | Draft #35: full-width wrapping title at accessibility sizes. Local max-size confirmation flow and rendered title passed; hosted full gate pending. |
 
+| [#37](https://github.com/dfakkeldy/burly/issues/37): unreadable lower weekly axes | Largest-text Weekly volume shows colliding Y/unit labels; Volume/Consistency week dates collapse to repeated ellipses | Open follow-up. Adapt lower plot space/date density and verify all volume ranges; separate from progression #31. |
+| [#38](https://github.com/dfakkeldy/burly/issues/38): Muscle split legends overlap | Automatic categorical legend overflows its fixed210pt chart and draws across the explicit percentage list | Open follow-up. Use one adaptive legend/value presentation preserving group/color/percentage meaning. |
+
 ## Coverage of the six requested areas
 
 | Area | Evidence / conclusion | Limits or next work |
@@ -36,7 +39,7 @@ All fixtures are synthetic.
 | Code | Import parse/plan, strict persistence reads, numeric input, history mutations, snapshot metadata and shared stats policy inspected | No broad cleanup, schema migration or public API change shipped. |
 | Performance | Per-row derived work removed; 50,351-set query benchmark and digest phase measurements collected | Debug fixture cost is not a physical-device, energy or frame-rate measurement. |
 | Architecture | Core/persistence/runtime boundaries reviewed; historical metadata separated from selection; badge policy duplication removed | Digest needs a narrower supported read contract with strict failure semantics and one shared selection policy. |
-| HIG/accessibility | Phone/watch rendering, date semantics, chart series/legend/navigation, largest text and native accessibility audits inspected | A passing audit at a scrolled viewport did not establish whole-screen compliance; rendered inspection found #30/#34. |
+| HIG/accessibility | Phone/watch rendering, date semantics, chart series/legend/navigation, largest text, all lower Stats cards and native accessibility audits inspected | A passing audit at a scrolled viewport did not establish whole-screen compliance; rendered inspection found #30/#34. |
 | Usability | Imported names, partial/error recovery, archive continuity, retained ranges and reachable import confirmation exercised | Watch Log set starts below the initial viewport in captured layout. This is an observation within separate watch work, not a failed button or observed device ergonomics. |
 
 The existing HealthKit, sync, simulator/test hardening and privacy-readiness
@@ -130,6 +133,15 @@ scoped max-size confirmation workflow and retains its rendered capture;
 it does not claim that a whole-viewport audit passed. The diagnostic's
 temporary 900s discovery window and diagnostic-only tests never integrate.
 
+A final bounded local diagnostic on unchanged app `e5b858e` captured Volume,
+Muscle split and Consistency at the largest category. Whole-chart viewport
+checks passed (197.836s); manual review nevertheless established #37/#38.
+The synthetic [volume](assets/2026-10-30/weekly-volume-largest-text.png),
+[consistency](assets/2026-10-30/consistency-largest-text.png) and
+[muscle-split](assets/2026-10-30/muscle-split-largest-text.png) captures are
+retained here. No product head was changed by that diagnostic. The two late
+findings remain separately scoped follow-ups with reproduction and next work.
+
 Apple references: [Charts](https://developer.apple.com/design/human-interface-guidelines/charts),
 [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility),
 [native audits](https://developer.apple.com/documentation/accessibility/performing-accessibility-audits-for-your-app).
@@ -144,5 +156,5 @@ concurrent CI durations are not added as searching time.
 New findings reset the counter around 05:47/06:00 ADT and again at 06:51 for
 #34. The 06:16–06:30 interval was roughly 14 verification/CI minutes and zero
 quiet-search minutes; approximately 3 minutes of visual/source
-classification in 06:46–06:52 found #34. No 60-minute active quiet period has
-been established. Final results and the morning stop remain to be recorded.
+classification in 06:46–06:52 found #34. The lower-card visual findings at07:26 reset the timer again. No60-minute
+active quiet period has been established. Final results and the morning stop remain to be recorded.
