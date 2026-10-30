@@ -982,6 +982,37 @@ public final class SwiftDataStore: BurlyStore {
         try fetchSetSlices(predicate: nil, exerciseID: nil)
     }
 
+    // Diagnostic-only feasibility prototype; not a public API or delivery.
+    func diagnosticLatestDigestCandidateSlices() throws -> [SetRecordSlice] {
+        var descriptor = FetchDescriptor<SessionItem>(predicate: #Predicate { !$0.sets.isEmpty })
+        descriptor.relationshipKeyPathsForPrefetching = [\.session, \.exercise]
+        var winners: [UUID: (sessionID: UUID, startedAt: Date)] = [:]
+        for item in try context.fetch(descriptor) {
+            guard let session = item.session, session.state == .logged,
+                  let exerciseID = item.exercise?.id else { continue }
+            let candidate = (sessionID: session.id, startedAt: session.startedAt)
+            if let current = winners[exerciseID] {
+                if candidate.startedAt < current.startedAt { continue }
+                if candidate.startedAt == current.startedAt,
+                   candidate.sessionID.uuidString <= current.sessionID.uuidString { continue }
+            }
+            winners[exerciseID] = candidate
+        }
+        var slices: [SetRecordSlice] = []
+        for id in Set(winners.values.map { $0.sessionID }).sorted(by: { $0.uuidString < $1.uuidString }) {
+            guard let snapshot = try session(id: id) else { throw BurlyStoreError.notFound(id) }
+            for item in snapshot.items {
+                for set in item.sets {
+                    slices.append(SetRecordSlice(
+                        sessionID: snapshot.id, sessionStartedAt: snapshot.startedAt,
+                        exerciseID: item.exerciseID, set: set
+                    ))
+                }
+            }
+        }
+        return slices
+    }
+
     // MARK: - Phone-shell existence/count (m5-01; bounded)
     //
     // m5-01 review round 2, finding 1: round 1 (401646f) shipped both
