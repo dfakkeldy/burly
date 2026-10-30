@@ -114,6 +114,7 @@ final class ImportUITests: XCTestCase {
             "Expected History to show an imported session right after the import"
         )
         XCTAssertEqual(distinctIdentifiers(sessionRows), 3, "Expected exactly the three imported workouts in History")
+        XCTAssertTrue(sessionRows.firstMatch.label.contains("Synthetic Pull"), "Expected the most recent imported workout to keep its Hevy title")
 
         // An imported session links no HealthKit workout (§8 acceptance #3).
         sessionRows.firstMatch.tap()
@@ -121,6 +122,7 @@ final class ImportUITests: XCTestCase {
             firstElement(app, identifierPrefix: "historyDetail.revision.").waitForExistence(timeout: 15),
             "Expected the imported session's detail to open"
         )
+        XCTAssertTrue(app.navigationBars["Synthetic Pull"].exists, "Expected the original workout title in session detail")
         XCTAssertFalse(
             firstElement(app, identifierPrefix: "historyDetail.healthKitWorkout.").exists,
             "An imported session must not claim a HealthKit workout"

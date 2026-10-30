@@ -58,6 +58,24 @@ public struct PersonalRecord: Sendable, Equatable {
 }
 
 public enum ExerciseProgressionStats {
+    /// Sessions with either kind of PR across a complete, mixed-exercise
+    /// history. Unattributed sets cannot establish an exercise record.
+    /// Uses the same chronology, warmup exclusion and estimate tie rules
+    /// as the single-exercise chart.
+    public static func personalRecordSessionIDs(from slices: [SetRecordSlice]) -> Set<UUID> {
+        var byExercise: [UUID: [SetRecordSlice]] = [:]
+        for slice in slices {
+            guard let exerciseID = slice.exerciseID else { continue }
+            byExercise[exerciseID, default: []].append(slice)
+        }
+        var sessionIDs = Set<UUID>()
+        for exerciseSlices in byExercise.values {
+            let points = sessionPoints(from: exerciseSlices)
+            sessionIDs.formUnion(personalRecords(from: points).map(\.sessionID))
+        }
+        return sessionIDs
+    }
+
     /// Epley estimated one-rep max (spec §7): `w × (1 + reps/30)`.
     public static func epleyEstimatedOneRepMax(weight: Weight, reps: Int) -> Double {
         weight.kg * (1 + Double(reps) / 30)

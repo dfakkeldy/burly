@@ -255,6 +255,7 @@ final class BurlyPhoneUITests: XCTestCase {
         // assertions intentionally do not inspect chart-renderer internals;
         // they prove each chart's data branch rather than its empty branch.
         app.tabBars.buttons["Stats"].tap()
+        XCTAssertTrue(app.navigationBars["Stats"].waitForExistence(timeout: 5), "Stats needs its own navigation host")
         for chartIdentifier in [
             "statsTab.progression.chart",
             "statsTab.volume.chart",
@@ -266,6 +267,9 @@ final class BurlyPhoneUITests: XCTestCase {
                 "Expected populated scenario to render \(chartIdentifier)"
             )
         }
+        attachScreenshot(from: app, name: "BurlyPhone-progressionSeries")
+        XCTAssertTrue(anyElement(app, identifier: "statsTab.progression.legend.topSet").exists)
+        XCTAssertTrue(anyElement(app, identifier: "statsTab.progression.legend.estimate").exists)
 
         // Routines shows the seeded routines, each keyed by its id.
         app.tabBars.buttons["Routines"].tap()
@@ -530,6 +534,85 @@ final class BurlyPhoneUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-historyEdits")
     }
 
+    @MainActor
+    func testFailedHistorySetSaveKeepsDraftAndRetrySavesOnce() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchEnvironment["BURLY_PHONE_UI_TEST_FAIL_HISTORY_SAVE_ONCE"] = "1"
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        let sessionRow = anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)")
+        XCTAssertTrue(sessionRow.waitForExistence(timeout: 15))
+        sessionRow.tap()
+        assertRevision(1, in: app)
+        anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").tap()
+        let weight = app.textFields["historyDetail.setWeight"]
+        let reps = app.textFields["historyDetail.setReps"]
+        replaceText(in: weight, with: "82.5", app: app)
+        replaceText(in: reps, with: "12", app: app)
+        app.buttons["historyDetail.saveSet"].tap()
+
+        let alert = app.alerts["Couldn’t save edit"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.buttons["OK"].tap()
+        XCTAssertTrue(weight.waitForExistence(timeout: 5), "A rejected write must keep the editor open")
+        XCTAssertEqual(editableContents(of: weight), "82.5")
+        XCTAssertEqual(editableContents(of: reps), "12")
+
+        app.buttons["historyDetail.saveSet"].tap()
+        assertRevision(2, in: app)
+        XCTAssertTrue(app.staticTexts["82.5 kg × 12"].waitForExistence(timeout: 5))
+        assertHealthKitLink(in: app)
+        attachScreenshot(from: app, name: "BurlyPhone-historySaveRetry")
+    }
+
+    @MainActor
+    func testArchivedExerciseKeepsItsHistoryNameButLeavesAddPicker() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+
+        app.tabBars.buttons["Routines"].tap()
+        app.buttons["routinesTab.catalogButton"].tap()
+        let search = app.searchFields["Search exercises"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Back Squat")
+        let archive = app.buttons["catalog.archiveExercise.\(Self.backSquatExerciseID)"]
+        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        archive.tap()
+        let confirm = app.sheets["Archive Back Squat?"]
+            .buttons.matching(identifier: "catalog.confirmArchiveButton").firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(app.staticTexts["catalog.exerciseName.\(Self.backSquatExerciseID)"].waitForNonExistence(timeout: 5))
+        // The iOS 26 search overlay hides the catalog's navigation toolbar.
+        // Its native close action restores Done before leaving the sheet.
+        let closeSearch = app.buttons["close"]
+        XCTAssertTrue(closeSearch.waitForExistence(timeout: 5))
+        closeSearch.tap()
+        let done = app.buttons["catalog.doneButton"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+
+        app.tabBars.buttons["History"].tap()
+        let sessionRow = anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)")
+        XCTAssertTrue(sessionRow.waitForExistence(timeout: 10))
+        sessionRow.tap()
+        let name = app.staticTexts["historyDetail.exercise.\(Self.backSquatExerciseID)"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertEqual(name.label, "Back Squat", "Archive must preserve historical exercise names")
+        assertRevision(1, in: app)
+        XCTAssertTrue(anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").exists)
+
+        app.buttons["historyDetail.addExercise"].tap()
+        XCTAssertTrue(app.buttons["historyDetail.exercisePicker.\(Self.benchPressExerciseID)"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["historyDetail.exercisePicker.\(Self.backSquatExerciseID)"].exists)
+        attachScreenshot(from: app, name: "BurlyPhone-archivedExerciseHistory")
+    }
+
     /// Spec §7 acceptance #3, empty side: each independently meaningful
     /// chart has a genuine empty state on a deterministic empty history.
     /// This catches both crashes during chart construction and a misleading
@@ -555,6 +638,31 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertFalse(anyElement(app, identifier: "statsTab.progression.chart").exists)
 
         attachScreenshot(from: app, name: "BurlyPhone-statsEmpty")
+    }
+
+    @MainActor
+    func testConsistencyDaysExposeDatesAndWorkoutStatus() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+        app.tabBars.buttons["Stats"].tap()
+
+        let days = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "statsTab.consistency.day.")
+        )
+        for _ in 0..<12 {
+            if days.firstMatch.exists { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(days.firstMatch.waitForExistence(timeout: 15))
+        let elements = days.allElementsBoundByIndex
+        XCTAssertEqual(elements.count, 28)
+        XCTAssertEqual(Set(elements.map(\.label)).count, 28, "Every day must announce a distinct date")
+        let statuses = Set(elements.compactMap { $0.value as? String })
+        XCTAssertEqual(statuses, ["Workout logged", "No workout"])
+        XCTAssertTrue(elements.allSatisfy { !$0.label.isEmpty && $0.label != "Workout logged" && $0.label != "No workout" })
+        attachScreenshot(from: app, name: "BurlyPhone-consistencyDates")
     }
 
     /// Finding 6, fail-closed side: once a scenario is recognized, a seed
