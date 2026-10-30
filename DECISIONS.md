@@ -62,6 +62,12 @@ Choices worth knowing before changing this:
 - **No legacy phone-sync paths are wired.** The two-file layout that
   `FileBackedPhoneSyncStatePersisting` can migrate was never constructed by a
   shipped build, so no device has those files to migrate.
+- **The paired-simulator check is its own script**, `Scripts/paired-sync-sim.sh`,
+  not a step in `acceptance-sim.sh`. It needs the two simulators paired, it
+  leaves data in both on-device stores, and Watch Connectivity between
+  simulators is slower and less predictable than the standalone suites, so
+  folding it in would make the CI gate flaky. It takes the same simulator lock,
+  and its UI tests skip unless `BURLY_PAIRED_SYNC_UI_TESTS=1`.
 
 This closes the 2026-10-29 follow-up below (watch unit and rest default) and
 the app-wiring half of planning task m4-06. The paired-simulator run is
