@@ -77,12 +77,15 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertGreaterThan(selectedMenu.frame.height, 100, "The long selected title must have space to wrap at largest text")
         attachScreenshot(from: app, name: "BurlyPhone-largestTextExercise")
         let chart = anyElement(app, identifier: "statsTab.progression.chart")
+        let tabBar = app.tabBars.firstMatch
         for _ in 0..<16 {
-            if chart.exists && chart.isHittable { break }
+            if chart.exists && chart.frame.maxY < tabBar.frame.minY { break }
             app.swipeUp()
         }
         XCTAssertTrue(chart.exists)
         XCTAssertGreaterThan(chart.frame.height, 400, "Plot and axes must scale with text")
+        XCTAssertLessThan(chart.frame.maxY, tabBar.frame.minY, "The date axis must scroll above the tab bar")
+        XCTAssertGreaterThan(chart.frame.maxY, app.frame.midY, "The plot must still be visible in the evidence capture")
         attachScreenshot(from: app, name: "BurlyPhone-largestTextProgression")
     }
 
