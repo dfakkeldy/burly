@@ -142,11 +142,17 @@ struct HistorySessionDetailView: View {
         item.exerciseID?.uuidString ?? "unattributed"
     }
 
-    private func mutate(_ change: (inout SessionData) -> Void) {
+    @discardableResult
+    private func mutate(_ change: (inout SessionData) -> Void) -> Bool {
         var updated = session
         change(&updated)
-        do { session = try viewModel.saveHistoryEdit(updated) }
-        catch { errorMessage = String(describing: error) }
+        do {
+            session = try viewModel.saveHistoryEdit(updated)
+            return true
+        } catch {
+            errorMessage = String(describing: error)
+            return false
+        }
     }
 
     private func reindexItems(_ session: inout SessionData) {
@@ -172,7 +178,7 @@ private struct HistorySetEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     let set: SetRecordData
-    let onSave: (SetRecordData) -> Void
+    let onSave: (SetRecordData) -> Bool
     /// Latched for the editor's lifetime, not read live. The parent
     /// re-creates this view whenever it re-renders (including after a unit
     /// change made in the Settings tab while this screen stays pushed), but
@@ -190,7 +196,7 @@ private struct HistorySetEditor: View {
     @State private var isWarmup: Bool
     @FocusState private var focusedField: Field?
 
-    init(set: SetRecordData, unit: WeightUnit, onSave: @escaping (SetRecordData) -> Void) {
+    init(set: SetRecordData, unit: WeightUnit, onSave: @escaping (SetRecordData) -> Bool) {
         self.set = set
         self.onSave = onSave
         let text = unit.formattedNumber(set.weight)
@@ -222,8 +228,7 @@ private struct HistorySetEditor: View {
                     updated.setWeight(newWeight)
                     updated.reps = repetitions
                     updated.isWarmup = isWarmup
-                    onSave(updated)
-                    dismiss()
+                    if onSave(updated) { dismiss() }
                 }
                 // Disabled rather than a silent no-op: text Save cannot
                 // read (including ambiguous "1,000", which parse refuses)
