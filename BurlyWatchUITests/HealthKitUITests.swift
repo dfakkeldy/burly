@@ -94,46 +94,44 @@ final class HealthKitUITests: XCTestCase {
     /// identifiers.
     ///
     /// On watchOS it opens as a "Health Access" card whose only button is
-    /// Review, then one page per access kind (write, then read): a switch per
-    /// type and a Next cell that ends the last page. Allow turns every switch
-    /// on; decline leaves them all off and steps through, which is what a
-    /// person declining does.
+    /// Review, then one page per access kind (Write Access, Read Access): an
+    /// "All Requested Data Below" switch, a switch per type, and a Next cell
+    /// at the bottom. Next is only in the accessibility tree once scrolled
+    /// into view, so "is the sheet up" is judged by any of its elements, not
+    /// by Next. Allow turns every visible switch on; decline leaves them all
+    /// off and steps through, which is what a person declining does.
     private func answerHealthPrompt(_ app: XCUIApplication, allow: Bool) {
         let carousel = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
         let review = carousel.buttons["Review"]
-        let toggles = carousel.switches.matching(identifier: "UIA.Health.WatchAuthSheet.SwitchOutlet")
         let next = carousel.cells["UIA.Health.WatchAuthSheet.ConfigureCell.Button"]
+        let accessPage = carousel.navigationBars
+            .matching(NSPredicate(format: "identifier IN %@", ["Write Access", "Read Access"])).firstMatch
+        let sheetElement = carousel.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'UIA.Health.WatchAuthSheet'")).firstMatch
+        let sheetIsUp = { review.exists || accessPage.exists || sheetElement.exists }
 
         XCTAssertTrue(review.waitForExistence(timeout: 20), "Expected the Health sheet at the first session start")
         review.tap()
         var steps = ["Review"]
-        let deadline = Date().addingTimeInterval(60)
-        // A page that no longer shows Next within a few seconds means the
-        // sheet has closed.
-        while Date() < deadline, next.waitForExistence(timeout: 5) {
-            if allow {
-                for _ in 0..<4 {
-                    let off = toggles.allElementsBoundByIndex.filter { "\($0.value ?? "")" == "0" }
-                    if let toggle = off.first(where: { $0.isHittable }) {
-                        toggle.tap()
-                        steps.append("on")
-                    } else if off.isEmpty {
-                        break
-                    } else {
-                        carousel.swipeUp()
-                    }
-                }
-            }
-            if !next.isHittable {
-                carousel.swipeUp()
+        let deadline = Date().addingTimeInterval(90)
+        while Date() < deadline, waitFor(timeout: 5, sheetIsUp) {
+            if allow,
+               let off = carousel.switches.allElementsBoundByIndex
+                   .first(where: { "\($0.value ?? "")" == "0" && $0.isHittable }) {
+                off.tap()
+                steps.append("on")
                 continue
             }
-            steps.append(next.label)
-            next.tap()
-            Thread.sleep(forTimeInterval: 1)
+            if next.exists, next.isHittable {
+                steps.append(next.label)
+                next.tap()
+                Thread.sleep(forTimeInterval: 1)
+            } else {
+                carousel.swipeUp()
+            }
         }
         attachScreenshot(from: app, name: allow ? "BurlyWatch-health-allowed" : "BurlyWatch-health-declined")
-        if next.exists || review.exists {
+        if sheetIsUp() {
             for (name, host) in [("app", app), ("carousel", carousel)] {
                 let tree = XCTAttachment(string: host.debugDescription)
                 tree.name = "health-sheet-tree-\(name)"
