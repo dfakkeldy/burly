@@ -105,9 +105,10 @@ final class BurlyPhoneUITests: XCTestCase {
         XCTAssertTrue(choose.isHittable)
         choose.tap()
         let importAction = app.buttons["hevyImport.importButton"]
-        XCTAssertTrue(importAction.waitForExistence(timeout: 20))
-        for _ in 0..<20 {
-            if importAction.isHittable { break }
+        // Large text can place confirmation outside the accessibility
+        // viewport; establish reachability by scrolling before asserting it.
+        for _ in 0..<24 {
+            if importAction.exists && importAction.isHittable { break }
             app.swipeUp()
         }
         attachScreenshot(from: app, name: "Diagnostic-Hevy-largestText-preview")
