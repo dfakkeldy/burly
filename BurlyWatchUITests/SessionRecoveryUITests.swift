@@ -103,11 +103,9 @@ final class SessionRecoveryUITests: XCTestCase {
             app.staticTexts["resumeSession.heading"].exists,
             "The fault fired on a shell reload before the tap, not on SessionEntryView's preflight"
         )
-        let heading = app.staticTexts["unreadableSession.heading"]
-        tapRoutineRow(legDayRow, in: app) {
-            heading.exists || app.staticTexts["exercisePage.name"].exists
-        }
+        legDayRow.tap()
 
+        let heading = app.staticTexts["unreadableSession.heading"]
         XCTAssertTrue(
             heading.waitForExistence(timeout: 10),
             "Expected the targeted unreadable-session recovery at the defensive preflight, not a dead-end StoreUnavailableView"
@@ -296,29 +294,6 @@ final class SessionRecoveryUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: end)
         }
         return element.exists
-    }
-
-    /// Taps a routine row, tapping again only while the app never left the
-    /// routine list. Same helper and reasoning as SessionConflictUITests':
-    /// on CI watchOS has drawn a row's press state for a synthesized tap
-    /// without committing its NavigationLink, and an uncommitted tap makes
-    /// no store call, so the quiet-period fault stays armed for the next.
-    private func tapRoutineRow(
-        _ row: XCUIElement,
-        in app: XCUIApplication,
-        maxTaps: Int = 3,
-        until arrived: () -> Bool
-    ) {
-        let frame = row.frame
-        let center = app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
-        row.tap()
-        for tap in 1..<maxTaps {
-            if waitFor(timeout: 5, { arrived() || !row.exists }) { return }
-            XCTContext.runActivity(named: "Re-tapping the routine row: tap \(tap) did not navigate") { _ in
-                center.tap()
-            }
-        }
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
