@@ -74,18 +74,18 @@ struct StatsTabView: View {
             if let exercise = stats.progression.exercise {
                 Menu {
                     Picker(
-                    "Exercise",
-                    selection: Binding(
-                        get: { selectedExerciseID ?? exercise.id },
-                        set: { newID in
-                            selectedExerciseID = newID
-                            reloadStats()
+                        "Exercise",
+                        selection: Binding(
+                            get: { selectedExerciseID ?? exercise.id },
+                            set: { newID in
+                                selectedExerciseID = newID
+                                reloadStats()
+                            }
+                        )
+                    ) {
+                        ForEach(stats.exercises) { candidate in
+                            Text(candidate.name).tag(candidate.id)
                         }
-                    )
-                ) {
-                    ForEach(stats.exercises) { candidate in
-                        Text(candidate.name).tag(candidate.id)
-                    }
                     }
                     .pickerStyle(.inline)
                 } label: {
@@ -160,7 +160,9 @@ struct StatsTabView: View {
                                 AxisGridLine()
                                 AxisTick()
                                 if let date = value.as(Date.self) {
-                                    AxisValueLabel(anchor: axisDates.count == 1 ? .top : (date == axisDates.first ? .topLeading : .topTrailing)) {
+                                    let anchor: UnitPoint = axisDates.count == 1 ? .top
+                                        : (date == axisDates.first ? .topLeading : .topTrailing)
+                                    AxisValueLabel(anchor: anchor) {
                                         VStack(spacing: 0) {
                                             Text(date, format: .dateTime.month(.abbreviated))
                                             Text(date, format: .dateTime.day())
