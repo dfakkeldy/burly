@@ -22,17 +22,19 @@ established at this checkpoint.
 | #22: archiving an exercise hides its historical name | History loads only active exercise metadata; detail resolves names from that array | Include archived metadata in History; exclude it from selection and naming work | Catalog archive → History name/sets/revision → Add Exercise exclusion regression added; runtime result pending |
 | #23: all-time progression query costs 8.2453 s at 50k sets | Existing hosted scale benchmark; all SetRecords fetched before exercise filtering | Bounded inverse traversal being measured separately | Baseline reproduced; candidate not yet adopted |
 | #24: digest costs 6.1419 s at 50k sets | Existing hosted benchmark exceeds its 3 s signal threshold | Separate performance follow-up | Baseline reproduced; no fix or device timing claimed |
+| #25: progression renders one blue zigzag instead of two trends | Successful simulator's `BurlyPhone-statsPounds` screenshot shows connections between top set and e1RM within each session | Explicit series identities and categorical colors for both trends and PRs | Fix and legend assertions pushed; fresh rendered screenshot pending |
+| #26: Stats has no navigation title and content overlaps status time when scrolled | `BurlyPhone-statsPounds` and `BurlyPhone-consistencyDates` screenshots; Stats alone lacks a NavigationStack | Restore a tab-owned navigation host | Navigation-bar regression and fresh screenshots pending |
 
 ## Coverage checkpoint
 
 | Requested area | Reviewed so far | Status and next pass |
 | --- | --- | --- |
-| Bugs | Hevy parse/plan/commit flow; History badges; statistics/date projections; archive-to-History flow; scale benchmarks | Eight source/benchmark-supported defects above; seven issue records |
+| Bugs | Hevy parse/plan/commit flow; History badges; statistics/date projections; archive-to-History flow; scale benchmarks; rendered charts/navigation | Ten source/benchmark/screenshot-supported defects above; nine issue records |
 | Code | Import row validation/tokenizer and deterministic IDs; weight validation; History mutation and error paths; stats calculations | Package regressions pass for the first fixes. The editor's failed-write path now preserves its draft; runtime failure injection remains unverified |
 | Performance | History list projection; Stats store queries; import detached parsing/main-actor planning; existing 50k-row stats/digest benchmarks | Repeated badge scan fixed in source; baseline query/digest costs measured below. Candidate optimization remains separate until equivalence and before/after measurements pass |
 | Architecture | Package target graph, store projections, importer boundary, phone/watch runtime placement, Health abstractions | Core remains UI-independent; import depends only on core; protocol machines and transport adapters are declared dependency-free. Badge policy duplication removed; historical metadata now includes archives while selection surfaces filter them. Existing HealthKit and sync app-wiring PRs retain their scope; inspect their integration after merge |
-| HIG/accessibility | Phone import scrolling, semantic typography/colors, chart labels, watch adjustable controls and rest controls | Date omission fixed. Inspect the Stats legend at large Dynamic Type and verify rendered/accessibility trees when simulators are available |
-| Usability | Welcome/import/cancel/re-import/history flow; routine editor; history editor failure handling | Imported names restored; failed set saves retain their draft in source. Failure recovery and large-text navigation remain for runtime exercise; no physical-device behavior observed |
+| HIG/accessibility | Phone import scrolling, semantic typography/colors, chart labels, watch adjustable controls/rest controls, exported phone/watch screenshots | Date accessibility verified at `a453627`; rendered chart grouping and missing navigation host reproduced and fixed in source. Fresh screenshots and largest Dynamic Type remain unverified |
+| Usability | Welcome/import/cancel/re-import/history flow; routine editor; history editor failure handling; default watch viewport | Imported names verified. Failed-save retry/archive flows await new-head CI. Default watch screenshot places Log set below the initial viewport; scroll/layout ergonomics remain an observed follow-up in the separately owned watch flow |
 
 Apple references: [Charts](https://developer.apple.com/design/human-interface-guidelines/charts),
 [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility),
@@ -85,6 +87,23 @@ surrounding suite. These peaks include test/seeding allocations, are not
 per-query measurements, and do not establish shipping-app or device memory.
 The diagnostic suite passed 822 tests plus two separate migration tests;
 its benchmark threshold warnings are signals, not CI failures.
+
+## Rendered review checkpoint
+
+The successful `a453627` simulator artifact was downloaded and inspected.
+`BurlyPhone-statsPounds` exposed #25 and the missing Stats heading;
+`BurlyPhone-consistencyDates` exposed status-bar overlap. Its accessibility
+test nevertheless passed: correct labels and passing numeric assertions
+did not establish that the plotted paths or navigation chrome were correct.
+The next UI run includes a dedicated `BurlyPhone-progressionSeries` capture.
+
+Default watch logging/summary captures were also inspected. Their text and
+controls use the expected hierarchy, but Log set is below the initial
+logging viewport and summary actions require scrolling. The active watch
+session work is kept separate; this is a usability observation, not a
+claim of a failed button or observed physical-device ergonomics. These
+captures show pounds; watch unit synchronization remains the separate
+integration task rather than a new duplicate audit ticket.
 
 Only synthetic fixture data is used. Physical-device testing and Instruments
 traces have not been observed. Later checkpoints must report local tests,
