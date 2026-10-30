@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import XCTest
+import UIKit
 
 /// Exercises the iPhone app shell (spec m5-01): the four-tab shell, the
 /// one-time first-launch welcome with both paths, and the persisted choice
@@ -51,6 +52,68 @@ final class BurlyPhoneUITests: XCTestCase {
     private static let pullUpExerciseID = "10000000-0000-4000-8000-000000000023"
     private static let addableExerciseID = "6F4E2C1A-0000-4000-8000-00000000000A"
     private static let healthKitWorkoutID = "6F4E2C1A-0000-4000-8000-00000000000B"
+
+    // Diagnostic branch only: use native audits and rendered evidence at
+    // the largest accessibility category; these are not product changes.
+    @MainActor
+    func testDiagnosticLargestTextStats() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
+        app.launchArguments += [
+            "-burly-skip-welcome", "-UIPreferredContentSizeCategoryName",
+            UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue
+        ]
+        app.launch()
+        app.tabBars.buttons["Stats"].tap()
+        let heading = app.staticTexts["Exercise progression"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 15))
+        attachScreenshot(from: app, name: "Diagnostic-Stats-largestText-top")
+        XCTAssertGreaterThan(heading.frame.height, 30, "Prove the requested large-text category reached the app")
+        let legend = anyElement(app, identifier: "statsTab.progression.legend.record")
+        for _ in 0..<16 {
+            if legend.isHittable { break }
+            app.swipeUp()
+        }
+        attachScreenshot(from: app, name: "Diagnostic-Stats-largestText-legend")
+        XCTAssertTrue(legend.isHittable, "The full legend must remain reachable at large text")
+        try app.performAccessibilityAudit(for: [.dynamicType, .textClipped])
+    }
+
+    @MainActor
+    func testDiagnosticLargestTextHevyPreview() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
+        app.launchEnvironment["BURLY_PHONE_UI_TEST_HEVY_FIXTURE"] = "synthetic"
+        app.launchArguments += [
+            "-burly-skip-welcome", "-UIPreferredContentSizeCategoryName",
+            UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue
+        ]
+        app.launch()
+        app.tabBars.buttons["Settings"].tap()
+        let importRow = anyElement(app, identifier: "settingsTab.importRow")
+        XCTAssertTrue(importRow.waitForExistence(timeout: 10))
+        importRow.tap()
+        let heading = app.staticTexts["hevyImport.intro.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        attachScreenshot(from: app, name: "Diagnostic-Hevy-largestText-intro")
+        XCTAssertGreaterThan(heading.frame.height, 35)
+        let choose = app.buttons["hevyImport.chooseFileButton"]
+        for _ in 0..<16 {
+            if choose.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(choose.isHittable)
+        choose.tap()
+        let importAction = app.buttons["hevyImport.importButton"]
+        XCTAssertTrue(importAction.waitForExistence(timeout: 20))
+        for _ in 0..<20 {
+            if importAction.isHittable { break }
+            app.swipeUp()
+        }
+        attachScreenshot(from: app, name: "Diagnostic-Hevy-largestText-preview")
+        XCTAssertTrue(importAction.isHittable, "Preview confirmation must stay reachable at large text")
+        try app.performAccessibilityAudit(for: [.dynamicType, .textClipped])
+    }
 
     override func setUpWithError() throws {
         continueAfterFailure = false
