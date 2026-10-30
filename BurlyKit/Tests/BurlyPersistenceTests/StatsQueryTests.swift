@@ -59,6 +59,40 @@ struct StatsQueryTests {
         )
     }
 
+    @Test("all-time exercise projection survives a cold reload and archived metadata")
+    func allTimeProjectionMatchesHistoryAfterReopen() throws {
+        let url = try makeTemporaryStoreURL()
+        defer { removeStoreFiles(at: url) }
+        let bench = Fixture.exercise(name: "Bench Press")
+        let other = Fixture.exercise(name: "Row")
+        do {
+            let store = try SwiftDataStore(kind: .phone, at: .file(url))
+            try store.createExercise(bench)
+            try store.createExercise(other)
+            var session = Fixture.session(from: Fixture.routine(over: [bench, other, bench]))
+            for (index, weight) in [40.0, 999.0, 80.0].enumerated() {
+                session = session.addingSet(SetRecordData(
+                    order: 0, weight: Weight(kg: weight), reps: 5,
+                    isWarmup: index == 0, completedAt: Fixture.epoch
+                ), toItem: session.items[index].id)
+            }
+            try store.createSession(session)
+            try store.createSession(loggedSession(
+                exercise: bench, startedAt: Fixture.epoch.addingTimeInterval(100),
+                completedAt: Fixture.epoch.addingTimeInterval(100), weightKg: 85, reps: 6,
+                origin: .hevyImport
+            ))
+            try store.archiveExercise(id: bench.id, at: Fixture.epoch.addingTimeInterval(200))
+        }
+        let reopened = try SwiftDataStore(kind: .phone, at: .file(url))
+        let actual = try reopened.loggedSetSlices(exerciseID: bench.id, since: nil, through: nil)
+        let expected = try reopened.allLoggedSetSlices().filter { $0.exerciseID == bench.id }
+        #expect(Set(actual) == Set(expected))
+        #expect(actual.map(\.set.weight.kg).sorted() == [40, 80, 85])
+        #expect(actual.filter { $0.set.isWarmup }.count == 1)
+        #expect(try reopened.loggedSetSlices(exerciseID: UUID(), since: nil, through: nil).isEmpty)
+    }
+
     // MARK: - Date bounds (exercise-bounded form)
 
     @Test("since/through bound completedAt: a set outside the window is excluded, one at each edge is included")
@@ -271,6 +305,9 @@ struct StatsQueryTests {
         let since = Fixture.epoch.addingTimeInterval(-1)
         let bySince = try store.loggedSetSlices(exerciseID: bench.id, since: since, through: nil)
         #expect(bySince.map(\.set.weight.kg) == [100]) // the 999 kg active set never appears
+
+        let allTime = try store.loggedSetSlices(exerciseID: bench.id, since: nil, through: nil)
+        #expect(allTime.map(\.set.weight.kg) == [100])
 
         let byWindow = try store.loggedSetSlices(window: .weeks(52), through: Fixture.epoch.addingTimeInterval(3_600), calendar: Self.utc)
         #expect(byWindow.map(\.set.weight.kg) == [100])
