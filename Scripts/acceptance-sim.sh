@@ -489,30 +489,34 @@ log "resolved '$WATCH_NAME' -> $WATCH_UDID"
 xcrun simctl bootstatus "$IPHONE_UDID" -b
 xcrun simctl bootstatus "$WATCH_UDID" -b
 
-# A booted device is not yet a device xcodebuild can see. On a fresh CI
-# runner (2026-10-29, macos-26 image 20261021) xcodebuild listed no
-# simulators at all right after both boots finished and failed with
-# "Unable to find a device matching the provided destination specifier".
-# Poll -showdestinations until the device appears, and fail with the
-# simulator inventory in the log instead of a bare destination error.
-DESTINATION_WAIT_SECONDS=$((5 * 60))
+# A booted device is not yet a device xcodebuild can see. On fresh macos-26
+# runners xcodebuild lists no simulators at all for a while after both boots
+# finish, then every simulator appears at once; simctl sees them throughout.
+# A 12-job probe on 2026-10-29 measured 82-386 s before they appeared, and
+# neither -runFirstLaunch nor restarting CoreSimulatorService shortened it.
+# Poll -showdestinations until the device appears (15 minutes is about twice
+# the worst case seen), and fail with xcodebuild's own output and the simctl
+# inventory instead of a bare destination error.
+DESTINATION_WAIT_SECONDS=$((15 * 60))
 
 wait_for_destination() {
   local scheme="$1" device_name="$2" udid="$3"
-  local deadline=$((SECONDS + DESTINATION_WAIT_SECONDS)) destinations
+  local started=$SECONDS deadline=$((SECONDS + DESTINATION_WAIT_SECONDS)) destinations
   while true; do
     # Captured, not piped into `grep -q`: under pipefail an early grep exit
     # can SIGPIPE xcodebuild and turn a match into a failure.
-    destinations="$(xcodebuild -showdestinations -project "$PROJECT" -scheme "$scheme" 2>/dev/null || true)"
+    destinations="$(xcodebuild -showdestinations -project "$PROJECT" -scheme "$scheme" 2>&1 || true)"
     if [[ "$destinations" == *"id:$udid"* ]]; then
+      log "xcodebuild sees '$device_name' after $((SECONDS - started))s"
       return 0
     fi
     if (( SECONDS >= deadline )); then
-      log "FATAL: xcodebuild still cannot see '$device_name' ($udid) for $scheme after ${DESTINATION_WAIT_SECONDS}s; simulator inventory follows."
+      log "FATAL: xcodebuild still cannot see '$device_name' ($udid) for $scheme after ${DESTINATION_WAIT_SECONDS}s; its last -showdestinations output and the simctl inventory follow."
+      printf '%s\n' "$destinations" >&2
       xcrun simctl list devices >&2 || true
       exit 70
     fi
-    log "waiting for xcodebuild to see '$device_name' ($udid) for $scheme"
+    log "waiting for xcodebuild to see '$device_name' ($udid) for $scheme ($((SECONDS - started))s so far)"
     sleep 15
   done
 }
