@@ -158,6 +158,9 @@ private struct HistorySessionRow: View {
     }
 }
 
+// `previewLoaded` exists only in Debug, and `#Preview` compiles in Release too.
+#if DEBUG
 #Preview {
     HistoryTabView(viewModel: .previewLoaded)
 }
+#endif

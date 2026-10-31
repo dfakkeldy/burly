@@ -4,6 +4,7 @@ ON APPLE WATCH
 • Log sets from your wrist, with your last weight and reps right there
 • A rest timer between sets
 • Finish or discard a workout, or pick it up again where you left off
+• Save each finished workout to Apple Health, with heart rate and energy from the watch's sensors, if you allow it
 
 ON IPHONE
 • Build routines from a catalog of exercises, or add your own

@@ -622,6 +622,9 @@ private extension MuscleGroup {
     }
 }
 
+// `previewLoaded` exists only in Debug, and `#Preview` compiles in Release too.
+#if DEBUG
 #Preview {
     RoutinesTabView(viewModel: .previewLoaded)
 }
+#endif

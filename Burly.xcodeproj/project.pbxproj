@@ -706,6 +706,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8AXNA5B37R;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Burly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
@@ -740,6 +741,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8AXNA5B37R;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Burly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
@@ -842,6 +844,7 @@
 				ENABLE_PREVIEWS = YES;
 				EXCLUDED_SOURCE_FILE_NAMES = HevySyntheticFixture.csv;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Burly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
@@ -877,6 +880,7 @@
 				DEVELOPMENT_TEAM = 8AXNA5B37R;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Burly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";

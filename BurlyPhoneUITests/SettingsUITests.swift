@@ -90,6 +90,7 @@ final class SettingsUITests: XCTestCase {
         XCTAssertTrue(scrollToElement(app, identifier: "settingsTab.versionRow").exists, "Expected the version row")
         // Not tapped: it leaves the app for the browser.
         XCTAssertTrue(scrollToElement(app, identifier: "settingsTab.sourceCodeLink").exists, "Expected the source code link")
+        XCTAssertTrue(scrollToElement(app, identifier: "settingsTab.privacyPolicyLink").exists, "Expected the privacy policy link")
 
         scrollToElement(app, identifier: "settingsTab.licensesRow").tap()
         XCTAssertTrue(

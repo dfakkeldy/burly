@@ -1,5 +1,28 @@
 <!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
+## 2026-10-31 — The store text describes Apple Health again; acceptance compiles Release
+
+#13 put HealthKit on the watch, and #39, merged just before it, had
+rewritten PRIVACY.md and the review notes to say Burly never touches Health,
+and dropped the Health line from the description. The App Store privacy URL points at `main`, so the live policy
+was wrong. The Health text Dan approved in #33 is back in all three, and the
+README says what the watch saves. Text that says whether Burly uses Health
+should follow the code on `main` (`HealthKitWorkoutAdapters` and
+`SessionWorkoutRecorder`), not the order PRs merge in.
+
+Settings now links to the privacy policy, because Guideline 5.1.1(i) wants it
+reachable in the app as well as in App Store Connect. Both apps set
+`CFBundleDisplayName` to "Burly"; without it the Home Screen showed the target
+names.
+
+`Scripts/acceptance-sim.sh` now also compiles BurlyPhone, with the embedded
+watch app, in Release for a generic iOS device, unsigned. Nothing had compiled
+Release since the burly-m0 upload, and three phone previews used a Debug-only
+view model. `#Preview` bodies compile in every configuration, so the v1.0.0
+archive would have failed at the tag. The build is unsigned, so it proves the
+compile only: signing and the HealthKit capability on the App IDs are proven
+by a tagged release run.
+
 ## 2026-10-30 — App Store listing as code with fastlane deliver; uploads stay on xcodebuild
 
 Burly's builds already reach App Store Connect without fastlane: a release tag
