@@ -80,7 +80,7 @@ final class SettingsUITests: XCTestCase {
         let restRow = scrollToElement(app, identifier: "settingsTab.restDefaultRow")
         XCTAssertTrue(
             accessibleText(of: restRow).contains("1:30"),
-            "Expected the read-only rest default to show the 90 s global default as 1:30, got \(accessibleText(of: restRow))"
+            "Expected the rest default to start at the 90 s global default, 1:30, got \(accessibleText(of: restRow))"
         )
 
         XCTAssertTrue(scrollToElement(app, identifier: "settingsTab.healthRow").exists, "Expected the Apple Health row")
@@ -116,6 +116,34 @@ final class SettingsUITests: XCTestCase {
             app.staticTexts["hevyImport.intro.heading"].waitForExistence(timeout: 5),
             "Expected the Import row to open the import screen"
         )
+    }
+
+    // MARK: - Rest default
+
+    /// The global rest default moves on §3's 15 s grid and stops at its
+    /// 15 s and 5 min bounds. (It reaches the watch in the sync snapshot;
+    /// BurlyKit's sync tests cover that half.)
+    func testRestDefaultStepsOnTheRestGrid() throws {
+        let app = launch(scenario: Self.scenarioEmpty)
+        openSettings(in: app)
+
+        let restRow = scrollToElement(app, identifier: "settingsTab.restDefaultRow")
+        XCTAssertTrue(contains(restRow, "1:30"), "Expected 1:30 on a reset launch, got \(accessibleText(of: restRow))")
+
+        // iOS 26 gives a Stepper's buttons their own identifiers, the
+        // row's plus "-Increment" / "-Decrement", as siblings of the row.
+        let increment = app.buttons["settingsTab.restDefaultRow-Increment"]
+        let decrement = app.buttons["settingsTab.restDefaultRow-Decrement"]
+
+        increment.tap()
+        XCTAssertTrue(contains(restRow, "1:45"), "Expected one 15 s step up, got \(accessibleText(of: restRow))")
+
+        for _ in 0..<8 { decrement.tap() }
+        XCTAssertTrue(contains(restRow, "0:15"), "Expected the 15 s floor, got \(accessibleText(of: restRow))")
+        // iOS 26 still reports a Stepper's bounded button as enabled, so
+        // prove the floor by behaviour: one more tap changes nothing.
+        decrement.tap()
+        XCTAssertTrue(contains(restRow, "0:15"), "Expected Decrement to stop at the 15 s floor, got \(accessibleText(of: restRow))")
     }
 
     // MARK: - §9 #2 render path

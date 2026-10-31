@@ -7,11 +7,11 @@
 // informational — no control that silently does nothing:
 //
 // - Display unit is a real, persisted phone preference. Weights are still
-//   stored in kg; only iPhone rendering and entry change (§9 acceptance #2).
-// - Rest default is read-only. A configurable global default only matters
-//   if it reaches the watch, which needs a §5 snapshot wire change; until
-//   then the row shows the §3 default the watch actually uses and points at
-//   the per-exercise rest that *is* editable, in each routine.
+//   stored in kg; only rendering and entry change (§9 acceptance #2), on
+//   the phone and, through the sync snapshot, on Apple Watch.
+// - Rest default is editable on §3's 15 s–5 min, 15 s grid. It reaches the
+//   watch in the sync snapshot, where it ends the rest ladder: an
+//   exercise's own rest wins, then the routine's, then this.
 // - Apple Health is informational, and says what this build actually does.
 //   Spec §4 puts HealthKit authorization and workout saving on the watch,
 //   at first session start, but that is not wired yet: no target carries
@@ -23,11 +23,21 @@
 //   status either way; §4 asks for a quiet row that never nags.
 
 import BurlyCore
+import BurlyPhoneSync
 import SwiftUI
 
 struct SettingsView: View {
     @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
+    @AppStorage(RestDefaultPreference.storageKey) private var restDefault = RestDefaultPreference.defaultSeconds
     @Environment(\.openURL) private var openURL
+
+    /// Both watch-facing rows push a fresh snapshot when they change. `nil`
+    /// in UI-test scenarios and previews.
+    private let sync: PhoneSyncHost?
+
+    init(sync: PhoneSyncHost? = nil) {
+        self.sync = sync
+    }
 
     /// Burly's public repository (the GPL "Corresponding Source").
     static let sourceCodeURL = URL(string: "https://github.com/dfakkeldy/burly")!
@@ -41,6 +51,9 @@ struct SettingsView: View {
             // the fold keeps it in a lazy List's accessibility tree on the
             // first screen (BurlyPhoneUITests' tab smoke looks for it there).
             List {
+                if sync?.heldSchemaVersion != nil {
+                    syncUpdateSection
+                }
                 importSection
                 unitSection
                 restSection
@@ -48,6 +61,26 @@ struct SettingsView: View {
                 aboutSection
             }
             .navigationTitle("Settings")
+        }
+        .onChange(of: unit) { sync?.catalogDidChange() }
+        .onChange(of: restDefault) { sync?.catalogDidChange() }
+    }
+
+    // MARK: Sync
+
+    /// §5: a payload from a newer Burly is held, never partly read. The
+    /// watch keeps its workouts until this iPhone can acknowledge them.
+    private var syncUpdateSection: some View {
+        Section {
+            Label {
+                Text("Apple Watch is running a newer version of Burly. Update Burly on this iPhone so your workouts can sync. Nothing is lost while you wait.")
+            } icon: {
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                    .foregroundStyle(.orange)
+            }
+            .accessibilityIdentifier("settingsTab.syncUpdateNeeded")
+        } header: {
+            Text("Sync")
         }
     }
 
@@ -81,7 +114,7 @@ struct SettingsView: View {
         } header: {
             Text("Weight unit")
         } footer: {
-            Text("Burly stores every weight in kilograms and converts for display, so switching never changes your history. Apple Watch shows kilograms for now.")
+            Text("Burly stores every weight in kilograms and converts for display, so switching never changes your history. Apple Watch uses the same unit once it next syncs with this iPhone.")
         }
     }
 
@@ -96,23 +129,30 @@ struct SettingsView: View {
 
     private var restSection: some View {
         Section {
-            LabeledContent {
-                Text(Self.restDefaultText)
-            } label: {
-                Label("Default rest", systemImage: "timer")
+            Stepper(
+                value: $restDefault,
+                in: RestDefaultPreference.range,
+                step: RestDefaultPreference.step
+            ) {
+                LabeledContent {
+                    Text(Self.restText(restDefault))
+                        .monospacedDigit()
+                } label: {
+                    Label("Default rest", systemImage: "timer")
+                }
             }
-            .accessibilityElement(children: .combine)
+            .accessibilityValue(Self.restText(restDefault))
             .accessibilityIdentifier("settingsTab.restDefaultRow")
         } header: {
             Text("Rest timer")
         } footer: {
-            Text("Used for any exercise without its own rest time. You can change rest for each exercise in its routine.")
+            Text("Apple Watch uses this for any exercise without its own rest time. You can also set rest for each exercise in its routine.")
         }
     }
 
-    /// The §3 global default, as a timer reads ("1:30").
-    static var restDefaultText: String {
-        Duration.seconds(RestDuration.globalDefault).formatted(.time(pattern: .minuteSecond))
+    /// A rest duration as a timer reads ("1:30").
+    static func restText(_ seconds: TimeInterval) -> String {
+        Duration.seconds(RestDuration.clamped(seconds)).formatted(.time(pattern: .minuteSecond))
     }
 
     // MARK: Apple Health

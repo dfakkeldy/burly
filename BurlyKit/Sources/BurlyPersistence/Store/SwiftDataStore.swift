@@ -1642,6 +1642,8 @@ extension SwiftDataStore: WatchSyncStore {
         }
         var next = current
         next.lastAppliedSnapshotVersion = payload.version
+        next.displayUnit = payload.displayUnit
+        next.restDefault = payload.restDefault
         let encodedNextState = try JSONEncoder().encode(next)
 
         do {

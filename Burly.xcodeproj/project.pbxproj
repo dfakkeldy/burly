@@ -12,6 +12,7 @@
 		01700F631CF0BFDBE87CCDAE /* BurlyHealth in Frameworks */ = {isa = PBXBuildFile; productRef = 6541DF4935431A0466822488 /* BurlyHealth */; };
 		061C4452F20A4F59BE782222 /* BurlyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 061C4452F20A4F59BE782221 /* BurlyCore */; };
 		11AD8321CED99A98534C2063 /* HomeRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B8BCE0DD50F45BB99088F78 /* HomeRoute.swift */; };
+		067AC40E74607104DFE06983 /* WatchSyncedSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF5F478AD9B947EAC18E414C /* WatchSyncedSettings.swift */; };
 		14C35F29898FAD7D7CAF87A0 /* BurlyCore in Frameworks */ = {isa = PBXBuildFile; productRef = B02C76D9A43342F914107FCA /* BurlyCore */; };
 		21394FE9483946108F6D713B /* BurlyWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB914BD26132469AA50A68C0 /* BurlyWatchApp.swift */; };
 		258796C96795AAD47DC0760B /* BurlyPhoneUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E096219D3CBCC86425088168 /* BurlyPhoneUITests.swift */; };
@@ -42,6 +43,8 @@
 		97F8F1E99E9E61AC7A5E7095 /* RoutinesTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9E61AC7A5E7095169EDA1C /* RoutinesTabView.swift */; };
 		D49FE27776A71922F2803309 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A71922F28033093B873235 /* SettingsView.swift */; };
 		ABD32588A2ED18F106DD2D99 /* DisplayUnitPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21C116E468A08B9D9C54F9DB /* DisplayUnitPreference.swift */; };
+		4CDD1EE3CECF57B2B671BE5E /* PhoneAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A72890AD641E352597FFD40A /* PhoneAppModel.swift */; };
+		A3B761EE1CB29A4FE9C8FE62 /* RestDefaultPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118AACBD04AC4AB9536B0193 /* RestDefaultPreference.swift */; };
 		65849FEF12A7E4A69089A611 /* LicensesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C1B4C336761A13E5004C05 /* LicensesView.swift */; };
 		6D16D2636E2EFF3C565EE8DB /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = EBF05FD63A1E5D1F55DC3549 /* LICENSE */; };
 		72DF77D12C8CE6D250412597 /* LICENSE-APP-STORE-EXCEPTION.md in Resources */ = {isa = PBXBuildFile; fileRef = 0B9375E4DB33392DE0851956 /* LICENSE-APP-STORE-EXCEPTION.md */; };
@@ -77,7 +80,12 @@
 		5845CF35C913070F9B7DC824 /* HevyImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3977FDEC11E10ABAC071362D /* HevyImportView.swift */; };
 		EDBAF78E0925F15C703E299B /* HevySyntheticFixture.csv in Resources */ = {isa = PBXBuildFile; fileRef = 5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */; };
 		4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B93D51444666972BC5B477A8 /* ImportUITests.swift */; };
+		7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */; };
 		B03EFAC4CE507E8E5A27456F /* BurlyImport in Frameworks */ = {isa = PBXBuildFile; productRef = EE2761409B9545392090D8F1 /* BurlyImport */; };
+		6FFE781D13B074329398E691 /* BurlyPhoneSync in Frameworks */ = {isa = PBXBuildFile; productRef = 22884904E09A66F1F8C220C3 /* BurlyPhoneSync */; };
+		303590180BFFF7874C72D48D /* BurlySyncAdapters in Frameworks */ = {isa = PBXBuildFile; productRef = DFBAB7B67833CCD7540A36D3 /* BurlySyncAdapters */; };
+		9F906FB1E7A7E741426182AF /* BurlyWatchSyncRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = B424E24417F771E50D44701C /* BurlyWatchSyncRuntime */; };
+		AE4963452FFC83934A7D138D /* BurlySyncAdapters in Frameworks */ = {isa = PBXBuildFile; productRef = 4FD7219AD7758DA0D3AC62CA /* BurlySyncAdapters */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -124,6 +132,7 @@
 		0597FDE626764989A1D8D4B8 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		173AA9D85E7E4AB4AE010F4C /* BurlyPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BurlyPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5B8BCE0DD50F45BB99088F78 /* HomeRoute.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HomeRoute.swift; sourceTree = "<group>"; };
+		BF5F478AD9B947EAC18E414C /* WatchSyncedSettings.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSyncedSettings.swift; sourceTree = "<group>"; };
 		6E56427E1D82930C47EAEAD5 /* BurlyWatchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BurlyWatchUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		796F661042EF39C589E584CF /* WatchDemoSeed.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchDemoSeed.swift; sourceTree = "<group>"; };
 		82A2EF8A57F4DEA139DAC96E /* RoutineListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoutineListView.swift; sourceTree = "<group>"; };
@@ -150,6 +159,8 @@
 		9E9E61AC7A5E7095169EDA1C /* RoutinesTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RoutinesTabView.swift; sourceTree = "<group>"; };
 		76A71922F28033093B873235 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		21C116E468A08B9D9C54F9DB /* DisplayUnitPreference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DisplayUnitPreference.swift; sourceTree = "<group>"; };
+		A72890AD641E352597FFD40A /* PhoneAppModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneAppModel.swift; sourceTree = "<group>"; };
+		118AACBD04AC4AB9536B0193 /* RestDefaultPreference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RestDefaultPreference.swift; sourceTree = "<group>"; };
 		75C1B4C336761A13E5004C05 /* LicensesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LicensesView.swift; sourceTree = "<group>"; };
 		EBF05FD63A1E5D1F55DC3549 /* LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
 		0B9375E4DB33392DE0851956 /* LICENSE-APP-STORE-EXCEPTION.md */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = net.daringfireball.markdown; path = "LICENSE-APP-STORE-EXCEPTION.md"; sourceTree = SOURCE_ROOT; };
@@ -185,6 +196,7 @@
 		3977FDEC11E10ABAC071362D /* HevyImportView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportView.swift; sourceTree = "<group>"; };
 		5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = HevySyntheticFixture.csv; sourceTree = "<group>"; };
 		B93D51444666972BC5B477A8 /* ImportUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImportUITests.swift; sourceTree = "<group>"; };
+		E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairedSyncUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -204,6 +216,8 @@
 				B0D27728FF99715467571093 /* BurlySync in Frameworks */,
 				01700F631CF0BFDBE87CCDAE /* BurlyHealth in Frameworks */,
 				B03EFAC4CE507E8E5A27456F /* BurlyImport in Frameworks */,
+				303590180BFFF7874C72D48D /* BurlySyncAdapters in Frameworks */,
+				6FFE781D13B074329398E691 /* BurlyPhoneSync in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,6 +229,8 @@
 				BD0C4FECEF91F0029F36987C /* BurlyPersistence in Frameworks */,
 				97DB7AB7B0A9333F116071EC /* BurlySync in Frameworks */,
 				887C922BC6C79D4D5D75254F /* BurlyHealth in Frameworks */,
+				AE4963452FFC83934A7D138D /* BurlySyncAdapters in Frameworks */,
+				9F906FB1E7A7E741426182AF /* BurlyWatchSyncRuntime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -236,6 +252,7 @@
 				FAD4CBAF4F7848EC9884D20B /* Assets.xcassets */,
 				5A1C0E7B9D2F4A6B8C3E1F04 /* PrivacyInfo.xcprivacy */,
 				5B8BCE0DD50F45BB99088F78 /* HomeRoute.swift */,
+				BF5F478AD9B947EAC18E414C /* WatchSyncedSettings.swift */,
 				E3C85F96D5269BE088023865 /* WatchHomeViewModel.swift */,
 				82A2EF8A57F4DEA139DAC96E /* RoutineListView.swift */,
 				853528B539F04B315A179825 /* WaitingForPhoneView.swift */,
@@ -288,6 +305,8 @@
 				9E94F4B7B6FA4037A68BB744 /* BurlyPhoneApp.swift */,
 				0597FDE626764989A1D8D4B8 /* ContentView.swift */,
 				21C116E468A08B9D9C54F9DB /* DisplayUnitPreference.swift */,
+				A72890AD641E352597FFD40A /* PhoneAppModel.swift */,
+				118AACBD04AC4AB9536B0193 /* RestDefaultPreference.swift */,
 				387E32F218411F016C5DC66F /* EmptyStateView.swift */,
 				1D6847CCE772834C378273DB /* HistoryTabView.swift */,
 				A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */,
@@ -328,6 +347,7 @@
 				E096219D3CBCC86425088168 /* BurlyPhoneUITests.swift */,
 				831A69A7A453C868EB8BC404 /* SettingsUITests.swift */,
 				B93D51444666972BC5B477A8 /* ImportUITests.swift */,
+				E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */,
 			);
 			name = BurlyPhoneUITests;
 			path = BurlyPhoneUITests;
@@ -389,6 +409,8 @@
 				7D53C7D712D458158C14765C /* BurlySync */,
 				6541DF4935431A0466822488 /* BurlyHealth */,
 				EE2761409B9545392090D8F1 /* BurlyImport */,
+				DFBAB7B67833CCD7540A36D3 /* BurlySyncAdapters */,
+				22884904E09A66F1F8C220C3 /* BurlyPhoneSync */,
 			);
 			productName = BurlyPhone;
 			productReference = 173AA9D85E7E4AB4AE010F4C /* BurlyPhone.app */;
@@ -448,6 +470,8 @@
 				6F0ADC8DB2EA59B4FA9BC535 /* BurlyPersistence */,
 				F751370FBDD591B1A8461D7E /* BurlySync */,
 				D65B8FECD59AD4FAEA2E4E51 /* BurlyHealth */,
+				4FD7219AD7758DA0D3AC62CA /* BurlySyncAdapters */,
+				B424E24417F771E50D44701C /* BurlyWatchSyncRuntime */,
 			);
 			productName = BurlyWatch;
 			productReference = 9076CB9866A84E649B54AC73 /* BurlyWatch.app */;
@@ -550,6 +574,7 @@
 				D982F5DFA53A44C4A6BE516A /* ContentView.swift in Sources */,
 				21394FE9483946108F6D713B /* BurlyWatchApp.swift in Sources */,
 				11AD8321CED99A98534C2063 /* HomeRoute.swift in Sources */,
+				067AC40E74607104DFE06983 /* WatchSyncedSettings.swift in Sources */,
 				9696AA6250FDF165D98FA79A /* WatchHomeViewModel.swift in Sources */,
 				621245A74823ED8C328D0DAA /* RoutineListView.swift in Sources */,
 				B45D13F9039EE9113C2B4E73 /* WaitingForPhoneView.swift in Sources */,
@@ -594,6 +619,7 @@
 				258796C96795AAD47DC0760B /* BurlyPhoneUITests.swift in Sources */,
 				052946BFA2912DD9B70C62B2 /* SettingsUITests.swift in Sources */,
 				4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */,
+				7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -615,6 +641,8 @@
 				97F8F1E99E9E61AC7A5E7095 /* RoutinesTabView.swift in Sources */,
 				D49FE27776A71922F2803309 /* SettingsView.swift in Sources */,
 				ABD32588A2ED18F106DD2D99 /* DisplayUnitPreference.swift in Sources */,
+				4CDD1EE3CECF57B2B671BE5E /* PhoneAppModel.swift in Sources */,
+				A3B761EE1CB29A4FE9C8FE62 /* RestDefaultPreference.swift in Sources */,
 				65849FEF12A7E4A69089A611 /* LicensesView.swift in Sources */,
 				36F3DC863734EA65A8F9337E /* StatsTabView.swift in Sources */,
 				FCBDAC4D143D7B59FAB386BA /* StoreUnavailableView.swift in Sources */,
@@ -1063,6 +1091,22 @@
 		EE2761409B9545392090D8F1 /* BurlyImport */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BurlyImport;
+		};
+		22884904E09A66F1F8C220C3 /* BurlyPhoneSync */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BurlyPhoneSync;
+		};
+		DFBAB7B67833CCD7540A36D3 /* BurlySyncAdapters */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BurlySyncAdapters;
+		};
+		B424E24417F771E50D44701C /* BurlyWatchSyncRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BurlyWatchSyncRuntime;
+		};
+		4FD7219AD7758DA0D3AC62CA /* BurlySyncAdapters */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BurlySyncAdapters;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

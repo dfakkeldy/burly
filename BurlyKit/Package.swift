@@ -66,9 +66,12 @@ let package = Package(
         .target(
             name: "BurlySyncAdapters"
         ),
+        // The watch §5 executor plus `WatchSyncHost`, which binds it to the
+        // WCSession adapter. BurlySyncAdapters stays dependency-free; this
+        // target is the layer that knows both sides.
         .target(
             name: "BurlyWatchSyncRuntime",
-            dependencies: ["BurlySync", "BurlyPersistence"]
+            dependencies: ["BurlyCore", "BurlySync", "BurlyPersistence", "BurlySyncAdapters"]
         ),
         .target(
             name: "BurlyHealth",
@@ -83,10 +86,12 @@ let package = Package(
         // dependency of BurlySync would be a circular target dependency.
         // BurlySyncMachine is named explicitly because this target
         // references `PhoneSyncMachine`'s types directly, not merely
-        // through BurlySync's bound aliases.
+        // through BurlySync's bound aliases. BurlySyncAdapters for
+        // `PhoneSyncHost`, which binds the coordinator to the WCSession
+        // adapter (m4-06).
         .target(
             name: "BurlyPhoneSync",
-            dependencies: ["BurlyCore", "BurlyPersistence", "BurlySync", "BurlySyncMachine"]
+            dependencies: ["BurlyCore", "BurlyPersistence", "BurlySync", "BurlySyncMachine", "BurlySyncAdapters"]
         ),
         // Synthetic fixture generators (workout history, Hevy-shaped CSV)
         // for tests and previews. Shipped as its own library target (not a
@@ -143,7 +148,9 @@ let package = Package(
         ),
         .testTarget(
             name: "BurlyWatchSyncRuntimeTests",
-            dependencies: ["BurlyWatchSyncRuntime", "BurlyPersistence", "BurlyCore"]
+            // BurlyPhoneSync for the loopback test that drives a real phone host
+            // and a real watch host through two fake WCSessions.
+            dependencies: ["BurlyWatchSyncRuntime", "BurlyPersistence", "BurlyCore", "BurlySync", "BurlySyncAdapters", "BurlyPhoneSync"]
         ),
         .testTarget(
             name: "BurlyHealthTests",
@@ -155,7 +162,7 @@ let package = Package(
         // package uses, rather than hand-rolling a second one.
         .testTarget(
             name: "BurlyPhoneSyncTests",
-            dependencies: ["BurlyPhoneSync", "BurlyPersistence", "BurlySync", "BurlySyncMachine", "BurlyCore", "BurlyFixtures"]
+            dependencies: ["BurlyPhoneSync", "BurlyPersistence", "BurlySync", "BurlySyncMachine", "BurlyCore", "BurlyFixtures", "BurlySyncAdapters"]
         ),
         .testTarget(
             name: "BurlyFixturesTests",

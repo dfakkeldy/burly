@@ -126,6 +126,10 @@ public final class PhoneSyncCoordinator {
     private let scheduler: any TriggerScheduling
     private let machine: BurlyPhoneSyncMachine
     private let configuration: Configuration
+    /// The host app's current watch-facing Settings (schema 2), read each
+    /// time a snapshot is built. A change to them is a catalog edit for push
+    /// purposes: the host calls `catalogDidChange()`.
+    private let watchSettings: @MainActor () -> PhoneWatchSettings
 
     private var state: BurlyPhoneSyncMachine.State
     private var lastDailyPushAt: Date?
@@ -214,9 +218,11 @@ public final class PhoneSyncCoordinator {
         clock: any WallClock = SystemWallClock(),
         scheduler: any TriggerScheduling = SystemTriggerScheduler(),
         machineConfiguration: BurlyPhoneSyncMachine.Configuration = BurlyPhoneSyncMachine.Configuration(),
-        configuration: Configuration = Configuration()
+        configuration: Configuration = Configuration(),
+        watchSettings: @escaping @MainActor () -> PhoneWatchSettings = { PhoneWatchSettings() }
     ) {
         self.store = store
+        self.watchSettings = watchSettings
         self.transport = transport
         self.digestPublisher = digestPublisher
         self.statePersisting = statePersisting
@@ -773,7 +779,11 @@ public final class PhoneSyncCoordinator {
             }
 
         case let .transmitSnapshot(version, generation):
-            let payload = try SnapshotPayloadBuilder.build(version: version, from: store)
+            let payload = try SnapshotPayloadBuilder.build(
+                version: version,
+                from: store,
+                settings: watchSettings()
+            )
             try await transport.transmitSnapshot(payload, generation: generation)
 
         case let .cancelSnapshotTransfer(version, generation):

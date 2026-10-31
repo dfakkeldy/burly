@@ -6,9 +6,8 @@
 // canonical kg (BurlyCore/Weight.swift), and WeightUnit converts on the way
 // out and on the way back in.
 //
-// Phone-only by design. Showing pounds on Apple Watch would need the unit
-// carried in the §5 snapshot, which is a sync wire change outside this
-// task; the Settings footer says so rather than implying the watch follows.
+// Apple Watch follows it: the unit rides every sync snapshot (schema 2), and
+// the watch renders its weights through the same `WeightUnit`.
 
 import Foundation
 import BurlyCore
@@ -20,6 +19,11 @@ enum DisplayUnitPreference {
     /// What a fresh install shows. Burly has always rendered kilograms, and
     /// the stored values are kilograms.
     static let defaultUnit: WeightUnit = .kilograms
+
+    /// The stored unit, as `@AppStorage` writes it (the raw value).
+    static func current(defaults: UserDefaults = .standard) -> WeightUnit {
+        defaults.string(forKey: storageKey).flatMap(WeightUnit.init(rawValue:)) ?? defaultUnit
+    }
 
     #if DEBUG
     /// Keeps the persisted unit across a UI-test launch (the relaunch
