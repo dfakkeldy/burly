@@ -20,7 +20,10 @@
 #      Never creates, clones, or boots any other device -- fails loudly
 #      if either named device is missing or ambiguous.
 #   2. Boots the named pair.
-#   3. Builds the BurlyPhone and BurlyWatch app targets.
+#   3. Builds the BurlyPhone and BurlyWatch app targets, then compiles
+#      BurlyPhone (with its embedded watch app) in the Release
+#      configuration for a generic iOS device, unsigned -- the configuration
+#      and destination release.yml archives, which nothing else here builds.
 #   4. Runs the BurlyPhoneUITests XCUITest suite via `xcodebuild test`, then
 #      the BurlyWatchUITests suite the same way (watch app UI testing runs
 #      standalone on the "Burly Watch S11 46mm" sim, no iPhone pairing
@@ -540,6 +543,19 @@ xcodebuild build \
   -scheme BurlyWatch \
   -destination "platform=watchOS Simulator,id=$WATCH_UDID" \
   "${COMMON_XCODEBUILD_FLAGS[@]}"
+
+# The builds above and every test run use Debug, so code that only Release
+# compiles (anything that leans on a `#if DEBUG` symbol from outside it,
+# `#Preview` bodies included) would otherwise first fail at a release tag.
+# Unsigned: this proves the compile, not signing or App ID capabilities.
+log "building BurlyPhone (Release, generic iOS device, unsigned)"
+xcodebuild build \
+  -project "$PROJECT" \
+  -scheme BurlyPhone \
+  -configuration Release \
+  -destination "generic/platform=iOS" \
+  "${COMMON_XCODEBUILD_FLAGS[@]}" \
+  CODE_SIGNING_ALLOWED=NO
 
 # ---------------------------------------------------------------------------
 # Run the UI test suites -- phone (BurlyPhoneUITests) and watch

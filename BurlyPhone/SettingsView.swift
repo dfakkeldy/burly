@@ -40,6 +40,10 @@ struct SettingsView: View {
     /// Burly's public repository (the GPL "Corresponding Source").
     static let sourceCodeURL = URL(string: "https://github.com/dfakkeldy/burly")!
 
+    /// The policy App Store Connect links to (fastlane/metadata/en-US/
+    /// privacy_url.txt). Guideline 5.1.1(i) wants it reachable in the app too.
+    static let privacyPolicyURL = URL(string: "https://github.com/dfakkeldy/burly/blob/main/PRIVACY.md")!
+
     var body: some View {
         // Mounted bare in MainTabView, so the tab owns its navigation stack
         // (as HistoryTabView does) for the Import and Licenses pushes.
@@ -220,6 +224,12 @@ struct SettingsView: View {
             }
             .accessibilityHint("Opens Burly's public repository on GitHub.")
             .accessibilityIdentifier("settingsTab.sourceCodeLink")
+
+            Link(destination: Self.privacyPolicyURL) {
+                Label("Privacy policy", systemImage: "hand.raised")
+            }
+            .accessibilityHint("Opens Burly's privacy policy on GitHub.")
+            .accessibilityIdentifier("settingsTab.privacyPolicyLink")
 
             NavigationLink {
                 LicensesView()

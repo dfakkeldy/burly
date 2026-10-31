@@ -452,6 +452,9 @@ private func muscleGroupTitle(_ group: MuscleGroup) -> String {
     }
 }
 
+// `previewLoaded` exists only in Debug, and `#Preview` compiles in Release too.
+#if DEBUG
 #Preview {
     StatsTabView(viewModel: .previewLoaded)
 }
+#endif

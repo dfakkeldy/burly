@@ -22,10 +22,11 @@ On iPhone:
   consistency charts, each with its own empty state.
 - **Settings**: kg or lb for every phone screen, including the weight you
   type into the set editor; an editable rest-default stepper (15-second
-  steps from 15 seconds to 5 minutes); an Apple Health row that says
-  saving is coming; the version, a source code link and the full licence
-  text. If the watch sent a newer sync schema than this iPhone can read,
-  Settings shows an update-needed row.
+  steps from 15 seconds to 5 minutes); an Apple Health row that says what
+  the watch saves, with a button that opens the Health app; the version, a
+  source code link, the privacy policy and the full licence text. If the
+  watch sent a newer sync schema than this iPhone can read, Settings shows
+  an update-needed row.
 - **Import from Hevy**: choose a Hevy CSV export and see a preview (new
   workouts, already-imported ones, date range, matched and new exercises,
   and everything that will be dropped) before anything is saved. Importing
@@ -36,7 +37,11 @@ On Apple Watch: the routine list and the logging screen, with a guarded
 weight edit, the rest timer, finish, discard and resume. Weights, volume
 and the crown step follow the phone's display unit. Rest uses the
 exercise's own rest time if it has one, otherwise the phone's rest
-default.
+default. The watch asks for Health access the first time a workout
+starts; with access, each finished workout is saved to Apple Health,
+normally with heart rate and active energy (a session resumed after the
+app relaunched may be saved without sensor data). If access is declined,
+sets still save in Burly.
 
 The phone and the watch exchange routines, exercises and finished sessions
 over WatchConnectivity (`PhoneSyncHost` / `WatchSyncHost`). Snapshot schema
@@ -45,9 +50,10 @@ snapshot the watch shows kilograms and 90 seconds.
 
 ## Not wired up yet
 
-The HealthKit workout controller is built and tested in `BurlyKit`, but
-neither app calls it yet (open [PR #13](https://github.com/dfakkeldy/burly/pull/13)).
-No workout is saved to Apple Health.
+The iPhone app does not read or write Apple Health itself; only the watch
+does. Deleting a workout from Health when its session is deleted is built
+in `BurlyKit` but not wired, because the phone has no session-delete action
+yet (see DECISIONS.md).
 
 ## Simulator acceptance
 
