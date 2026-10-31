@@ -20,6 +20,8 @@ struct StatsTabView: View {
     @State private var volumeRange: PhoneStatsVolumeRange = .eightWeeks
     @State private var selectedExerciseID: UUID?
     @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .caption) private var progressionChartHeight: CGFloat = 220
 
     var body: some View {
         NavigationStack {
@@ -67,23 +69,42 @@ struct StatsTabView: View {
     }
 
     private func progressionCard(_ stats: PhoneStatsDashboard) -> some View {
-        StatsCard(title: "Exercise progression", subtitle: "Top set and estimated 1RM") {
+        let axisDates = progressionAxisDates(stats.progression.points)
+        return StatsCard(title: "Exercise progression", subtitle: "Top set and estimated 1RM") {
             if let exercise = stats.progression.exercise {
-                Picker(
-                    "Exercise",
-                    selection: Binding(
-                        get: { selectedExerciseID ?? exercise.id },
-                        set: { newID in
-                            selectedExerciseID = newID
-                            reloadStats()
+                Menu {
+                    Picker(
+                        "Exercise",
+                        selection: Binding(
+                            get: { selectedExerciseID ?? exercise.id },
+                            set: { newID in
+                                selectedExerciseID = newID
+                                reloadStats()
+                            }
+                        )
+                    ) {
+                        ForEach(stats.exercises) { candidate in
+                            Text(candidate.name).tag(candidate.id)
                         }
-                    )
-                ) {
-                    ForEach(stats.exercises) { candidate in
-                        Text(candidate.name).tag(candidate.id)
                     }
+                    .pickerStyle(.inline)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(exercise.name)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .pickerStyle(.menu)
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .accessibilityLabel("Exercise")
+                .accessibilityValue(exercise.name)
                 .accessibilityIdentifier("statsTab.progression.exercisePicker")
 
                 rangePicker(
@@ -133,8 +154,33 @@ struct StatsTabView: View {
                         "Personal record": Color.red
                     ])
                     .chartYAxisLabel(unit.symbol)
+                    .chartXAxis {
+                        if dynamicTypeSize.isAccessibilitySize {
+                            AxisMarks(values: axisDates) { value in
+                                AxisGridLine()
+                                AxisTick()
+                                if let date = value.as(Date.self) {
+                                    let anchor: UnitPoint = axisDates.count == 1 ? .top
+                                        : (date == axisDates.first ? .topLeading : .topTrailing)
+                                    AxisValueLabel(anchor: anchor) {
+                                        VStack(spacing: 0) {
+                                            Text(date, format: .dateTime.month(.abbreviated))
+                                            Text(date, format: .dateTime.day())
+                                            Text(date, format: .dateTime.year(.twoDigits))
+                                        }
+                                        .font(.caption2)
+                                    }
+                                }
+                            }
+                        } else {
+                            AxisMarks()
+                        }
+                    }
+                    .chartYAxis {
+                        AxisMarks(values: .automatic(desiredCount: dynamicTypeSize.isAccessibilitySize ? 3 : 5))
+                    }
                     .chartLegend(.hidden)
-                    .frame(height: 220)
+                    .frame(height: progressionChartHeight)
                     .accessibilityIdentifier("statsTab.progression.chart")
                     .accessibilityLabel("Exercise progression chart for \(exercise.name)")
 
@@ -158,6 +204,11 @@ struct StatsTabView: View {
                 )
             }
         }
+    }
+
+    private func progressionAxisDates(_ points: [ExerciseSessionPoint]) -> [Date] {
+        guard let first = points.first?.date, let last = points.last?.date else { return [] }
+        return first == last ? [first] : [first, last]
     }
 
     /// Keep legend text in the ordinary accessibility tree, outside the
