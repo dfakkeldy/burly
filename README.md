@@ -13,14 +13,19 @@ On iPhone:
 
 - **History**: logged sessions grouped by week, with a session editor
   (sets, warmups, added or removed exercises, notes). Edits keep the linked
-  HealthKit workout identifier.
+  HealthKit workout identifier. History refreshes when a session arrives
+  from the watch.
 - **Routines**: a routine builder, plus a catalog browser where you can
-  create and archive your own exercises.
+  create and archive your own exercises. The bundled curated catalog is
+  applied when the on-device store opens.
 - **Stats**: exercise progression, weekly volume, muscle split and
   consistency charts, each with its own empty state.
 - **Settings**: kg or lb for every phone screen, including the weight you
-  type into the set editor; the default rest time; an Apple Health row;
-  the version, a source code link and the full licence text.
+  type into the set editor; an editable rest-default stepper (15-second
+  steps from 15 seconds to 5 minutes); an Apple Health row that says
+  saving is coming; the version, a source code link and the full licence
+  text. If the watch sent a newer sync schema than this iPhone can read,
+  Settings shows an update-needed row.
 - **Import from Hevy**: choose a Hevy CSV export and see a preview (new
   workouts, already-imported ones, date range, matched and new exercises,
   and everything that will be dropped) before anything is saved. Importing
@@ -28,18 +33,21 @@ On iPhone:
   Health.
 
 On Apple Watch: the routine list and the logging screen, with a guarded
-weight edit, the rest timer, finish, discard and resume.
+weight edit, the rest timer, finish, discard and resume. Weights, volume
+and the crown step follow the phone's display unit. Rest uses the
+exercise's own rest time if it has one, otherwise the phone's rest
+default.
+
+The phone and the watch exchange routines, exercises and finished sessions
+over WatchConnectivity (`PhoneSyncHost` / `WatchSyncHost`). Snapshot schema
+2 carries the phone's display unit and rest default. Before the first
+snapshot the watch shows kilograms and 90 seconds.
 
 ## Not wired up yet
 
-The sync engine and the HealthKit workout controller are built and tested
-in `BurlyKit`, but neither app calls them yet. Until they do:
-
-- The phone and the watch don't exchange routines or sessions.
-- No workout is saved to Apple Health.
-- The watch shows kilograms and uses the 90-second rest default whatever the
-  phone's Settings say. Carrying those two choices to the watch needs a
-  sync schema change; see `DECISIONS.md`.
+The HealthKit workout controller is built and tested in `BurlyKit`, but
+neither app calls it yet (open [PR #13](https://github.com/dfakkeldy/burly/pull/13)).
+No workout is saved to Apple Health.
 
 ## Simulator acceptance
 
@@ -50,7 +58,15 @@ Scripts/acceptance-sim.sh
 
 `acceptance-sim.sh` needs a simulator pair named `Burly iPhone` and
 `Burly Watch S11 46mm` on the newest installed runtimes. CI creates the pair
-the same way (see `.github/workflows/ci.yml`).
+the same way (see `.github/workflows/ci.yml`). That script is the CI
+simulator acceptance gate.
+
+`Scripts/paired-sync-sim.sh` is a separate local check on the same pair. It
+is not part of the CI gate. It proves the phone half of sync: a routine
+built on the real store, its snapshot handed to WatchConnectivity, and the
+phone's digest applied on the watch. Simulator never delivers a
+WatchConnectivity file to the receiving app, so the snapshot cannot reach
+the watch UI between simulators.
 
 The `Simulator acceptance` job runs on pushes to `main` and on pull requests
 labelled `sim-acceptance`. Without that label a green PR check is not

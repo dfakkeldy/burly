@@ -1,6 +1,6 @@
 # Burly privacy policy
 
-Effective 30 October 2026.
+Effective 31 October 2026.
 
 Burly is a lifting tracker for iPhone and Apple Watch. It is built so that
 your data stays with you.
@@ -29,24 +29,12 @@ own privacy policy.
 
 ## Apple Health
 
-Burly asks for Health access on Apple Watch the first time you start a
-workout. If you allow it:
-
-- Burly **writes** each finished workout to Health, so other apps you allow
-  can see it.
-- Burly **reads** heart rate and active energy from your watch's sensors
-  during a workout, to record them with that workout.
-
-Health data is used only for these purposes. It is never used for
-advertising or marketing, never sold, and never shared with anyone. If you
-decline, Burly still logs and saves your workouts; nothing else changes. You
-can change Burly's access at any time in the Health app under Sharing, then
-Apps, then Burly.
+This build does not read from or write to Apple Health. Workouts stay in
+Burly's own storage on your devices.
 
 ## Deleting your data
 
-Deleting Burly from a device deletes its storage on that device. Workouts
-Burly saved to Apple Health stay in Health until you delete them there.
+Deleting Burly from a device deletes its storage on that device.
 
 ## Changes and contact
 
