@@ -23,5 +23,10 @@ enum HomeRoute: Hashable {
     /// "Resume workout" (the ordinary pager, sets and rest timer intact),
     /// `true` for "Not now" (§2: "Declining resume = normal end-workout
     /// summary path" -- straight to Finish/Keep going/Discard).
-    case resume(sessionID: UUID, enterSummary: Bool)
+    ///
+    /// `finishAt` is §4's stale-session guard: a session left open for over
+    /// an hour finishes at its last logged set, not when the lifter
+    /// answers, so its duration and HealthKit workout keep the original
+    /// timestamps.
+    case resume(sessionID: UUID, enterSummary: Bool, finishAt: Date? = nil)
 }

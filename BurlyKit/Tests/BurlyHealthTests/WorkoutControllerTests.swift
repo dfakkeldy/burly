@@ -844,11 +844,12 @@ private final class FakeWorkoutBuilder: LiveWorkoutBuilding {
         }
     }
 
-    func finishWorkout(metadata: WorkoutMetadata) async throws {
+    func finishWorkout(metadata: WorkoutMetadata) async throws -> UUID? {
         log.calls.append(.finishWorkout(metadata))
         if !finishFailures.isEmpty {
             throw finishFailures.removeFirst()
         }
+        return nil
     }
 
     func discardWorkout() {

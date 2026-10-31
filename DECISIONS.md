@@ -23,6 +23,54 @@ action needs an Apple ID session) and, for now, the age rating questionnaire.
 Both are one-time answers in App Store Connect. The privacy answer is "Data Not
 Collected", matching PRIVACY.md and the apps' privacy manifests.
 
+## 2026-10-29 — HealthKit on the watch: the store save is the commit, Health is best-effort
+
+Spec §4 is wired into the watch session flow through one new BurlyHealth type,
+`SessionWorkoutRecorder`, which sits between the session screens and the existing
+`WorkoutController`. The controller still owns the ordered end sequence; the
+recorder decides whether a session gets a workout and which one.
+
+- **Authorization** is requested from `SessionEntryView.saveAndEnter`, after the
+  new session is saved, and only while HealthKit reports the workout type as not
+  determined. A declined or unavailable Health means no live workout and no save,
+  and nothing on screen: sets are app data and Finish never waits on or reports a
+  HealthKit problem (§4 acceptance #4). Every HealthKit call except the prompt is
+  bounded (10 s) so a stuck callback cannot hold Finish.
+- **Finish order.** The HealthKit workout is saved first and its UUID rides in the
+  same store save that marks the session logged. That save also queues the session
+  for the phone (`onSessionLogged`). If the app dies between the two, the next
+  Finish asks HealthKit for a workout already linked to the session (by
+  `HKMetadataKeyExternalUUID`) and does not save a second one. If that question
+  cannot be answered, nothing is saved: a missing workout is better than a
+  duplicate. A timed-out end sequence also saves nothing more, since it may still
+  complete by itself.
+- **Recovery matrix.** At launch the recorder reattaches a workout HealthKit kept
+  alive to the store's active session (row 1, through a new
+  `WorkoutController.adopt`), or ends and discards it when the store has none
+  (row 3). A finished session with no live workout, Health allowed, gets a
+  duration-only workout from the non-live builder with the same metadata, and the
+  summary says it has no sensor data (row 2). Resume never starts a new live
+  workout. An unreadable store leaves HealthKit alone; an orphan is discarded when
+  the next session starts.
+- **Stale guard.** The resume gate checks the active session's last logged set
+  (or its start) on every load. Past one hour it asks "Still working out?" and
+  offers "End workout", which opens the usual Finish/Keep going/Discard summary
+  with the session ending at that last set (`SessionEngine.finish(endingAt:)`).
+  Keep going clears that end time.
+- **Seeded UI-test scenarios run without Health** unless the test sets
+  `BURLY_WATCH_UI_TEST_HEALTH=live`, because the system authorization sheet would
+  cover the screens the existing suites drive and `simctl privacy` cannot
+  pre-grant Health. `HealthKitUITests` covers the real path and skips unless the
+  runner sets `BURLY_HEALTH_UI_TESTS=1`.
+
+Both app targets carry the HealthKit entitlement and the two purpose strings; the
+watch also declares the `workout-processing` background mode. The phone links no
+HealthKit code yet. `HealthKitWorkoutStore.deleteWorkouts(linkedTo:)` is the §4
+delete-propagation helper, but the phone has no session-delete action to call it
+from, so delete propagation is not wired. The phone Settings row now describes
+what the watch does; it still reads no authorization status, for the reason in
+the HealthKit Settings entry below.
+
 ## 2026-10-29 — Sync is wired into both apps; the snapshot carries the unit and rest default
 
 Phone and watch now exchange data. Each app owns one store and one sync host,

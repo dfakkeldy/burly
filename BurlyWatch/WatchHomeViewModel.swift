@@ -96,6 +96,10 @@ final class WatchHomeViewModel {
         let routineName: String?
         let startedAt: Date
         let loggedSetCount: Int
+        /// §4 stale-session guard: the last logged set (or the start, with
+        /// none) when that was more than an hour before this load, else
+        /// `nil`. Checked on every load, which runs on each activation.
+        var staleSince: Date? = nil
     }
 
     struct RoutineRow: Identifiable, Equatable {
@@ -123,7 +127,10 @@ final class WatchHomeViewModel {
                         sessionID: resumable.id,
                         routineName: resumable.session.routineName,
                         startedAt: resumable.session.startedAt,
-                        loggedSetCount: resumable.allSets.count
+                        loggedSetCount: resumable.allSets.count,
+                        staleSince: StaleSessionGuard.isStale(resumable, now: now())
+                            ? StaleSessionGuard.lastActivity(of: resumable)
+                            : nil
                     )
                 )
                 return

@@ -6,6 +6,7 @@
 // `SessionViewModel` calling into the already-tested BurlyCore engine.
 import SwiftUI
 import BurlyCore
+import BurlyHealth
 import BurlyPersistence
 
 /// An action from the §2 ellipsis sheet that itself opens another
@@ -39,16 +40,22 @@ struct LoggingScreenView: View {
     ///   `SessionViewModel.init` -- see its doc. m2-06's Resume-decline path
     ///   (`SessionEntryView`'s `.resume(sessionID:enterSummary: true)`)
     ///   is the only caller that passes `true`.
+    ///
+    /// - Parameter finishAt: §4's stale-session guard; see `HomeRoute.resume`.
     init(
         engine: SessionEngine,
         store: BurlyStore,
+        workoutRecorder: SessionWorkoutRecorder? = nil,
         startInSummary: Bool = false,
+        finishAt: Date? = nil,
         onSessionLogged: @escaping @MainActor (UUID) -> Void = { _ in }
     ) {
         _viewModel = State(initialValue: SessionViewModel(
             engine: engine,
             store: store,
+            workoutRecorder: workoutRecorder,
             startInSummary: startInSummary,
+            finishAt: finishAt,
             onSessionLogged: onSessionLogged
         ))
     }
@@ -67,6 +74,7 @@ struct LoggingScreenView: View {
                     isFinal: true,
                     isFinishing: false,
                     saveError: nil,
+                    lacksSensorData: viewModel.workoutRecording?.lacksSensorData == true,
                     onFinish: {},
                     onRetryFinish: {},
                     onKeepGoing: {},

@@ -71,6 +71,7 @@
 		20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */; };
 		CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */; };
 		D8E90E4D6277CB5652B0A304 /* ResumeSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */; };
+		A1B2C3D4E5F6A7B8C9D0E1F2 /* HealthKitUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2A3 /* HealthKitUITests.swift */; };
 		921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */; };
 		94A77A6BFFAF15718B081B35 /* UnreadableSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */; };
 		EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */; };
@@ -187,6 +188,7 @@
 		8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionConflictUITests.swift; sourceTree = "<group>"; };
 		8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SaveFailureUITests.swift; sourceTree = "<group>"; };
 		7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeSessionView.swift; sourceTree = "<group>"; };
+		B2C3D4E5F6A7B8C9D0E1F2A3 /* HealthKitUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HealthKitUITests.swift; sourceTree = "<group>"; };
 		18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeUITests.swift; sourceTree = "<group>"; };
 		F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UnreadableSessionView.swift; sourceTree = "<group>"; };
 		0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRecoveryUITests.swift; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 				E1213880A20DF51DDFF1862F /* LoggingScreenUITests.swift */,
 				8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */,
 				8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */,
+				B2C3D4E5F6A7B8C9D0E1F2A3 /* HealthKitUITests.swift */,
 				18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */,
 				0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */,
 			);
@@ -607,6 +610,7 @@
 				A28975AC8C65BABB4B67CF00 /* LoggingScreenUITests.swift in Sources */,
 				20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */,
 				CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */,
+				A1B2C3D4E5F6A7B8C9D0E1F2 /* HealthKitUITests.swift in Sources */,
 				921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */,
 				EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */,
 			);
@@ -697,11 +701,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BurlyWatch/BurlyWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8AXNA5B37R;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
+				INFOPLIST_FILE = BurlyWatch/Info.plist;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKApplication = YES;
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.burly.lifting;
@@ -727,11 +735,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BurlyWatch/BurlyWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8AXNA5B37R;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
+				INFOPLIST_FILE = BurlyWatch/Info.plist;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKApplication = YES;
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.burly.lifting;
@@ -822,6 +834,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BurlyPhone/BurlyPhone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"BurlyPhone/Preview Content\"";
@@ -830,6 +843,8 @@
 				EXCLUDED_SOURCE_FILE_NAMES = HevySyntheticFixture.csv;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -855,6 +870,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BurlyPhone/BurlyPhone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"BurlyPhone/Preview Content\"";
@@ -862,6 +878,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
