@@ -1,5 +1,28 @@
 <!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
+## 2026-10-30 — App Store listing as code with fastlane deliver; uploads stay on xcodebuild
+
+Burly's builds already reach App Store Connect without fastlane: a release tag
+archives and uploads with `xcodebuild -exportArchive` (release.yml), and that
+stays. What had no home was the store page itself: listing text, screenshots,
+review notes. It now lives in the repo under `fastlane/` and goes up with
+`fastlane deliver` from the manual Store listing workflow, using the same App
+Store Connect API key secrets. Reviewable text in a public repo beats edits made
+by hand in App Store Connect, and the workflow needs no key on any Mac.
+
+The lane edits the listing only: it never uploads a binary and never submits for
+review. A pull request that touches `fastlane/` runs an offline check of App
+Store Connect's length limits; only a dispatched run can reach the secrets.
+The review contact's name, email and phone come from optional repo secrets, not
+files, so they stay out of the public repo. `name.txt` is deliberately absent
+until the existing App Store Connect record's name is confirmed, so the lane
+cannot rename the app by accident.
+
+Two answers fastlane cannot send with an API key: the App Privacy details (its
+action needs an Apple ID session) and, for now, the age rating questionnaire.
+Both are one-time answers in App Store Connect. The privacy answer is "Data Not
+Collected", matching PRIVACY.md and the apps' privacy manifests.
+
 ## 2026-10-29 — Hevy import: the preview is the write plan
 
 Spec §8 acceptance #4 asks that the preview's numbers match the import's result

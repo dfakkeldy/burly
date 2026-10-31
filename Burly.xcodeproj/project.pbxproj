@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5A1C0E7B9D2F4A6B8C3E1F03 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 5A1C0E7B9D2F4A6B8C3E1F04 /* PrivacyInfo.xcprivacy */; };
+		5A1C0E7B9D2F4A6B8C3E1F01 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 5A1C0E7B9D2F4A6B8C3E1F02 /* PrivacyInfo.xcprivacy */; };
 		01700F631CF0BFDBE87CCDAE /* BurlyHealth in Frameworks */ = {isa = PBXBuildFile; productRef = 6541DF4935431A0466822488 /* BurlyHealth */; };
 		061C4452F20A4F59BE782222 /* BurlyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 061C4452F20A4F59BE782221 /* BurlyCore */; };
 		11AD8321CED99A98534C2063 /* HomeRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B8BCE0DD50F45BB99088F78 /* HomeRoute.swift */; };
@@ -117,6 +119,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5A1C0E7B9D2F4A6B8C3E1F04 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		5A1C0E7B9D2F4A6B8C3E1F02 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		0597FDE626764989A1D8D4B8 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		173AA9D85E7E4AB4AE010F4C /* BurlyPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BurlyPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5B8BCE0DD50F45BB99088F78 /* HomeRoute.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HomeRoute.swift; sourceTree = "<group>"; };
@@ -230,6 +234,7 @@
 				AB914BD26132469AA50A68C0 /* BurlyWatchApp.swift */,
 				DF27525A87E947E58AE0661E /* ContentView.swift */,
 				FAD4CBAF4F7848EC9884D20B /* Assets.xcassets */,
+				5A1C0E7B9D2F4A6B8C3E1F04 /* PrivacyInfo.xcprivacy */,
 				5B8BCE0DD50F45BB99088F78 /* HomeRoute.swift */,
 				E3C85F96D5269BE088023865 /* WatchHomeViewModel.swift */,
 				82A2EF8A57F4DEA139DAC96E /* RoutineListView.swift */,
@@ -301,6 +306,7 @@
 				2A7CD9CC7FE958405BB1B88E /* WelcomeView.swift */,
 				C3E95F84A9D2E5F1B64D91A3 /* PhoneDemoSeed.swift */,
 				C51BD6EEF9104C888FE46F50 /* Assets.xcassets */,
+				5A1C0E7B9D2F4A6B8C3E1F02 /* PrivacyInfo.xcprivacy */,
 				27C97A5861114CF784774D7E /* Preview Content */,
 				DF3DBAECE23BA6C405B8D0F8 /* Licenses */,
 			);
@@ -504,6 +510,7 @@
 			files = (
 				2CB27701E02A4C12AF71EFA0 /* Preview Assets.xcassets in Resources */,
 				6F52ED6B92E84F5A91C21E41 /* Assets.xcassets in Resources */,
+				5A1C0E7B9D2F4A6B8C3E1F01 /* PrivacyInfo.xcprivacy in Resources */,
 				6D16D2636E2EFF3C565EE8DB /* LICENSE in Resources */,
 				72DF77D12C8CE6D250412597 /* LICENSE-APP-STORE-EXCEPTION.md in Resources */,
 				EDBAF78E0925F15C703E299B /* HevySyntheticFixture.csv in Resources */,
@@ -515,6 +522,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C4E96BE62F8E404DB6919BF7 /* Assets.xcassets in Resources */,
+				5A1C0E7B9D2F4A6B8C3E1F03 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
