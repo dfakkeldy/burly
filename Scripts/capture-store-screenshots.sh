@@ -422,7 +422,7 @@ REPLACING=1
 for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
   cp "$STAGE_DIR/$shot.png" "$STORE_DIR/.$shot.png.new" || restore_store "could not copy $shot.png"
 done
-rm -f "$STORE_DIR"/*.png
+rm -f "$STORE_DIR"/*.png || restore_store "could not remove the previous PNGs"
 for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
   mv "$STORE_DIR/.$shot.png.new" "$STORE_DIR/$shot.png" || restore_store "could not move $shot.png into place"
 done
