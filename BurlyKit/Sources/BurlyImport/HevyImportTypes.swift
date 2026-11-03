@@ -23,12 +23,27 @@ import Foundation
 /// .invalidUTF8`, and a header that's corrupted enough to be
 /// unrecognizable still aborts via `.unrecognizedHeader` below (a
 /// replacement character breaks its exact column-name match).
-public enum HevyImportError: Error, Sendable, Equatable {
+public enum HevyImportError: Error, Sendable, Equatable, LocalizedError {
     /// The header row (or its absence) is missing one or more columns
     /// BurlyImport needs to build anything at all. Lists the missing
     /// column names so a caller can show a specific message rather than a
-    /// generic "couldn't read this file."
+    /// generic "couldn't read this file." A file with neither weight column
+    /// lists them as one entry, `weight_kg or weight_lbs`.
     case unrecognizedHeader(missingColumns: [String])
+    /// The header has both `weight_kg` and `weight_lbs`. Hevy writes one or
+    /// the other, so a file with both has been edited or merged, and Burly
+    /// can't tell which column's numbers are the real ones.
+    case ambiguousWeightUnit
+
+    public var errorDescription: String? {
+        switch self {
+        case .unrecognizedHeader(let missingColumns):
+            return "The file is missing required columns: \(missingColumns.joined(separator: ", "))."
+        case .ambiguousWeightUnit:
+            return "The file has both a weight_kg and a weight_lbs column, so Burly can't tell which unit the weights are in. "
+                + "Export your workouts from Hevy again, without editing the file, and choose that file."
+        }
+    }
 }
 
 /// Why one data row couldn't be turned into a set. Carried alongside the
@@ -38,11 +53,13 @@ public enum MalformedRowReason: Sendable, Equatable {
     /// The row's field count didn't match the header's.
     case wrongColumnCount(expected: Int, actual: Int)
     /// A required column's value was blank where blank isn't a valid
-    /// default for that field (unlike `weight_kg`, where blank means
+    /// default for that field (unlike the weight column, where blank means
     /// bodyweight).
     case missingRequiredField(String)
-    /// `weight_kg` didn't parse as a number, or parsed to something
-    /// `Weight` itself rejects (negative, NaN, infinite).
+    /// The weight column (`weight_kg` or `weight_lbs`) didn't parse as a
+    /// number, or parsed to something `Weight` itself rejects (negative,
+    /// NaN, infinite). Carries the text as written in the file, in the
+    /// file's own unit.
     case invalidWeight(String)
     /// `reps` didn't parse as a non-negative integer.
     case invalidReps(String)
@@ -52,7 +69,8 @@ public enum MalformedRowReason: Sendable, Equatable {
     case invalidTimestamp(field: String, value: String)
     /// `end_time` parsed to an instant before `start_time` (finding 6.2).
     case endBeforeStart
-    /// A nonempty `distance_km` or `duration_seconds` value didn't parse
+    /// A nonempty `distance_km`, `distance_miles` or `duration_seconds`
+    /// value didn't parse
     /// as a finite, non-negative number (finding 5.1) — garbage text,
     /// `NaN`, a negative value, or positive infinity.
     case invalidDistance(String)
@@ -149,8 +167,14 @@ public struct HevyImportSummary: Sendable, Equatable {
     /// Count of distinct new `origin: .hevyImport` exercises created for
     /// names that matched neither the alias table nor a catalog name.
     public let exercisesCreatedAsCustom: Int
-    /// Rows skipped in full because they were cardio (distance/duration
-    /// only) — out of scope per spec §8, Apple Workout owns cardio.
+    /// Rows skipped in full because they carry a distance or a duration
+    /// (`distance_km`/`distance_miles`/`duration_seconds` above zero), whatever
+    /// their weight or reps say. That is cardio — out of scope per spec §8, Apple
+    /// Workout owns cardio — but also timed and distance strength work
+    /// such as planks, hangs and carries, which Burly can't store either
+    /// because a set is weight and reps. The name predates that
+    /// distinction; the phone's drop report calls these "Timed or
+    /// distance rows".
     public let cardioRowsSkipped: Int
     /// Every row whose `rpe` column had a value, regardless of whether the
     /// row went on to become an imported set, a skipped cardio row, or a

@@ -10,13 +10,65 @@
 // columns Burly actually needs to build a set are "required" — everything
 // else is opportunistic.
 //
-// Imports Foundation only for `String.trimmingCharacters(in:)`.
+// Units: Hevy writes weight and distance in the unit the account is set to,
+// and names the column for it — `weight_kg`/`distance_km` for metric
+// accounts, `weight_lbs`/`distance_miles` for imperial ones (corroborated by
+// two independent third-party Hevy importers; not Hevy documentation, and
+// still to be confirmed against Dan's own export, m7-03). Exactly one weight
+// column must be present; its unit decides how the value is converted to
+// Burly's kilograms. Distance is only ever tested for "is it positive"
+// (cardio detection), so either distance column works and no conversion is
+// needed.
+//
+// Imports BurlyCore for `Weight`, and Foundation for
+// `String.trimmingCharacters(in:)`.
+import BurlyCore
 import Foundation
 
+/// Which weight column a Hevy export carries, i.e. which unit its weights
+/// are written in.
+enum HevyWeightUnit: Equatable {
+    case kilograms
+    case pounds
+
+    /// The header column holding weights in this unit.
+    var columnName: String {
+        switch self {
+        case .kilograms: return HevyCSVSchema.weightKilogramsColumn
+        case .pounds: return HevyCSVSchema.weightPoundsColumn
+        }
+    }
+
+    /// Converts a value read from this unit's column to a `Weight`, or
+    /// `nil` if `Weight` rejects the result (negative, NaN, infinite).
+    /// Pounds are multiplied by `Weight.kilogramsPerPound` at full
+    /// precision — the same arithmetic as `Weight(pounds:)` — so a value
+    /// like 225 lb lands on the exact kilogram figure the rest of Burly
+    /// would compute for it.
+    func weight(from value: Double) -> Weight? {
+        switch self {
+        case .kilograms: return try? Weight(validatingKg: value)
+        case .pounds: return try? Weight(validatingKg: value * Weight.kilogramsPerPound)
+        }
+    }
+}
+
 enum HevyCSVSchema {
-    /// Columns without which a row cannot be turned into anything at all.
+    static let weightKilogramsColumn = "weight_kg"
+    static let weightPoundsColumn = "weight_lbs"
+    static let distanceKilometersColumn = "distance_km"
+    static let distanceMilesColumn = "distance_miles"
+
+    /// How a missing weight column is named in
+    /// `HevyImportError.unrecognizedHeader(missingColumns:)`: either unit's
+    /// column satisfies the requirement.
+    static let weightColumnRequirement = "\(weightKilogramsColumn) or \(weightPoundsColumn)"
+
+    /// Columns without which a row cannot be turned into anything at all,
+    /// besides the weight column (see `weightColumnRequirement`): exactly
+    /// one of `weight_kg`/`weight_lbs` is also required.
     static let requiredColumns = [
-        "title", "start_time", "end_time", "exercise_title", "set_type", "weight_kg", "reps"
+        "title", "start_time", "end_time", "exercise_title", "set_type", "reps"
     ]
 
     /// Optional columns this importer deliberately reads or explicitly
@@ -27,7 +79,14 @@ enum HevyCSVSchema {
     /// is still read here so a nonempty value is visibly reported as
     /// discarded (finding 4.4) rather than silently ignored.
     static let knownOptionalColumns = [
-        "description", "superset_id", "exercise_notes", "distance_km", "duration_seconds", "rpe", "set_index"
+        "description", "superset_id", "exercise_notes", "duration_seconds", "rpe", "set_index"
+    ]
+
+    /// The unit-dependent columns: one of the weight columns is required,
+    /// and the distance columns are optional. Both pairs are recognized so
+    /// neither unit's column is ever counted as an unknown column.
+    static let unitColumns = [
+        weightKilogramsColumn, weightPoundsColumn, distanceKilometersColumn, distanceMilesColumn
     ]
 
     /// Every column name this importer recognizes at all, required or
@@ -35,7 +94,7 @@ enum HevyCSVSchema {
     /// schema (finding 4.3): a nonempty value in such a column is counted
     /// as dropped rather than silently ignored, without aborting the
     /// import.
-    static let knownColumns = Set(requiredColumns + knownOptionalColumns)
+    static let knownColumns = Set(requiredColumns + knownOptionalColumns + unitColumns)
 }
 
 /// Resolves a parsed header row into named column indices, built once per
@@ -84,8 +143,37 @@ struct HevyCSVHeader {
         unknownColumnIndices = unknownIndices
     }
 
+    /// Which unit the file's weights are in, or `nil` unless exactly one
+    /// of `weight_kg`/`weight_lbs` is present: a file with neither has no
+    /// weights to read, and a file with both is ambiguous (see
+    /// `hasBothWeightColumns`).
+    var weightUnit: HevyWeightUnit? {
+        let kilograms = columnIndex[HevyCSVSchema.weightKilogramsColumn] != nil
+        let pounds = columnIndex[HevyCSVSchema.weightPoundsColumn] != nil
+        switch (kilograms, pounds) {
+        case (true, false): return .kilograms
+        case (false, true): return .pounds
+        default: return nil
+        }
+    }
+
+    /// Both weight columns are present. Burly can't tell which one the
+    /// values should come from, and guessing would silently import every
+    /// weight 2.2x too heavy or too light, so the import is refused.
+    var hasBothWeightColumns: Bool {
+        columnIndex[HevyCSVSchema.weightKilogramsColumn] != nil
+            && columnIndex[HevyCSVSchema.weightPoundsColumn] != nil
+    }
+
+    /// Required columns the header lacks. A file with neither weight
+    /// column reports them as one entry, `weight_kg or weight_lbs`, placed
+    /// just before `reps` (their order in a real export).
     var missingRequiredColumns: [String] {
-        HevyCSVSchema.requiredColumns.filter { columnIndex[$0] == nil }
+        var missing = HevyCSVSchema.requiredColumns.filter { columnIndex[$0] == nil }
+        if columnIndex[HevyCSVSchema.weightKilogramsColumn] == nil, columnIndex[HevyCSVSchema.weightPoundsColumn] == nil {
+            missing.insert(HevyCSVSchema.weightColumnRequirement, at: missing.firstIndex(of: "reps") ?? missing.endIndex)
+        }
+        return missing
     }
 
     /// The trimmed value of `column` in `fields`, or `nil` if the column
@@ -94,7 +182,7 @@ struct HevyCSVHeader {
     /// other grounds), or is present but empty. Callers can't distinguish
     /// "column missing" from "column present but blank" through this
     /// method — for every column BurlyImport reads, those two cases are
-    /// handled identically (weight_kg: both mean bodyweight; the optional
+    /// handled identically (the weight column: both mean bodyweight; the optional
     /// metadata columns: both mean "nothing to drop-and-count").
     func value(_ column: String, in fields: [String]) -> String? {
         guard let index = columnIndex[column], index < fields.count else { return nil }

@@ -36,6 +36,11 @@
 // underlying data at every level, not just the session. That's what lets a
 // later persistence task upsert instead of duplicate.
 //
+// Weights are converted to kilograms at parse time: `weight_kg` is taken
+// as is, `weight_lbs` is multiplied by `Weight.kilogramsPerPound`. The
+// unit never enters an ID, so a file exported in pounds and the same
+// workouts exported in kilograms still dedupe against each other.
+//
 // Set ordering deliberately ignores the CSV's own `set_index` column and
 // uses row order instead (see HevyCSVSchema's doc comment): a real export's
 // numbering convention is unverified pending m7-03.
@@ -148,13 +153,20 @@ public enum HevyCSVImporter {
 
         let tokenizedRows = CSVTokenizer.rows(in: csv)
         guard let first = tokenizedRows.first, case .fields(let headerFields) = first else {
-            throw HevyImportError.unrecognizedHeader(missingColumns: HevyCSVSchema.requiredColumns)
+            throw HevyImportError.unrecognizedHeader(
+                missingColumns: HevyCSVSchema.requiredColumns + [HevyCSVSchema.weightColumnRequirement]
+            )
         }
 
         let header = HevyCSVHeader(fields: headerFields)
         let missingColumns = header.missingRequiredColumns
         guard missingColumns.isEmpty else {
             throw HevyImportError.unrecognizedHeader(missingColumns: missingColumns)
+        }
+        // Exactly one weight column: a file naming both units is refused
+        // rather than guessed at (see `HevyCSVHeader.hasBothWeightColumns`).
+        guard !header.hasBothWeightColumns, let weightUnit = header.weightUnit else {
+            throw HevyImportError.ambiguousWeightUnit
         }
 
         let catalogNameIndex = Dictionary(
@@ -229,7 +241,7 @@ public enum HevyCSVImporter {
 
             switch decodeRow(
                 fields: fields, header: header, expectedColumnCount: header.columnCount,
-                rowNumber: rowNumber, timeZone: timeZone, hasUndecodableBytes: hasUndecodableBytes
+                rowNumber: rowNumber, weightUnit: weightUnit, timeZone: timeZone, hasUndecodableBytes: hasUndecodableBytes
             ) {
             case .malformed(let malformed, let drops):
                 malformedRows.append(malformed)

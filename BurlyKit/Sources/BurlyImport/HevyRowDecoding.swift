@@ -39,9 +39,11 @@ struct RowMetadataDrops: Equatable {
 
 enum RowDecodeOutcome {
     case row(DecodedRow, RowMetadataDrops)
-    /// Distance/duration-only row (spec §8) — dropped in full, never
-    /// reaches set-level validation, so an empty weight/reps on a cardio
-    /// row is never mistaken for a malformed strength row.
+    /// Distance/duration row (spec §8): cardio, and also timed or distance
+    /// strength work (planks, hangs, carries) — Burly's set is weight and
+    /// reps, so neither can be stored. Dropped in full, never reaches
+    /// set-level validation, so an empty weight/reps on such a row is never
+    /// mistaken for a malformed strength row.
     case cardio(RowMetadataDrops)
     case malformed(MalformedRow, RowMetadataDrops)
 }
@@ -54,6 +56,9 @@ func decodeRow(
     header: HevyCSVHeader,
     expectedColumnCount: Int,
     rowNumber: Int,
+    /// Which unit the file's weight column is in (`weight_kg` or
+    /// `weight_lbs`), resolved once from the header.
+    weightUnit: HevyWeightUnit,
     timeZone: TimeZone = HevyTimestamp.defaultTimeZone,
     /// Whether this row's bytes were genuinely undecodable as UTF-8 (m7-01
     /// review finding 1.1, and the round-2 fix distinguishing that from a
@@ -129,35 +134,44 @@ func decodeRow(
     // or the row is malformed outright — garbage text, "NaN", a negative
     // value, or positive infinity must never silently fall through to "0
     // => not cardio" or "any positive value => an ordinary cardio row".
-    let distanceText = header.value("distance_km", in: fields)
-    let durationText = header.value("duration_seconds", in: fields)
-    if let distanceText {
+    //
+    // Distance is read from whichever of `distance_km`/`distance_miles` the
+    // export carries (a pound-unit account writes miles): only "is it
+    // above zero" matters, so no unit conversion is needed. If a header
+    // names both, each present value is validated and either one above
+    // zero makes the row cardio.
+    var distancePositive = false
+    for column in [HevyCSVSchema.distanceKilometersColumn, HevyCSVSchema.distanceMilesColumn] {
+        guard let distanceText = header.value(column, in: fields) else { continue }
         guard let value = Double(distanceText), value.isFinite, value >= 0 else {
             return .malformed(MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .invalidDistance(distanceText)), drops)
         }
+        if value > 0 { distancePositive = true }
     }
+    let durationText = header.value("duration_seconds", in: fields)
     if let durationText {
         guard let value = Double(durationText), value.isFinite, value >= 0 else {
             return .malformed(MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .invalidDuration(durationText)), drops)
         }
     }
-    let distanceKm = distanceText.flatMap(Double.init) ?? 0
     let durationSeconds = durationText.flatMap(Double.init) ?? 0
-    if distanceKm > 0 || durationSeconds > 0 {
+    if distancePositive || durationSeconds > 0 {
         return .cardio(drops)
     }
 
-    let weightText = header.value("weight_kg", in: fields)
-    let rawWeightKg: Double
+    let weightText = header.value(weightUnit.columnName, in: fields)
+    let rawWeight: Double
     if let weightText {
         guard let parsed = Double(weightText) else {
             return .malformed(MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .invalidWeight(weightText)), drops)
         }
-        rawWeightKg = parsed
+        rawWeight = parsed
     } else {
-        rawWeightKg = 0 // empty column = bodyweight convention (spec §8)
+        rawWeight = 0 // empty column = bodyweight convention (spec §8)
     }
-    guard let weight = try? Weight(validatingKg: rawWeightKg) else {
+    // Converts pounds to kilograms here; `Weight` still rejects a negative,
+    // NaN or infinite result, in either unit.
+    guard let weight = weightUnit.weight(from: rawWeight) else {
         return .malformed(MalformedRow(rowNumber: rowNumber, rawFields: fields, reason: .invalidWeight(weightText ?? "0")), drops)
     }
 
