@@ -357,6 +357,15 @@ final class LoggingScreenUITests: XCTestCase {
 
         let remaining = app.staticTexts["restTimer.remaining"]
         XCTAssertTrue(remaining.waitForExistence(timeout: 5), "Expected a rest countdown after logging a set")
+        // §3 acceptance #2 says "countdown visible", not merely present: the
+        // page must bring the banner on screen by itself, with no scrolling
+        // here. Tapping a countdown that is mostly below the screen edge is
+        // also what made the skip below miss on CI.
+        let screen = screenBounds(app)
+        XCTAssertTrue(
+            waitFor(timeout: 3) { screen.contains(remaining.frame) },
+            "Expected the rest countdown fully on screen after logging, got \(remaining.frame) in \(screen)"
+        )
         let initialSeconds = try restSeconds(from: remaining.value)
 
         // A timeline update must make progress without an arbitrary sleep.
@@ -370,6 +379,7 @@ final class LoggingScreenUITests: XCTestCase {
 
         let increase = anyElement(app, identifier: "restTimer.increaseButton")
         XCTAssertTrue(increase.waitForExistence(timeout: 5))
+        XCTAssertTrue(screen.contains(increase.frame), "Expected +15 fully on screen beside the countdown")
         let beforeIncrease = try restSeconds(from: remaining.value)
         increase.tap()
         XCTAssertTrue(
@@ -432,6 +442,14 @@ final class LoggingScreenUITests: XCTestCase {
     /// type SwiftUI/watchOS happens to expose it as.
     private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// The visible screen, for "fully on screen" checks: the app's window,
+    /// or the application element's own frame if watchOS reports no window.
+    private func screenBounds(_ app: XCUIApplication) -> CGRect {
+        let window = app.windows.firstMatch
+        if window.exists, !window.frame.isEmpty { return window.frame }
+        return app.frame
     }
 
     private func restSeconds(from value: Any?) throws -> Int {

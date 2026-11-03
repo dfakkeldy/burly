@@ -68,11 +68,16 @@ final class BurlyPhoneUITests: XCTestCase {
             if summary.isHittable { break }
             app.swipeUp()
         }
-        XCTAssertTrue(summary.label.hasPrefix("This week: 1"))
+        // The seed's newest session is three days old, so on a Sunday,
+        // Monday or Tuesday it falls in last week and this week starts at 0
+        // (main went red every Tuesday from 2026-11-03). What this test
+        // proves is the refresh, so read the starting count and require
+        // exactly one more after the background write and foregrounding.
+        let baseline = try thisWeekCount(summary.label)
         XCUIDevice.shared.press(.home)
         app.activate()
         let refreshed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label BEGINSWITH %@", "This week: 2"), object: summary
+            predicate: NSPredicate(format: "label BEGINSWITH %@", "This week: \(baseline + 1) "), object: summary
         )], timeout: 15)
         let observed = summary.label
         attachScreenshot(from: app, name: "BurlyPhone-statsAfterForeground")
@@ -763,6 +768,15 @@ final class BurlyPhoneUITests: XCTestCase {
     /// isn't part of the contract either.
     private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// The N in Stats' "This week: N · Typical week: …" summary. The populated
+    /// seed puts one session in this week or, early in the week, none.
+    private func thisWeekCount(_ label: String) throws -> Int {
+        let match = try XCTUnwrap(label.firstMatch(of: /^This week: (\d+)\s/), "Unexpected consistency summary: \(label)")
+        let count = try XCTUnwrap(Int(match.1))
+        XCTAssertTrue((0...1).contains(count), "Expected the populated seed to have 0 or 1 sessions this week, got: \(label)")
+        return count
     }
 
     /// Dynamic rows use UUID-qualified identifiers. UI tests do not know a
