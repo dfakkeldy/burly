@@ -25,22 +25,8 @@ import BurlyPersistence
 /// already-presented `NavigationStack` directly (see that file's doc) --
 /// so only the one remaining chained presentation (discard) is left here,
 /// and it has been reliably green.
-///
-/// The edits that change which pages the pager shows (skip, move, add,
-/// swap) wait here for `onDismiss` too, so the pager's data changes only
-/// while it is on screen. Applied while the full-screen sheet still covered
-/// it, a skip of the only exercise left the old page drawn and the
-/// empty-session state never appeared (reproduced by
-/// `SessionActionsUITests`; the unmerged m2-04 branch saw the same with
-/// reorder and add, late rather than never).
 enum PendingSessionAction: Equatable {
     case requestDiscard
-    case skipCurrent
-    case moveCurrentUp
-    case moveCurrentDown
-    case addExercise(UUID)
-    case swap(itemID: UUID, exerciseID: UUID)
-    case addPlaceholder
 }
 
 struct LoggingScreenView: View {
@@ -138,6 +124,9 @@ struct LoggingScreenView: View {
                     destructiveTitle: "Discard",
                     onDestructive: viewModel.discardAfterAnotherWorkout
                 )
+            } else if viewModel.items.isEmpty || viewModel.isClearingLastPage {
+                emptySessionScreen
+                    .onAppear { viewModel.finishClearingLastPage() }
             } else {
                 loggingBody
             }
@@ -179,10 +168,7 @@ struct LoggingScreenView: View {
         // to change). `ExercisePickerView` no longer wraps itself in a
         // `NavigationStack` (it's shared with the pushed-destination use
         // above), so this call site supplies one.
-        //
-        // Like the actions sheet, the choice is applied from `onDismiss`
-        // (`PendingSessionAction`'s doc), once the pager is back on screen.
-        .sheet(isPresented: isShowingPickerBinding, onDismiss: applyPendingAction) {
+        .sheet(isPresented: isShowingPickerBinding) {
             if let context = viewModel.pickerContext {
                 NavigationStack {
                     ExercisePickerView(
@@ -191,16 +177,12 @@ struct LoggingScreenView: View {
                         onSelect: { exerciseID in
                             switch context {
                             case .swap(let itemID):
-                                pendingAction = .swap(itemID: itemID, exerciseID: exerciseID)
+                                viewModel.swap(currentItem: itemID, to: exerciseID)
                             case .add:
-                                pendingAction = .addExercise(exerciseID)
+                                viewModel.addExercise(exerciseID)
                             }
-                            viewModel.pickerContext = nil
                         },
-                        onAddPlaceholder: {
-                            pendingAction = .addPlaceholder
-                            viewModel.pickerContext = nil
-                        },
+                        onAddPlaceholder: viewModel.addPlaceholderExercise,
                         onCancel: { viewModel.pickerContext = nil }
                     )
                 }
@@ -240,51 +222,54 @@ struct LoggingScreenView: View {
         }
     }
 
-    /// The pager is part of this view's own body, not the content of the
-    /// 1 Hz `TimelineView` below: nothing on a page reads the timeline's
-    /// date (the rest banner has its own), and a page set built inside the
-    /// timeline's closure changes only when that closure runs again.
+    /// The pager. Its empty state is not a branch in here: see `body`.
     @ViewBuilder
     private var loggingBody: some View {
-        Group {
-            if viewModel.items.isEmpty {
-                emptySessionPlaceholder
-            } else {
-                TabView(selection: viewModel.pagingSelection) {
-                    ForEach(viewModel.items) { item in
-                        ExercisePageView(viewModel: viewModel, item: item)
-                            .tag(item.id as UUID?)
-                    }
+        ticking {
+            TabView(selection: viewModel.pagingSelection) {
+                ForEach(viewModel.items) { item in
+                    ExercisePageView(viewModel: viewModel, item: item)
+                        .tag(item.id as UUID?)
                 }
-                .tabViewStyle(.verticalPage)
-                // A skip, move or add builds a fresh pager on the new page
-                // order instead of asking the watch's page controller to
-                // reshuffle its pages in place.
-                .id(viewModel.items.map(\.id))
             }
+            .tabViewStyle(.verticalPage)
         }
-        .background {
-            // §2 Always-On: "1 Hz TimelineView." The tick itself is the
-            // side effect hook, not the render -- see `SessionViewModel
-            // .tick()`'s doc. The schedule's start is fixed: this body runs
-            // again on every tick (it reads the pager's items), and a
-            // schedule starting `.now` each time would hand the timeline a
-            // new date at once, tick again, and spin.
-            TimelineView(.periodic(from: tickScheduleStart, by: 1)) { context in
-                Color.clear
-                    .onChange(of: context.date) { _, _ in viewModel.tick() }
-            }
+        .toolbar { actionsToolbar }
+    }
+
+    /// No exercises left to page through (an empty session, or every one
+    /// skipped). A sibling of the pager in `body`'s top-level switch, like
+    /// the summary. Skipping the last page reaches it in two steps
+    /// (`SessionViewModel.skipCurrentExercise()`'s doc): the pager leaves
+    /// with its pages untouched, the way it does for the summary, which has
+    /// always redrawn, and the skip lands once this screen is up.
+    private var emptySessionScreen: some View {
+        ticking { emptySessionPlaceholder }
+            .toolbar { actionsToolbar }
+    }
+
+    /// §2 Always-On: "1 Hz TimelineView." The tick itself is the side
+    /// effect hook, not the render -- see `SessionViewModel.tick()`'s doc.
+    /// The schedule's start is fixed: `body` reads the pager's items, so it
+    /// runs again on every tick, and a schedule starting `.now` each time
+    /// would hand the timeline a new date at once, tick again, and spin.
+    private func ticking<Content: View>(@ViewBuilder _ content: @escaping () -> Content) -> some View {
+        TimelineView(.periodic(from: tickScheduleStart, by: 1)) { context in
+            content()
+                .onChange(of: context.date) { _, _ in viewModel.tick() }
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isShowingActions = true
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .accessibilityIdentifier("ellipsisMenu")
-                .accessibilityLabel("Workout actions")
+    }
+
+    @ToolbarContentBuilder
+    private var actionsToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                isShowingActions = true
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
+            .accessibilityIdentifier("ellipsisMenu")
+            .accessibilityLabel("Workout actions")
         }
     }
 
@@ -314,18 +299,6 @@ struct LoggingScreenView: View {
         switch action {
         case .requestDiscard:
             viewModel.requestDiscard()
-        case .skipCurrent:
-            viewModel.skipCurrentExercise()
-        case .moveCurrentUp:
-            viewModel.moveCurrentUp()
-        case .moveCurrentDown:
-            viewModel.moveCurrentDown()
-        case .addExercise(let exerciseID):
-            viewModel.addExercise(exerciseID)
-        case .swap(let itemID, let exerciseID):
-            viewModel.swap(currentItem: itemID, to: exerciseID)
-        case .addPlaceholder:
-            viewModel.addPlaceholderExercise()
         }
     }
 

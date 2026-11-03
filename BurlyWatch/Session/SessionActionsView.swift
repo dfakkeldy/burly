@@ -40,10 +40,7 @@
 // Discard is still posted to `pendingAction` and fired from the sheet's
 // `onDismiss` -- see `LoggingScreenView`'s doc; that single dismiss-then-
 // present handoff (this sheet -> `DiscardConfirmView`) has been reliably
-// green across every re-run since m2-03 review round 3's fix. Skip, move
-// up/down and the picker's add/swap/placeholder choices go the same way,
-// so the pager's pages change only once it is on screen again (see
-// `PendingSessionAction`).
+// green across every re-run since m2-03 review round 3's fix.
 //
 // Swap/add are different (m2-03 review round 3, final pass): they used to
 // go through that same `pendingAction`/`onDismiss` handoff into a second
@@ -84,21 +81,18 @@ struct SessionActionsView: View {
                 }
                 .disabled(!viewModel.canRemoveEmptySetOnCurrent)
 
-                // Skip, move, add and swap change the pager's pages, so
-                // they run from the sheet's `onDismiss`, once the pager is
-                // on screen again (`PendingSessionAction`'s doc).
                 actionRow("Skip exercise", identifier: "sessionActions.skipExercise") {
-                    pendingAction = .skipCurrent
+                    viewModel.skipCurrentExercise()
                 }
                 .disabled(viewModel.currentItemID == nil)
 
                 actionRow("Move up", identifier: "sessionActions.moveUp") {
-                    pendingAction = .moveCurrentUp
+                    viewModel.moveCurrentUp()
                 }
                 .disabled(!viewModel.canMoveCurrentUp)
 
                 actionRow("Move down", identifier: "sessionActions.moveDown") {
-                    pendingAction = .moveCurrentDown
+                    viewModel.moveCurrentDown()
                 }
                 .disabled(!viewModel.canMoveCurrentDown)
 
@@ -124,14 +118,14 @@ struct SessionActionsView: View {
                     onSelect: { exerciseID in
                         switch context {
                         case .swap(let itemID):
-                            pendingAction = .swap(itemID: itemID, exerciseID: exerciseID)
+                            viewModel.swap(currentItem: itemID, to: exerciseID)
                         case .add:
-                            pendingAction = .addExercise(exerciseID)
+                            viewModel.addExercise(exerciseID)
                         }
                         isPresented = false
                     },
                     onAddPlaceholder: {
-                        pendingAction = .addPlaceholder
+                        viewModel.addPlaceholderExercise()
                         isPresented = false
                     },
                     onCancel: { isPresented = false }

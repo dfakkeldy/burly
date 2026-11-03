@@ -92,14 +92,14 @@ final class SessionActionsUITests: XCTestCase {
 
         addExercise(named: "Barbell Bench Press", in: app)
         XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" })
-        addExercise(named: "Pull-Up", in: app)
-        XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Pull-Up" })
+        addExercise(named: "Barbell Curl", in: app)
+        XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Barbell Curl" })
         XCTAssertTrue(
             waitFor { (exerciseName.value as? String) == "Exercise 3 of 3" },
             "Expected the second add to render as the third page, got \(String(describing: exerciseName.value))"
         )
 
-        // Back Squat, Pull-Up, Barbell Bench Press: Pull-Up is now the
+        // Back Squat, Barbell Curl, Barbell Bench Press: Barbell Curl is now the
         // middle page, and still the current one.
         openActions(in: app)
         let moveUp = app.buttons["sessionActions.moveUp"]
@@ -107,9 +107,9 @@ final class SessionActionsUITests: XCTestCase {
         moveUp.tap()
         XCTAssertTrue(
             waitFor { exerciseName.exists && (exerciseName.value as? String) == "Exercise 2 of 3" },
-            "Expected Pull-Up on the middle page, got \(String(describing: exerciseName.value))"
+            "Expected Barbell Curl on the middle page, got \(String(describing: exerciseName.value))"
         )
-        XCTAssertEqual(exerciseName.label, "Pull-Up")
+        XCTAssertEqual(exerciseName.label, "Barbell Curl")
 
         openActions(in: app)
         let skip = app.buttons["sessionActions.skipExercise"]
