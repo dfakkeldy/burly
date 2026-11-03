@@ -81,18 +81,26 @@ WARN='(^|[^[:alnum:]_])warn(ing)?:|\*\*\* ?warning|(^|[^[:alnum:]_])warning[[:sp
 # rather than verdicts: they count as warnings when altool also printed its
 # success line below, and still fail the step when it did not. 90683 and
 # every other error line fail regardless.
-RETRY='received status code 5[0-9][0-9]'
-VERDICT_CODE='itms-[0-9]+|90683'
+# The exact shape of those notices, e.g. "ERROR: [ContentDelivery.Uploader.
+# 97AC14400] GET UPLOAD STATE (ASSET_SPI): received status code 500;
+# internal server error. (MCTJQGUYKIMWUZMYMG2ZA6WKLQ) (500)". Anything that
+# merely mentions a 5xx (an "UPLOAD FAILED ... status code 500" banner, say)
+# is not a retry notice and still fails.
+RETRY='ERROR: \[[A-Za-z0-9._]+\] [^:]+: received status code 5[0-9]{2}; [A-Za-z ]+\. \([A-Z0-9]+\) \(5[0-9]{2}\)[[:space:]]*$'
+VERDICT_CODE='itms-[0-9]+|90683|fail'
 if [[ "$MODE" == validate ]]; then
   SUCCESS='verify succeeded|no errors validating'
 else
   SUCCESS='upload succeeded|no errors uploading'
 fi
 error_lines="$(grep -Ei "$ERR" "$LOG" || true)"
-# A retry notice is a 5xx line with no ITMS code on it.
-retries="$(printf '%s\n' "$error_lines" | grep -Ei "$RETRY" | grep -Eiv "$VERDICT_CODE" || true)"
-errors="$(printf '%s\n' "$error_lines" | grep -Eiv "$RETRY" || true)"
-errors+="$(printf '%s\n' "$error_lines" | grep -Ei "$RETRY" | grep -Ei "$VERDICT_CODE" || true)"
+# A retry notice has exactly that shape and no ITMS code or "fail" in it.
+retries="$(printf '%s\n' "$error_lines" | grep -E "$RETRY" | grep -Eiv "$VERDICT_CODE" || true)"
+if [[ -n "$retries" ]]; then
+  errors="$(printf '%s\n' "$error_lines" | grep -Fxv -f <(printf '%s\n' "$retries") || true)"
+else
+  errors="$error_lines"
+fi
 if [[ -n "$retries" ]] && ! grep -Eiq "$SUCCESS" "$LOG"; then
   errors+="$retries"
 fi
@@ -105,7 +113,7 @@ if (( rc != 0 )) || [[ -n "$errors" ]]; then
   fi
   fail "App Store Connect $DOING failed (altool exit $rc); see $(basename "$LOG")"
 fi
-{ grep -Ei "$WARN" "$LOG" || true; printf '%s\n' "$retries"; } | sed '/^$/d' | head -n 10 | sed 's/^/::warning::/'
+{ grep -Ei "$WARN" "$LOG" || true; printf '%s\n' "$retries"; } | sed '/^$/d' | sed -n '1,10s/^/::warning::/p'
 
 # Pass only on positive evidence. Xcode 26.6 prints "VERIFY SUCCEEDED with
 # no errors" and "No errors validating archive" for a validation (seen in
