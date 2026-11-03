@@ -127,6 +127,12 @@ struct LoggingScreenView: View {
                 loggingBody
             }
         }
+        // §2 Always-On: "1 Hz TimelineView." Under every screen this view
+        // shows, not only the pager: the stale and another-workout prompts
+        // replace the pager, and rest haptics and the takeover poll must
+        // keep running behind them. `tick()` itself decides when there is
+        // nothing to do.
+        .background { SessionTicker(onTick: viewModel.tick) }
         // §2 hands-busy test: a stray tap on the back chevron or an edge
         // swipe used to pop this screen mid-workout, dropping the view
         // model and with it the 1 Hz tick and the rest haptics. The way
@@ -135,9 +141,10 @@ struct LoggingScreenView: View {
         .navigationBarBackButtonHidden(true)
         // §4 stale-session guard "on watch app activation": an active
         // workout keeps the app frontmost, so a lifter who walked away
-        // comes back here, not to the home gate that checks on load.
+        // comes back here, not to the home gate that checks on load. Not
+        // under the open actions sheet, which would cover the prompt.
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active { viewModel.checkForStaleSession() }
+            if newPhase == .active, !isShowingActions { viewModel.checkForStaleSession() }
         }
         .sheet(isPresented: $isShowingActions, onDismiss: applyPendingAction) {
             SessionActionsView(
@@ -220,24 +227,18 @@ struct LoggingScreenView: View {
 
     @ViewBuilder
     private var loggingBody: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            Group {
-                if viewModel.items.isEmpty {
-                    emptySessionPlaceholder
-                } else {
-                    TabView(selection: viewModel.pagingSelection) {
-                        ForEach(viewModel.items) { item in
-                            ExercisePageView(viewModel: viewModel, item: item)
-                                .tag(item.id as UUID?)
-                        }
+        Group {
+            if viewModel.items.isEmpty {
+                emptySessionPlaceholder
+            } else {
+                TabView(selection: viewModel.pagingSelection) {
+                    ForEach(viewModel.items) { item in
+                        ExercisePageView(viewModel: viewModel, item: item)
+                            .tag(item.id as UUID?)
                     }
-                    .tabViewStyle(.verticalPage)
                 }
+                .tabViewStyle(.verticalPage)
             }
-            // §2 Always-On: "1 Hz TimelineView." The tick itself is the
-            // side effect hook, not the render -- see `SessionViewModel
-            // .tick()`'s doc.
-            .onChange(of: context.date) { _, _ in viewModel.tick() }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -300,5 +301,26 @@ struct LoggingScreenView: View {
             get: { viewModel.isShowingDiscardStepOne || viewModel.isShowingDiscardStepTwo },
             set: { if !$0 { viewModel.cancelDiscard() } }
         )
+    }
+}
+
+/// The logging screen's 1 Hz `TimelineView`, drawn as an empty background:
+/// the tick is the side effect hook, not the render (`SessionViewModel
+/// .tick()`'s doc). The schedule's start is fixed in state because the
+/// screen's body runs again on every tick, and a schedule starting `.now`
+/// each time would hand the timeline a new date at once, tick again and
+/// never go idle.
+private struct SessionTicker: View {
+    let onTick: @MainActor () -> Void
+
+    @State private var scheduleStart = Date.now
+
+    var body: some View {
+        TimelineView(.periodic(from: scheduleStart, by: 1)) { context in
+            Color.clear
+                .onChange(of: context.date) { _, _ in onTick() }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

@@ -35,8 +35,9 @@ struct GuardedWeightControlView: View {
 
     /// The number big, its unit small underneath, so the control fits
     /// beside reps on a 42 mm screen; the number shrinks before it would
-    /// truncate. The ±micro-buttons are `GuardedWeightAdjustButtons`, a row
-    /// of their own under this one (see `ExercisePageView`).
+    /// truncate. The ±micro-buttons are `GuardedWeightAdjustButtons`, which
+    /// stand in for the reps control beside this one while armed (see
+    /// `ExercisePageView`).
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: isArmed ? "lock.open.fill" : "lock.fill")
@@ -55,7 +56,6 @@ struct GuardedWeightControlView: View {
             }
             .foregroundStyle(isArmed ? Color.accentColor : .primary)
         }
-        .padding(.vertical, 2)
         // m2-03 review finding 11: the long-press-to-arm gesture's parent
         // only had 4 points of vertical padding above; an explicit minimum
         // frame gives the arm gesture a real 44×44 hit region without
@@ -126,15 +126,18 @@ struct GuardedWeightControlView: View {
 }
 
 /// §2 "Armed: ... +/− micro-buttons appear": one step of the configured
-/// increment per tap. Shown only while the weight is armed; the engine
-/// refuses an adjustment while locked anyway.
+/// increment per tap. Shown only while the weight is armed, in the reps
+/// control's place and at its width (two 44 pt buttons 28 pt apart), in
+/// the armed weight's accent colour; the engine refuses an adjustment
+/// while locked anyway.
 struct GuardedWeightAdjustButtons: View {
     let onAdjustSteps: (Int) -> Void
 
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 28) {
             Button { onAdjustSteps(-1) } label: {
-                Image(systemName: "minus")
+                Image(systemName: "minus.circle.fill")
+                    .font(.title3)
                     // m2-03 review finding 11: explicit minimum hit
                     // region, visual glyph size unchanged.
                     .frame(minWidth: 44, minHeight: 44)
@@ -142,7 +145,8 @@ struct GuardedWeightAdjustButtons: View {
             }
             .accessibilityLabel("Decrease weight")
             Button { onAdjustSteps(1) } label: {
-                Image(systemName: "plus")
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -150,7 +154,6 @@ struct GuardedWeightAdjustButtons: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(Color.accentColor)
-        .frame(maxWidth: .infinity)
     }
 }
 

@@ -187,8 +187,13 @@ final class SessionViewModel {
     /// A failed lookup caches `nil` (see `lastPerformance(for:)`) --
     /// "absent digest renders empty ghosts (no crash, no stale data)" is a
     /// spec requirement (§2 acceptance #5), not just a happy-path default.
-    private var digestCache: [UUID: ExerciseLastPerformanceData?] = [:]
-    private var exerciseNameCache: [UUID: String] = [:]
+    ///
+    /// Not observed: both caches are filled while a body reads through
+    /// them (the picker's order reads a digest per catalog exercise), and a
+    /// fill only memoizes what the store already holds, so it must not
+    /// invalidate every page that reads one.
+    @ObservationIgnored private var digestCache: [UUID: ExerciseLastPerformanceData?] = [:]
+    @ObservationIgnored private var exerciseNameCache: [UUID: String] = [:]
 
     /// - Note: does **not** persist anything (m2-03 review finding 2).
     ///   `engine` arrives already durably saved -- `SessionEntryView
@@ -526,7 +531,14 @@ final class SessionViewModel {
     /// haptics happened to be empty is exactly what let a crash replay the
     /// same "missed finish" repeat after a resume that saw the screen wake
     /// in time.
+    ///
+    /// The ticker runs under every screen `LoggingScreenView` shows,
+    /// prompts included, so this returns early once there is nothing to
+    /// time: a finishing or finished session is already `.logged` in
+    /// memory, a discarded one is gone, and under a blocking save failure
+    /// a `persist()` here would replace the retry that failure is holding.
     func tick() {
+        guard !isFinishing, finishedSummary == nil, !didDiscard, saveFailure == nil else { return }
         let before = engine.session.restTimer
         let firedHaptics = engine.tick()
         play(firedHaptics)
@@ -542,10 +554,13 @@ final class SessionViewModel {
     /// comes back to the logging screen itself rather than to the home
     /// gate (an active workout keeps the app frontmost). Called when the
     /// scene becomes active, never on appear: opening this screen is
-    /// already an answer. Never ends anything by itself.
+    /// already an answer. Never ends anything by itself, and never asks
+    /// under an open picker or discard confirm, which would cover the
+    /// prompt (the screen skips it under the actions sheet too).
     func checkForStaleSession() {
         guard staleSince == nil, endWorkoutPreview == nil, finishedSummary == nil,
               saveFailure == nil, !isFinishing, !didDiscard,
+              pickerContext == nil, !isShowingDiscardStepOne, !isShowingDiscardStepTwo,
               StaleSessionGuard.isStale(engine.session, now: now(), answeredAt: lastAnsweredAt)
         else { return }
         staleSince = StaleSessionGuard.lastActivity(of: engine.session)

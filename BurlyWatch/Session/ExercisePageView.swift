@@ -19,6 +19,12 @@
 // row share one subtitle line under a one-line name (wrapping to two lines
 // only when they do not fit side by side), and weight and reps sit side by
 // side with their units underneath. Every tap target stays 44 pt.
+//
+// The page does not grow under Log set while the lifter is using it: the
+// armed weight's -/+ take the reps control's place in the same row. A
+// running rest scrolls the controls row to the top of the screen, so the
+// controls, Log set and the countdown are all in view and nothing sits
+// under the clock or the ellipsis button.
 import SwiftUI
 import BurlyCore
 
@@ -30,12 +36,12 @@ struct ExercisePageView: View {
 
     private var isCurrent: Bool { item.id == viewModel.currentItemID }
 
-    private static let restBannerID = "exercisePage.restBanner"
+    private static let controlsRowID = "exercisePage.controlsRow"
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     header
                     if isCurrent {
                         interactiveControls
@@ -51,9 +57,33 @@ struct ExercisePageView: View {
             // rest, so ±15 and skip do not move the page.
             .onChange(of: viewModel.restTimer?.startedAt) { _, startedAt in
                 guard isCurrent, startedAt != nil else { return }
-                withAnimation {
-                    proxy.scrollTo(Self.restBannerID, anchor: .bottom)
-                }
+                revealRest(proxy)
+            }
+            // The same for a rest already running when this page becomes
+            // the current one (paging during a rest) or first appears
+            // (Resume mid-rest).
+            .onChange(of: isCurrent) { _, nowCurrent in
+                guard nowCurrent, viewModel.isRestRunning else { return }
+                revealRest(proxy)
+            }
+            .onAppear {
+                guard isCurrent, viewModel.isRestRunning else { return }
+                revealRest(proxy)
+            }
+        }
+    }
+
+    /// Scrolls the controls row to the top of the visible area, just under
+    /// the navigation bar: the header goes out of view, and weight and reps,
+    /// Log set and the countdown fill the screen. Anchoring the banner's
+    /// bottom instead put the weight and reps row under the clock and the
+    /// ellipsis button, so the top of reps + opened the actions sheet.
+    /// Deferred one turn so a page that has only just become current has
+    /// laid out its controls.
+    private func revealRest(_ proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            withAnimation {
+                proxy.scrollTo(Self.controlsRowID, anchor: .top)
             }
         }
     }
@@ -66,13 +96,15 @@ struct ExercisePageView: View {
                 .minimumScaleFactor(0.6)
                 .accessibilityIdentifier("exercisePage.name")
                 .accessibilityValue(ordinalText)
-            // One line when the counter and the ghost fit side by side,
-            // two otherwise. Only the chosen layout is drawn, so each
-            // identifier still names exactly one element.
+            // One line when the counter and the ghost fit side by side at
+            // full size, two otherwise. Only the chosen layout is drawn, so
+            // each identifier still names exactly one element. On two lines
+            // each shrinks a little, then truncates, rather than running
+            // past the bezel at larger text sizes.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) {
-                    setCounter
-                    ghostRow
+                    setCounter.fixedSize()
+                    ghostRow.fixedSize()
                 }
                 VStack(alignment: .leading, spacing: 0) {
                     setCounter
@@ -87,7 +119,7 @@ struct ExercisePageView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .fixedSize()
+            .minimumScaleFactor(0.8)
             .accessibilityIdentifier("exercisePage.setCounter")
     }
 
@@ -116,7 +148,7 @@ struct ExercisePageView: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .lineLimit(1)
-            .fixedSize()
+            .minimumScaleFactor(0.8)
             .accessibilityIdentifier("exercisePage.ghost")
     }
 
@@ -130,7 +162,7 @@ struct ExercisePageView: View {
 
     @ViewBuilder
     private var interactiveControls: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             // Weight takes what width is left and shrinks its number to
             // fit; reps keeps its two 44 pt buttons.
             HStack(alignment: .center, spacing: 4) {
@@ -142,22 +174,26 @@ struct ExercisePageView: View {
                     onAdjustSteps: viewModel.adjustWeight(bySteps:)
                 )
 
-                RepsControlView(
-                    reps: viewModel.currentReps,
-                    onIncrement: viewModel.incrementReps,
-                    onDecrement: viewModel.decrementReps,
-                    onAdjustSteps: viewModel.adjustReps(bySteps:)
-                )
-                .layoutPriority(1)
+                // §2: "Armed: ... +/− micro-buttons appear." They take the
+                // reps control's place while the weight is armed, so the
+                // row keeps its height and Log set stays where it was. The
+                // arm ends at the next Log set, a page change or 3 s idle,
+                // and reps come back.
+                if viewModel.isWeightArmed {
+                    GuardedWeightAdjustButtons(onAdjustSteps: viewModel.adjustWeight(bySteps:))
+                        .layoutPriority(1)
+                        .transition(.opacity)
+                } else {
+                    RepsControlView(
+                        reps: viewModel.currentReps,
+                        onIncrement: viewModel.incrementReps,
+                        onDecrement: viewModel.decrementReps,
+                        onAdjustSteps: viewModel.adjustReps(bySteps:)
+                    )
+                    .layoutPriority(1)
+                }
             }
-
-            // §2: "Armed: ... +/− micro-buttons appear." A full-width row
-            // of its own, since the weight column beside reps is narrower
-            // than two 44 pt buttons.
-            if viewModel.isWeightArmed {
-                GuardedWeightAdjustButtons(onAdjustSteps: viewModel.adjustWeight(bySteps:))
-                    .transition(.opacity)
-            }
+            .id(Self.controlsRowID)
 
             // §2: "one primary full-width Log set button." Also the
             // Double Tap primary action (SessionViewModel.logCurrentSet's
@@ -165,10 +201,11 @@ struct ExercisePageView: View {
             // watchOS Double Tap gesture. Disabled while there is nothing
             // honest to log yet (m2-03 review finding 3): an honestly-empty
             // prefill must not be logged as an invented bodyweight×8 just
-            // because Double Tap fired.
+            // because Double Tap fired. The bordered style adds its own
+            // padding, so the button still measures at least 44 pt tall.
             Button(action: viewModel.logCurrentSet) {
                 Text("Log set")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(maxWidth: .infinity, minHeight: 40)
             }
             .buttonStyle(.borderedProminent)
             .handGestureShortcut(.primaryAction)
@@ -181,7 +218,6 @@ struct ExercisePageView: View {
                     onAdjust: viewModel.adjustRest(by:),
                     onSkip: viewModel.skipRest
                 )
-                .id(Self.restBannerID)
             }
         }
     }
