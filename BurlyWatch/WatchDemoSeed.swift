@@ -35,7 +35,8 @@ enum WatchDemoSeed {
 
     /// Set to `live` to keep the real HealthKit path (spec §4) in a seeded
     /// scenario, or `noLiveSensors` for real HealthKit whose live workout
-    /// never starts (recovery matrix row 2: the duration-only workout).
+    /// never starts (recovery matrix row 2: the duration-only workout), or
+    /// `slowFinish` for a fake Health whose Finish takes several seconds.
     /// Seeded scenarios otherwise run without Health, so the system
     /// authorization sheet never covers the screens the existing suites
     /// drive (BurlyWatchApp.swift).
@@ -51,6 +52,10 @@ enum WatchDemoSeed {
 
     static var wantsNoLiveSensors: Bool {
         ProcessInfo.processInfo.environment[healthEnvironmentKey] == "noLiveSensors"
+    }
+
+    static var wantsSlowHealth: Bool {
+        ProcessInfo.processInfo.environment[healthEnvironmentKey] == "slowFinish"
     }
     /// How many of the faulting method's calls succeed before failures
     /// start (e.g. 1 lets Start's own `saveActiveSession` through so the

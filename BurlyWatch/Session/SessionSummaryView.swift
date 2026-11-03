@@ -102,11 +102,12 @@ struct SessionSummaryView: View {
                         .accessibilityIdentifier("sessionSummary.finishButton")
 
                     // Finish can wait on HealthKit for a few seconds before
-                    // the store save (SessionViewModel's file doc).
+                    // the store save (SessionViewModel's file doc). Keep
+                    // going and Discard stay disabled meanwhile, and the
+                    // logging screen has no back button.
                     if isFinishing && saveError == nil {
-                        Text("Saving…")
+                        ProgressView("Saving…")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
                             .accessibilityIdentifier("sessionSummary.saving")
                     }
 

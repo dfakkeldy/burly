@@ -143,6 +143,13 @@ final class WatchAppModel {
     /// existing suites drive.
     private static func makeWorkoutRecorder() -> SessionWorkoutRecorder? {
         #if DEBUG
+        if WatchDemoSeed.wantsSlowHealth {
+            return SessionWorkoutRecorder(
+                store: SlowHealthStore(),
+                controller: WorkoutController(factory: NoLiveWorkoutFactory()),
+                marks: .none
+            )
+        }
         if WatchDemoSeed.isScenarioRequested, !WatchDemoSeed.wantsLiveHealth {
             return nil
         }
@@ -195,5 +202,32 @@ private final class NoLiveWorkoutFactory: WorkoutSessionCreating {
     func makeLiveWorkout(configuration _: WorkoutConfiguration) throws -> LiveWorkoutResources {
         throw WorkoutHealthError.operationFailed("UI test: no live sensors")
     }
+}
+
+/// `BURLY_WATCH_UI_TEST_HEALTH=slowFinish`: Health access granted, no live
+/// workout, and a duration-only save that takes several seconds, so a UI
+/// test can look at a Finish while it waits on HealthKit. No real
+/// HealthKit and no authorization sheet.
+private final class SlowHealthStore: WorkoutHealthStore {
+    /// Each call, under the recorder's 10 s bound: about 10 s per Finish.
+    private static let delay: Duration = .seconds(5)
+
+    var authorizationStatus: WorkoutAuthorizationStatus { .authorized }
+
+    func requestAuthorization() async throws {}
+
+    func recoverLiveWorkout() async throws -> LiveWorkoutResources? { nil }
+
+    func workoutCount(linkedTo _: UUID) async throws -> Int {
+        try await Task.sleep(for: Self.delay)
+        return 0
+    }
+
+    func saveDurationOnlyWorkout(start _: Date, end _: Date, metadata _: WorkoutMetadata) async throws -> UUID? {
+        try await Task.sleep(for: Self.delay)
+        return UUID()
+    }
+
+    func deleteWorkouts(linkedTo _: UUID) async throws -> Int { 0 }
 }
 #endif

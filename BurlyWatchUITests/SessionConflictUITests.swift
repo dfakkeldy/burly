@@ -25,6 +25,7 @@ final class SessionConflictUITests: XCTestCase {
     private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
     private static let faultKey = "BURLY_WATCH_UI_TEST_FAULT"
     private static let storeTokenKey = "BURLY_WATCH_UI_TEST_STORE_TOKEN"
+    private static let healthKey = "BURLY_WATCH_UI_TEST_HEALTH"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -231,6 +232,88 @@ final class SessionConflictUITests: XCTestCase {
             "Expected the originally-requested Start to proceed once SessionConflictView's Finish resolved the race"
         )
         XCTAssertEqual(exerciseName.label, "Back Squat")
+    }
+
+    // MARK: - A Finish waiting on HealthKit has no way out
+
+    /// Finish waits on HealthKit before the store save (up to about 20 s on
+    /// a watch). A Discard in that window was undone by the save that
+    /// followed, and backing out let the Finish start a session from a
+    /// screen no longer on show. `slowFinish` is a fake Health whose save
+    /// takes several seconds.
+    func testConflictFinishWaitingOnHealthAllowsNoDiscardOrBack() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.faultKey] = "injectActiveSessionOnLateResumableCheck"
+        app.launchEnvironment[Self.healthKey] = "slowFinish"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        // Clears WatchDemoSeed's quiet-period gate, as the race tests above.
+        Thread.sleep(forTimeInterval: 4)
+        legDayRow.tap()
+
+        let conflictHeading = app.staticTexts["sessionConflict.heading"]
+        XCTAssertTrue(conflictHeading.waitForExistence(timeout: 10))
+        let finishButton = app.buttons["sessionConflict.finishButton"]
+        let discardButton = app.buttons["sessionConflict.discardButton"]
+        XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(discardButton.isEnabled, "Discard is offered before Finish")
+        finishButton.tap()
+
+        let saving = app.descendants(matching: .any).matching(identifier: "sessionConflict.saving").firstMatch
+        XCTAssertTrue(saving.waitForExistence(timeout: 3), "Expected progress while Finish waits on HealthKit")
+        XCTAssertFalse(discardButton.isEnabled, "Discard must be disabled while Finish waits on HealthKit")
+        XCTAssertFalse(finishButton.isEnabled, "Finish must not run twice")
+        attachScreenshot(from: app, name: "BurlyWatch-sessionConflictView-finishing")
+
+        // Where the back chevron sits: with it hidden, nothing happens.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.14)).tap()
+        XCTAssertFalse(
+            legDayRow.waitForExistence(timeout: 1),
+            "Leaving mid-finish must not be possible"
+        )
+
+        let exerciseName = app.staticTexts["exercisePage.name"]
+        XCTAssertTrue(
+            exerciseName.waitForExistence(timeout: 30),
+            "Expected the Finish to complete and the requested Start to proceed"
+        )
+        XCTAssertEqual(exerciseName.label, "Back Squat")
+    }
+
+    /// The same wait on the summary's Finish (Resume declined, or End
+    /// workout from the logging screen or the another-workout prompt):
+    /// Keep going and Discard stay disabled, with progress shown.
+    func testSummaryFinishWaitingOnHealthAllowsNoKeepGoingOrDiscard() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "activeConflict"
+        app.launchEnvironment[Self.healthKey] = "slowFinish"
+        app.launch()
+
+        let notNowButton = app.buttons["resumeSession.notNowButton"]
+        XCTAssertTrue(notNowButton.waitForExistence(timeout: 15))
+        notNowButton.tap()
+
+        let summaryHeading = app.staticTexts["sessionSummary.heading"]
+        XCTAssertTrue(summaryHeading.waitForExistence(timeout: 10))
+        let finishButton = app.buttons["sessionSummary.finishButton"]
+        let keepGoing = app.buttons["sessionSummary.keepGoingButton"]
+        let discard = app.buttons["sessionSummary.discardButton"]
+        XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
+        finishButton.tap()
+
+        let saving = app.descendants(matching: .any).matching(identifier: "sessionSummary.saving").firstMatch
+        XCTAssertTrue(saving.waitForExistence(timeout: 3), "Expected progress while Finish waits on HealthKit")
+        XCTAssertFalse(keepGoing.isEnabled, "Keep going must be disabled while Finish waits on HealthKit")
+        XCTAssertFalse(discard.isEnabled, "Discard must be disabled while Finish waits on HealthKit")
+        attachScreenshot(from: app, name: "BurlyWatch-summary-finishing")
+
+        XCTAssertTrue(
+            waitFor(timeout: 30) { summaryHeading.exists && summaryHeading.label == "Workout saved" },
+            "Expected the Finish to complete"
+        )
     }
 
     // MARK: - Finding 4.2: activeConflict must not resurrect a resolved fixture
