@@ -81,23 +81,32 @@ final class WatchSessionUXUITests: XCTestCase {
             waitFor { (weightControl.value as? String)?.contains("armed") == true },
             "Expected the long press to arm the weight control"
         )
-        let increase = app.buttons["Increase weight"]
-        XCTAssertTrue(increase.waitForExistence(timeout: 3), "Expected the armed weight's + button")
-        let elements: [(String, XCUIElement)] = [
-            ("weight control", weightControl),
-            ("weight +", increase),
-            ("weight -", app.buttons["Decrease weight"]),
-            ("Log set", logButton)
+        // One snapshot of the whole screen, taken at once: element-by-element
+        // queries can outlast the arm's 3 s idle timeout, and would then
+        // measure the locked layout instead.
+        let snapshot = try app.snapshot()
+        let armedWeight = try XCTUnwrap(find(in: snapshot) { $0.identifier == "weightControl" })
+        XCTAssertTrue(
+            (armedWeight.value as? String)?.contains("armed") == true,
+            "Expected the snapshot to show the weight still armed, got \(String(describing: armedWeight.value))"
+        )
+        let armed: [(String, CGRect?)] = [
+            ("weight control", armedWeight.frame),
+            ("weight +", find(in: snapshot) { $0.elementType == .button && $0.label == "Increase weight" }?.frame),
+            ("weight -", find(in: snapshot) { $0.elementType == .button && $0.label == "Decrease weight" }?.frame),
+            ("Log set", find(in: snapshot) { $0.identifier == "logSetButton" }?.frame)
         ]
-        for (name, element) in elements {
-            XCTAssertTrue(
-                waitFor(timeout: 3) { element.exists && screen.contains(element.frame) },
-                "Expected the \(name) fully on screen while armed, got \(element.frame) in \(screen)"
-            )
+        for (name, frame) in armed {
+            let measured = try XCTUnwrap(frame, "Expected the \(name) while armed")
+            XCTAssertTrue(screen.contains(measured), "Expected the \(name) fully on screen while armed, got \(measured) in \(screen)")
         }
         // A point or so of play: the weight number rescales in its column.
-        XCTAssertEqual(logButton.frame.minY, entryLogFrame.minY, accuracy: 2, "Arming must not move Log set")
-        recordFrames(elements, in: screen, label: "armed")
+        let armedLogFrame = try XCTUnwrap(armed[3].1)
+        XCTAssertEqual(armedLogFrame.minY, entryLogFrame.minY, accuracy: 2, "Arming must not move Log set")
+        let armedLines: [String] = armed.map { (entry: (String, CGRect?)) -> String in
+            "\(entry.0): \(String(describing: entry.1))"
+        }
+        print("[frames] armed screen \(screen): " + armedLines.joined(separator: "; "))
         attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-armed")
 
         // No tap on + here: the arm lapses after 3 s idle, and these frame
@@ -301,6 +310,18 @@ final class WatchSessionUXUITests: XCTestCase {
             in: screen,
             label: label
         )
+    }
+
+    /// Depth-first search of one accessibility snapshot.
+    private func find(
+        in snapshot: any XCUIElementSnapshot,
+        where match: (any XCUIElementSnapshot) -> Bool
+    ) -> (any XCUIElementSnapshot)? {
+        if match(snapshot) { return snapshot }
+        for child in snapshot.children {
+            if let found = find(in: child, where: match) { return found }
+        }
+        return nil
     }
 
     /// Prints each element's frame, so a run's log records the measured

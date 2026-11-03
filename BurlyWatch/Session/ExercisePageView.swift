@@ -34,6 +34,10 @@ struct ExercisePageView: View {
 
     @Environment(\.watchSettings) private var settings
 
+    /// The pending scroll to the controls, if any. A lifter's own scroll
+    /// cancels it, so a delayed retry never pulls the page back.
+    @State private var revealTask: Task<Void, Never>?
+
     private var isCurrent: Bool { item.id == viewModel.currentItemID }
 
     private static let controlsRowID = "exercisePage.controlsRow"
@@ -50,6 +54,11 @@ struct ExercisePageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 2)
             }
+            .onScrollPhaseChange { _, phase in
+                if phase == .tracking || phase == .interacting {
+                    revealTask?.cancel()
+                }
+            }
             // §3: the countdown sits "near the Log button area" and must be
             // visible once a set is logged. The banner is the last row, below
             // Log set, so it can start partly off screen; bring it in
@@ -64,8 +73,8 @@ struct ExercisePageView: View {
             // (Resume mid-rest). These wait for the pager to settle: run
             // while its page turn was still moving, the scroll stopped
             // short (17 of 42 pt on the 46 mm simulator), so it is tried
-            // again a moment later; a second scroll to the same place does
-            // nothing.
+            // again a moment later, unless the lifter has scrolled since; a
+            // second scroll to the same place does nothing.
             .onChange(of: isCurrent) { _, nowCurrent in
                 guard nowCurrent, viewModel.isRestRunning else { return }
                 revealRest(proxy, after: Self.pageSettleDelays)
@@ -87,12 +96,13 @@ struct ExercisePageView: View {
     /// Always deferred at least one turn, so controls that have only just
     /// been added are laid out first.
     private func revealRest(_ proxy: ScrollViewProxy, after delays: [Duration] = [.zero]) {
-        Task { @MainActor in
+        revealTask?.cancel()
+        revealTask = Task { @MainActor in
             for delay in delays {
                 if delay > .zero {
                     try? await Task.sleep(for: delay)
                 }
-                guard isCurrent, viewModel.isRestRunning else { return }
+                guard !Task.isCancelled, isCurrent, viewModel.isRestRunning else { return }
                 withAnimation {
                     proxy.scrollTo(Self.controlsRowID, anchor: .top)
                 }
