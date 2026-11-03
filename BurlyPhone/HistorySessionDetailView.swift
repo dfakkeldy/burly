@@ -14,6 +14,10 @@ struct HistorySessionDetailView: View {
     /// Removing an exercise drops every set under it, so it asks first.
     @State private var removeCandidate: SessionItemData?
     @State private var confirmingDelete = false
+    /// A failed Delete Workout, shown under the button rather than in an
+    /// alert: the failure is known inside the confirmation's action, and an
+    /// alert raised while that dialog is still closing can be dropped.
+    @State private var deleteError: String?
     #if DEBUG
     // Exercise the existing error path against a synthetic UI-test store.
     // Never enabled for the real store or included in release builds.
@@ -141,9 +145,16 @@ struct HistorySessionDetailView: View {
             }
             Section {
                 Button("Delete Workout", role: .destructive) {
+                    deleteError = nil
                     confirmingDelete = true
                 }
                 .accessibilityIdentifier("historyDetail.deleteSession")
+            } footer: {
+                if let deleteError {
+                    Text("Couldn’t delete this workout. It’s still in your history. \(deleteError)")
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("historyDetail.deleteError")
+                }
             }
         }
         .navigationTitle(session.routineName ?? "Workout")
@@ -189,7 +200,7 @@ struct HistorySessionDetailView: View {
                     try viewModel.deleteHistorySession(session)
                     dismiss()
                 } catch {
-                    errorMessage = error.localizedDescription
+                    deleteError = error.localizedDescription
                 }
             }
             .accessibilityIdentifier("historyDetail.confirmDeleteSession")

@@ -19,7 +19,6 @@ struct HistoryTabView: View {
     let viewModel: PhoneHomeViewModel
     /// The row a swipe asked to delete, until the confirmation answers.
     @State private var deleteCandidate: SessionData?
-    @State private var deleteError: String?
 
     var body: some View {
         NavigationStack {
@@ -32,10 +31,13 @@ struct HistoryTabView: View {
                     presenting: deleteCandidate
                 ) { session in
                     Button("Delete Workout", role: .destructive) {
+                        // A failure is reported as a row at the top of the
+                        // list, not an alert: this runs while the dialog is
+                        // closing, when an alert can be dropped.
                         do {
                             try viewModel.deleteHistorySession(session)
                         } catch {
-                            deleteError = error.localizedDescription
+                            viewModel.noteHistoryDeleteFailure(session, error: error)
                         }
                         deleteCandidate = nil
                     }
@@ -43,9 +45,6 @@ struct HistoryTabView: View {
                 } message: { session in
                     Text(HistorySessionDeletion.confirmationMessage(for: session))
                 }
-                .alert("Couldn’t delete workout", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
-                    Button("OK", role: .cancel) { deleteError = nil }
-                } message: { Text(deleteError ?? "") }
         }
             // Rows only when the tab is shown (finding 3).
             .task { viewModel.loadSessionsForDisplay() }
@@ -171,7 +170,7 @@ private struct HistoryNoticeRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(notice.title, systemImage: "heart.text.square")
+            Label(notice.title, systemImage: notice.systemImage)
                 .font(.headline)
                 .accessibilityIdentifier("historyTab.notice.title.\(notice.id.uuidString)")
             Text(notice.message)

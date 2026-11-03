@@ -143,6 +143,20 @@ struct HistoryNotice: Equatable, Identifiable {
     let id: UUID
     let title: String
     let message: String
+    var systemImage = "heart.text.square"
+
+    /// A swipe delete whose store save failed. The session is still there,
+    /// so this says so rather than leaving the row to look undeleted.
+    init(deleteFailedFor session: SessionData, error: any Error) {
+        id = session.id
+        title = "Couldn't delete: \(Self.workoutName(session))"
+        message = "It's still in your history. \(error.localizedDescription)"
+        systemImage = "exclamationmark.triangle"
+    }
+
+    private static func workoutName(_ session: SessionData) -> String {
+        "\(session.routineName ?? "Workout"), \(session.startedAt.formatted(date: .abbreviated, time: .omitted))"
+    }
 
     init?(afterRemoving outcome: HealthWorkoutRemoval, from session: SessionData) {
         let removeItYourself = "To remove it, open the Health app and delete it from your workouts."
@@ -162,8 +176,7 @@ struct HistoryNotice: Equatable, Identifiable {
             reason = "Apple Health didn't answer, so Burly couldn't confirm its copy of this workout was removed."
         }
         id = session.id
-        let workout = "\(session.routineName ?? "Workout"), \(session.startedAt.formatted(date: .abbreviated, time: .omitted))"
-        title = "Deleted from Burly: \(workout)"
+        title = "Deleted from Burly: \(Self.workoutName(session))"
         message = "\(reason) \(removeItYourself)"
     }
 }

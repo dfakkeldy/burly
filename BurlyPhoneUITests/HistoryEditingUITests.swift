@@ -59,12 +59,22 @@ final class HistoryEditingUITests: XCTestCase {
         attachScreenshot(from: app, name: "BurlyPhone-deleteConfirmation")
         confirm.tap()
 
-        XCTAssertTrue(
-            anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").waitForNonExistence(timeout: 10),
-            "The deleted session must leave History"
-        )
+        // History first, then the row's absence: while the detail screen is
+        // still on top the row is not in the tree at all, so checking for it
+        // before History is showing would pass without proving the delete.
+        // The notice only exists on History, and the other seeded sessions'
+        // rows prove the list itself rendered.
         let notice = anyElement(app, identifier: "historyTab.notice.message.\(Self.loggedSessionID)")
         XCTAssertTrue(notice.waitForExistence(timeout: 10), "A Health copy that was not removed must be reported")
+        XCTAssertTrue(app.navigationBars["History"].exists, "The delete must return to History")
+        XCTAssertTrue(
+            firstElement(app, identifierPrefix: "historyTab.sessionRow.").waitForExistence(timeout: 5),
+            "The rest of History must still be listed"
+        )
+        XCTAssertFalse(
+            anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").exists,
+            "The deleted session must leave History"
+        )
         XCTAssertTrue(notice.label.contains("Health app"), "The report must say how to remove it by hand: \(notice.label)")
         XCTAssertTrue(
             anyElement(app, identifier: "historyTab.notice.title.\(Self.loggedSessionID)").label.contains("Leg Day"),
@@ -282,6 +292,31 @@ final class HistoryEditingUITests: XCTestCase {
         XCTAssertTrue(merged.exists, "The merged item now names the destination")
         XCTAssertEqual(merged.label, "Barbell Bench Press")
         attachScreenshot(from: app, name: "BurlyPhone-namingQueueResolved")
+    }
+
+    /// Deleting the only workout that used a placeholder takes its naming
+    /// prompt with it: there is no history left to name.
+    func testDeletingThePlaceholdersOnlyWorkoutClearsTheNamingBanner() throws {
+        let app = launch(scenario: "namingQueue")
+        let banner = anyElement(app, identifier: "historyTab.namingQueueBanner")
+        XCTAssertTrue(banner.waitForExistence(timeout: 15))
+
+        let row = anyElement(app, identifier: "historyTab.sessionRow.\(Self.placeholderSessionID)")
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        swipeToDelete(row, sessionID: Self.placeholderSessionID, in: app)
+        let confirm = app.buttons.matching(identifier: "historyTab.confirmDeleteSession").firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+
+        XCTAssertTrue(row.waitForNonExistence(timeout: 10), "The confirmed delete must remove the row")
+        XCTAssertTrue(
+            banner.waitForNonExistence(timeout: 5),
+            "A placeholder no remaining workout uses must leave the naming queue"
+        )
+        XCTAssertTrue(
+            anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").exists,
+            "The rest of History stays"
+        )
     }
 
     // MARK: - Catalog tags

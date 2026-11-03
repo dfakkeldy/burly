@@ -386,7 +386,7 @@ final class PhoneHomeViewModel {
             loggedSessionCount = try store.loggedSessionCount()
             sessionRows = try store.sessions(state: .logged)
             historyExercises = try store.exercises(includingArchived: true)
-            namingQueue = historyExercises.filter { $0.needsNaming && $0.archivedAt == nil }
+            namingQueue = Self.namingQueue(from: historyExercises, usedBy: sessionRows)
             sessionsState = .loaded
         } catch {
             sessionsState = .failed(String(describing: error))
@@ -436,6 +436,14 @@ final class PhoneHomeViewModel {
         }
     }
 
+    /// A swipe delete that failed in the store: reported like a Health
+    /// notice, newest first, replacing an older notice for the same session.
+    func noteHistoryDeleteFailure(_ session: SessionData, error: any Error) {
+        let notice = HistoryNotice(deleteFailedFor: session, error: error)
+        historyNotices.removeAll { $0.id == notice.id }
+        historyNotices.insert(notice, at: 0)
+    }
+
     func dismissHistoryNotice(id: UUID) {
         historyNotices.removeAll { $0.id == id }
     }
@@ -465,11 +473,28 @@ final class PhoneHomeViewModel {
         refreshStatsIfRequested()
     }
 
+    /// Placeholders still waiting for a name, and only those some logged
+    /// session still uses. Deleting the only workout that used one leaves
+    /// the placeholder row behind (the store archives exercises, never
+    /// deletes them), and a prompt to name an exercise with no history
+    /// would be noise. If a later session arrives using it, it comes back.
+    private static func namingQueue(from exercises: [ExerciseData], usedBy sessions: [SessionData]) -> [ExerciseData] {
+        var used = Set<UUID>()
+        for session in sessions {
+            for item in session.items {
+                if let exerciseID = item.exerciseID { used.insert(exerciseID) }
+            }
+        }
+        return exercises.filter { (exercise: ExerciseData) -> Bool in
+            exercise.needsNaming && exercise.archivedAt == nil && used.contains(exercise.id)
+        }
+    }
+
     private func reloadHistoryExercises() {
         do {
             historyExercises = try store.exercises(includingArchived: true)
-            namingQueue = historyExercises.filter { $0.needsNaming && $0.archivedAt == nil }
             sessionRows = try store.sessions(state: .logged)
+            namingQueue = Self.namingQueue(from: historyExercises, usedBy: sessionRows)
         } catch {
             sessionsState = .failed(String(describing: error))
         }
