@@ -508,7 +508,7 @@ final class PhoneHomeViewModel {
             )
             // The picker leads with what was trained in the longest §7
             // window, and hides archived exercises unless they were trained
-            // in it. The chart opens on the latest session's first exercise.
+            // in it. The chart opens on the latest session's main exercise.
             let recentWeeks = PhoneStatsVolumeRange.fiftyTwoWeeks.weekCount
             let recentSlices = volumeRange.weekCount == recentWeeks ? volumeSlices : try store.loggedSetSlices(
                 window: .weeks(recentWeeks),
@@ -521,7 +521,7 @@ final class PhoneHomeViewModel {
                 id.flatMap { id in pickerExercises.first(where: { $0.id == id }) }
             }
             let selectedExercise = pickable(exerciseID)
-                ?? pickable(ExerciseRecencyStats.openingExerciseOfLatestSession(from: recentSlices))
+                ?? pickable(ExerciseRecencyStats.mainExerciseOfLatestSession(from: recentSlices))
                 ?? pickerExercises.first(where: { $0.name == "Back Squat" }) ?? pickerExercises.first
 
             let displayRange = progressionRange.dateRange(asOf: referenceDate, calendar: calendar)

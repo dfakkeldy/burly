@@ -11,25 +11,41 @@
 import Foundation
 
 public enum ExerciseRecencyStats {
-    /// The exercise the most recent session started with: among working
-    /// sets that name an exercise, take the latest session (by
+    /// The main exercise of the most recent session: among working sets
+    /// that name an exercise, take the latest session (by
     /// `sessionStartedAt`, then session id so equal start times stay
-    /// deterministic), then the exercise of its earliest-completed working
-    /// set. `nil` when no working set names an exercise.
+    /// deterministic), then the exercise with the most volume
+    /// (Σ weight × reps) in it. Equal volume goes to the exercise whose
+    /// first working set came first, then to the lower set id. `nil` when
+    /// no working set names an exercise.
     ///
     /// Every slice of one session shares `sessionStartedAt`, so "latest"
-    /// alone ties every exercise in that session. The opening lift breaks
-    /// the tie rather than the last set: a workout usually starts with its
-    /// main lift and ends with accessories or bodyweight work, whose chart
-    /// would be a flat line at 0 kg.
-    public static func openingExerciseOfLatestSession(from slices: [SetRecordSlice]) -> UUID? {
+    /// alone ties every exercise in that session. Volume breaks the tie
+    /// rather than set times: a Hevy import stamps every set of a workout
+    /// with the workout's start, so set times can't say which exercise came
+    /// first, and the last set is usually an accessory or bodyweight
+    /// movement whose chart would be a flat line at 0 kg.
+    public static func mainExerciseOfLatestSession(from slices: [SetRecordSlice]) -> UUID? {
         let candidates = slices.filter { !$0.set.isWarmup && $0.exerciseID != nil }
         guard let latest = candidates.max(by: isInEarlierSession) else { return nil }
-        return candidates
-            .filter { $0.sessionID == latest.sessionID }
-            .sortedForDeterministicSummation()
-            .first?
-            .exerciseID
+
+        // Visit in one canonical order so the sums, and the "came first"
+        // tie-break, don't depend on the store's fetch order.
+        var volumes: [(exerciseID: UUID, volume: Double)] = []
+        var indexByExercise: [UUID: Int] = [:]
+        for slice in candidates.filter({ $0.sessionID == latest.sessionID }).sortedForDeterministicSummation() {
+            guard let exerciseID = slice.exerciseID else { continue }
+            let value = slice.set.weight.kg * Double(slice.set.reps)
+            if let index = indexByExercise[exerciseID] {
+                volumes[index].volume += value
+            } else {
+                indexByExercise[exerciseID] = volumes.count
+                volumes.append((exerciseID, value))
+            }
+        }
+        // `max(by:)` keeps the first of equal elements only if later ones
+        // never compare greater, which `<` on volume guarantees.
+        return volumes.max { $0.volume < $1.volume }?.exerciseID
     }
 
     /// Every exercise with at least one working set in `slices`. Warmups

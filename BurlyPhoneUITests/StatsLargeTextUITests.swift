@@ -36,8 +36,8 @@ final class StatsLargeTextUITests: XCTestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 15))
         scrollFullyIntoView(menu, in: app)
         XCTAssertTrue(menu.isHittable)
-        // The seed's latest session starts with Back Squat, so the chart
-        // opens there rather than on the alphabetically first exercise.
+        // Back Squat is the seed's latest session's highest-volume lift, so
+        // the chart opens there, not on the alphabetically first exercise.
         XCTAssertEqual(menu.value as? String, "Back Squat")
         menu.tap()
         let bench = app.descendants(matching: .any)
