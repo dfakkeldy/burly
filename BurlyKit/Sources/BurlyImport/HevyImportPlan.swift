@@ -65,7 +65,10 @@ public struct HevyImportPreview: Sendable, Equatable {
     public let setCount: Int
 
     public var newCustomExerciseCount: Int { newCustomExerciseNames.count }
-    /// True when the store already holds every workout in the file.
+    /// True when the commit would add no workout: each one in the file is
+    /// already stored or was deleted in History (or the file has none).
+    /// Not "everything is in Burly": `deletedInBurlyWorkoutCount` says
+    /// how many are not.
     public var isNothingNew: Bool { newWorkoutCount == 0 }
 }
 
