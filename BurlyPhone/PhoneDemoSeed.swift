@@ -300,13 +300,15 @@ extension PhoneDemoSeed {
 
     /// One lift of the synthetic program, in pounds because the en-US
     /// screenshots are taken in pounds (whole-pound numbers then render
-    /// exactly). Three working sets of `reps`, adding `step` every `every`
+    /// exactly). `sets` working sets of `reps`, adding `step` every `every`
     /// sessions of its routine: main lifts climb every second week,
     /// accessories every fourth. A session between steps repeats the last
     /// one exactly, which ties rather than beats it, so only about half the
-    /// History rows carry a PR badge.
+    /// History rows carry a PR badge. Back Squat's 5 x 5 makes it the newest
+    /// session's biggest-volume lift, the one Stats opens on.
     private struct StoreLift {
         let name: String
+        var sets = 3
         let reps: Int
         let start: Double
         let step: Double
@@ -341,9 +343,9 @@ extension PhoneDemoSeed {
             StoreLift(name: "Hammer Curl", reps: 10, start: 25, step: 5, every: 4, rest: 60)
         ]),
         StoreRoutine(id: StoreScreenshotIDs.legsRoutine, name: "Legs", lifts: [
-            StoreLift(name: "Back Squat", reps: 5, start: 205, step: 10, every: 2, rest: 180, warmup: 135),
+            StoreLift(name: "Back Squat", sets: 5, reps: 5, start: 205, step: 10, every: 2, rest: 180, warmup: 135),
             StoreLift(name: "Romanian Deadlift", reps: 8, start: 155, step: 10, every: 4, rest: 120),
-            StoreLift(name: "Leg Press", reps: 10, start: 270, step: 20, every: 4, rest: 90),
+            StoreLift(name: "Bulgarian Split Squat", reps: 10, start: 30, step: 5, every: 4, rest: 90),
             StoreLift(name: "Lying Leg Curl", reps: 12, start: 70, step: 5, every: 4, rest: 60),
             StoreLift(name: "Standing Calf Raise", reps: 12, start: 135, step: 10, every: 4, rest: 60)
         ])
@@ -370,7 +372,12 @@ extension PhoneDemoSeed {
                 name: routine.name,
                 orderIndex: index,
                 items: routine.lifts.indices.map { order in
-                    RoutineItemData(exerciseID: exerciseIDs[order], order: order, restOverride: routine.lifts[order].rest)
+                    RoutineItemData(
+                        exerciseID: exerciseIDs[order],
+                        order: order,
+                        defaultSetCount: routine.lifts[order].sets,
+                        restOverride: routine.lifts[order].rest
+                    )
                 },
                 updatedAt: .now
             )
@@ -391,7 +398,7 @@ extension PhoneDemoSeed {
             let startedAt = day.addingTimeInterval(TimeInterval(storeStartMinutes[back % storeStartMinutes.count] * 60))
             var setTime = startedAt.addingTimeInterval(4 * 60)
             func nextSetTime() -> Date {
-                setTime = setTime.addingTimeInterval(150)
+                setTime = setTime.addingTimeInterval(135)
                 return setTime
             }
 
@@ -402,7 +409,7 @@ extension PhoneDemoSeed {
                     sets.append(SetRecordData(order: 0, weight: Weight(pounds: warmup), reps: 5, isWarmup: true, completedAt: nextSetTime()))
                 }
                 let weight = Weight(pounds: lift.pounds(inSession: sessionIndex))
-                for _ in 0..<3 {
+                for _ in 0..<lift.sets {
                     sets.append(SetRecordData(order: sets.count, weight: weight, reps: lift.reps, completedAt: nextSetTime()))
                 }
                 return SessionItemData(exerciseID: routine.exerciseIDs[order], order: order, sets: sets)

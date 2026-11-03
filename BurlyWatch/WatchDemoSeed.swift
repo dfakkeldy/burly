@@ -824,11 +824,12 @@ extension WatchDemoSeed {
         return ProcessInfo.processInfo.environment[displayUnitEnvironmentKey].flatMap(WeightUnit.init(rawValue:))
     }
 
-    /// One lift of the synthetic program: its last session's three sets of
-    /// `reps` at `pounds` (whole pounds, so they render exactly in lb), and
-    /// how much heavier today's Legs workout went.
+    /// One lift of the synthetic program (PhoneDemoSeed's, too): its last
+    /// session's `sets` sets of `reps` at `pounds` (whole pounds, so they
+    /// render exactly in lb), and how much heavier today's Legs workout went.
     private struct StoreLift {
         let name: String
+        var sets = 3
         let reps: Int
         let pounds: Double
         let rest: TimeInterval
@@ -852,9 +853,9 @@ extension WatchDemoSeed {
             StoreLift(name: "Hammer Curl", reps: 10, pounds: 40, rest: 60)
         ]),
         ("Legs", 6, [
-            StoreLift(name: "Back Squat", reps: 5, pounds: 255, rest: 180, gain: 10),
+            StoreLift(name: "Back Squat", sets: 5, reps: 5, pounds: 255, rest: 180, gain: 10),
             StoreLift(name: "Romanian Deadlift", reps: 8, pounds: 175, rest: 120, gain: 10),
-            StoreLift(name: "Leg Press", reps: 10, pounds: 330, rest: 90),
+            StoreLift(name: "Bulgarian Split Squat", reps: 10, pounds: 45, rest: 90),
             StoreLift(name: "Lying Leg Curl", reps: 12, pounds: 85, rest: 60),
             StoreLift(name: "Standing Calf Raise", reps: 12, pounds: 165, rest: 60)
         ])
@@ -872,9 +873,9 @@ extension WatchDemoSeed {
             }
             return id
         }
-        /// Three sets a few minutes apart from `start`.
+        /// The lift's sets, three minutes apart from `start`.
         func sets(_ lift: StoreLift, pounds: Double, from start: Date) -> [SetRecordData] {
-            (0..<3).map { order in
+            (0..<lift.sets).map { order in
                 SetRecordData(
                     order: order,
                     weight: Weight(pounds: pounds),
@@ -894,7 +895,12 @@ extension WatchDemoSeed {
                 name: program.name,
                 orderIndex: index,
                 items: program.lifts.indices.map { order in
-                    RoutineItemData(exerciseID: exerciseIDs[order], order: order, restOverride: program.lifts[order].rest)
+                    RoutineItemData(
+                        exerciseID: exerciseIDs[order],
+                        order: order,
+                        defaultSetCount: program.lifts[order].sets,
+                        restOverride: program.lifts[order].rest
+                    )
                 },
                 updatedAt: now
             )
@@ -908,14 +914,14 @@ extension WatchDemoSeed {
                 SessionItemData(
                     exerciseID: exerciseIDs[order],
                     order: order,
-                    sets: sets(program.lifts[order], pounds: program.lifts[order].pounds, from: startedAt.addingTimeInterval(TimeInterval(order) * 10 * 60))
+                    sets: sets(program.lifts[order], pounds: program.lifts[order].pounds, from: startedAt.addingTimeInterval(TimeInterval(order) * 12 * 60))
                 )
             }
             try store.createSession(SessionData(
                 routineID: routine.id,
                 routineName: routine.name,
                 startedAt: startedAt,
-                endedAt: startedAt.addingTimeInterval(52 * 60),
+                endedAt: startedAt.addingTimeInterval(60 * 60),
                 state: .logged,
                 origin: .live,
                 items: items
@@ -934,15 +940,17 @@ extension WatchDemoSeed {
         }
         try store.applyDigest(lastPerformance: lastPerformance, ackedSessionIDs: [])
 
-        // Today's Legs: started 52 minutes ago, every set logged, the last
-        // one three minutes ago (well inside the one-hour stale guard).
+        // Today's Legs: started 58 minutes ago, all 17 sets logged three
+        // minutes apart, the last one three minutes ago (well inside the
+        // one-hour stale guard).
         guard let legs else { throw SeedError.catalogMissingExercise(name: "Legs") }
-        let startedAt = now.addingTimeInterval(-52 * 60)
+        let startedAt = now.addingTimeInterval(-58 * 60)
         var active = SessionBuilder.session(from: legs.routine, clock: FixedWallClock(now: startedAt))
+        var itemStart = startedAt.addingTimeInterval(4 * 60)
         for index in active.session.items.indices {
             let lift = legs.lifts[index]
-            let itemStart = startedAt.addingTimeInterval(TimeInterval(index) * 9 * 60 + 4 * 60)
             active.session.items[index].sets = sets(lift, pounds: lift.pounds + lift.gain, from: itemStart)
+            itemStart = itemStart.addingTimeInterval(TimeInterval(lift.sets) * 3 * 60)
         }
         active.currentItemID = active.session.items.last?.id
         try store.saveActiveSession(active)

@@ -38,17 +38,26 @@ final class StoreScreenshotsUITests: XCTestCase {
         // Today's Legs: its summary, then saved.
         let notNow = app.buttons["resumeSession.notNowButton"]
         XCTAssertTrue(notNow.waitForExistence(timeout: 20), "Expected the open Legs workout's Resume screen")
+        let screen = screenBounds(app)
         notNow.tap()
 
         let heading = app.staticTexts["sessionSummary.heading"]
         XCTAssertTrue(waitFor(timeout: 10) { heading.exists && heading.label == "End workout?" }, "Expected the summary")
-        // 265×15 + 185×24 + 330×30 + 85×36 + 165×36 = 27315 lb.
+        // 265×25 + 185×24 + 45×30 + 85×36 + 165×36 = 21415 lb.
         let volume = anyElement(app, identifier: "sessionSummary.volume")
-        XCTAssertTrue(volume.label.contains("27315 lb"), "Expected 27315 lb of volume, got '\(volume.label)'")
+        XCTAssertTrue(volume.label.contains("21415 lb"), "Expected 21415 lb of volume, got '\(volume.label)'")
         capture(app, "extra_watch_end_workout")
 
         app.buttons["sessionSummary.finishButton"].tap()
         XCTAssertTrue(waitFor(timeout: 10) { heading.exists && heading.label == "Workout saved" }, "Expected Finish to save")
+        // The summary runs past the bottom edge. Scroll just far enough that
+        // its last line of text is whole; Done then peeks in below it.
+        let beatLastTime = app.staticTexts["sessionSummary.beatLastTime"]
+        XCTAssertTrue(beatLastTime.waitForExistence(timeout: 5), "Expected Squat and RDL to beat last time")
+        for _ in 0..<4 where beatLastTime.frame.maxY > screen.maxY - 6 {
+            drag(app, by: max(24, beatLastTime.frame.maxY - screen.maxY + 14))
+        }
+        XCTAssertTrue(screen.contains(beatLastTime.frame), "Expected the whole summary text on screen")
         capture(app, "04_watch_summary")
 
         // The routine list, Legs now done today.
@@ -76,7 +85,6 @@ final class StoreScreenshotsUITests: XCTestCase {
         logButton.tap()
         let remaining = app.staticTexts["restTimer.remaining"]
         XCTAssertTrue(remaining.waitForExistence(timeout: 5), "Expected the rest countdown")
-        let screen = screenBounds(app)
         XCTAssertTrue(waitFor(timeout: 3) { screen.contains(remaining.frame) }, "Expected the countdown on screen")
         capture(app, "03_watch_rest")
     }
@@ -90,6 +98,14 @@ final class StoreScreenshotsUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return condition()
+    }
+
+    /// Moves the content up by `distance` points with a slow, held drag, so
+    /// it stops where the finger does instead of flinging.
+    private func drag(_ app: XCUIApplication, by distance: CGFloat) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        let end = start.withOffset(CGVector(dx: 0, dy: -distance))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.5)
     }
 
     private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
