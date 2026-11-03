@@ -406,6 +406,8 @@ final class PhoneHomeViewModel {
         if let index = sessionRows.firstIndex(where: { $0.id == saved.id }) {
             sessionRows[index] = saved
         }
+        // An edit can remove the last use of a placeholder, as a delete can.
+        namingQueue = Self.namingQueue(from: historyExercises, usedBy: sessionRows)
         return saved
     }
 

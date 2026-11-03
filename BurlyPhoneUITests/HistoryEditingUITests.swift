@@ -76,9 +76,20 @@ final class HistoryEditingUITests: XCTestCase {
             "The deleted session must leave History"
         )
         XCTAssertTrue(notice.label.contains("Health app"), "The report must say how to remove it by hand: \(notice.label)")
+        // The title is a Label (icon and text). Which of its elements carries
+        // the identifier first differs between iOS versions (hosted iOS 26.5
+        // failed run 41686049671 on firstMatch), so look at all of them, and
+        // at the title's text itself, which only this notice shows.
+        let titleLabels = app.descendants(matching: .any)
+            .matching(identifier: "historyTab.notice.title.\(Self.loggedSessionID)")
+            .allElementsBoundByIndex
+            .map(\.label)
+        let titleText = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "Deleted from Burly: Leg Day"))
+            .firstMatch
         XCTAssertTrue(
-            anyElement(app, identifier: "historyTab.notice.title.\(Self.loggedSessionID)").label.contains("Leg Day"),
-            "The report must name the workout it is about"
+            titleLabels.contains { $0.contains("Leg Day") } || titleText.exists,
+            "The report must name the workout it is about: \(titleLabels)"
         )
         attachScreenshot(from: app, name: "BurlyPhone-deleteHealthNotice")
         anyElement(app, identifier: "historyTab.notice.dismiss.\(Self.loggedSessionID)").tap()
