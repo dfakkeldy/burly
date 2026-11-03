@@ -4,8 +4,8 @@ name: Release
 # the App Store Connect API key held in GitHub Actions secrets
 # (ASC_KEY_ID / ASC_ISSUER_ID / ASC_PRIVATE_KEY).
 #
-#   - push of a burly-m*, burly-rc* or v* tag: archive, export, UPLOAD to
-#     App Store Connect (TestFlight).
+#   - push of a burly-m*, burly-rc* or v* tag: archive, export and check
+#     the .ipa, then UPLOAD to App Store Connect (TestFlight).
 #   - workflow_dispatch: DRY RUN. Archive and export an App Store .ipa
 #     with destination "export", then ask App Store Connect to validate
 #     it. It proves the key's role and the cloud distribution signing,
@@ -13,6 +13,11 @@ name: Release
 #     entitlements) that a plain export never reaches. It NEVER uploads.
 #     (GitHub only offers the manual run once this file is on the
 #     default branch.)
+#
+# Signing happens once, at export, with the cloud-managed Apple
+# Distribution certificate. The archive is built without a certificate
+# (Scripts/archive-release.sh), because signing it made Apple mint a new
+# development certificate on every run until the team hit the cap.
 #
 # It must never run on pull_request: a fork PR must never be able to see
 # or exfiltrate these secrets. The `on:` block below already excludes
@@ -145,9 +150,9 @@ jobs:
           elif [[ "$TAG" =~ ^burly-rc(0|[1-9][0-9]*)?$ ]]; then
             RC="${BASH_REMATCH[1]:-1}"
             MARKETING_VERSION="0.9.$((10#$RC))"
-          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+)$ ]]; then
+          elif [[ "$TAG" =~ ^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]]; then
             MARKETING_VERSION="${BASH_REMATCH[1]}.0"
-          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+          elif [[ "$TAG" =~ ^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]]; then
             MARKETING_VERSION="${BASH_REMATCH[1]}"
           else
             echo "::error::Tag '$TAG' does not match a known release pattern (burly-m<N>, burly-rc<N>, v<semver>)"
@@ -214,24 +219,28 @@ jobs:
       # Written with a restrictive umask so the key is never
       # world/group-readable even for the brief window it exists on
       # disk, and removed unconditionally in the cleanup step below
-      # regardless of whether later steps succeed.
+      # regardless of whether later steps succeed. The secret reaches the
+      # step through the environment, not through script interpolation.
       - name: Write App Store Connect API key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           umask 077
           mkdir -p "$RUNNER_TEMP/asc"
-          printf '%s' "${{ secrets.ASC_PRIVATE_KEY }}" > "$RUNNER_TEMP/asc/asc.p8"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc/asc.p8"
 
-      # Cloud signing: no certs, profiles, or keychains are provisioned
-      # on the runner. -allowProvisioningUpdates + the ASC API key let
-      # xcodebuild negotiate signing directly with the Apple Developer
-      # website for both the BurlyPhone and (as its embedded/paired
-      # dependency) BurlyWatch targets, which both use
-      # CODE_SIGN_STYLE = Automatic in the project.
+      # No certificate, no profile and no Apple contact: the archive is
+      # built unsigned and then signed ad hoc with each app's entitlements
+      # (see the script's header). Signing it the usual way, with automatic
+      # signing and -allowProvisioningUpdates, made Apple mint an "Apple
+      # Development: Created via API" certificate on every run, and the
+      # team hit the certificate cap on 2026-11-03
+      # (dfakkeldy/grok-bots#873). The export below does the real signing.
+      # The acceptance gate (Scripts/acceptance-sim.sh) archives through
+      # the same script, so a pull request proves this step too.
       - name: Archive BurlyPhone
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           MARKETING_VERSION_OVERRIDE: ${{ steps.version.outputs.marketing_version }}
           BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
         run: |
@@ -240,16 +249,7 @@ jobs:
           if [[ -n "$MARKETING_VERSION_OVERRIDE" ]]; then
             overrides+=("MARKETING_VERSION=$MARKETING_VERSION_OVERRIDE")
           fi
-          xcodebuild archive \
-            -project Burly.xcodeproj \
-            -scheme BurlyPhone \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+          Scripts/archive-release.sh "$RUNNER_TEMP/Burly.xcarchive" \
             "${overrides[@]}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log"
 
@@ -262,6 +262,9 @@ jobs:
       #                    for the old `altool --upload-app` / fastlane
       #                    pilot/deliver flow; the key is part of xcodebuild
       #                    itself, not a separate binary).
+      # teamID is spelled out because an archive built without a
+      # certificate carries no team for the export to read. It is the
+      # project's DEVELOPMENT_TEAM, public in project.pbxproj.
       - name: Write export options
         run: |
           set -euo pipefail
@@ -277,6 +280,8 @@ jobs:
               <string>$2</string>
               <key>signingStyle</key>
               <string>automatic</string>
+              <key>teamID</key>
+              <string>8AXNA5B37R</string>
               <key>uploadSymbols</key>
               <true/>
           </dict>
@@ -288,11 +293,14 @@ jobs:
             write_plist upload upload
           fi
 
-      # DRY RUN ONLY. destination "export" signs for distribution (which
-      # is what needs the Admin-role key and cloud-managed distribution
-      # certificate) and writes an .ipa, but contacts no upload service.
-      - name: Export App Store .ipa (dry run, no upload)
-        if: github.event_name == 'workflow_dispatch'
+      # Every run, dry run or tag push. destination "export" signs for
+      # distribution (which is what needs the Admin-role key and the
+      # cloud-managed distribution certificate) and writes an .ipa, but
+      # contacts no upload service. Scripts/check-exported-ipa.sh then
+      # checks that both apps are distribution-signed and kept their
+      # HealthKit entitlements through the re-sign, so a tag push never
+      # uploads a build that would fail Health on a tester's watch.
+      - name: Export and check App Store .ipa (no upload)
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -308,8 +316,14 @@ jobs:
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             2>&1 | tee "$RUNNER_TEMP/export.log"
           ls -l "$RUNNER_TEMP/export"
-          test -n "$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)"
-          echo "Dry run: exported an App Store .ipa; nothing was uploaded." | tee -a "$GITHUB_STEP_SUMMARY"
+          shopt -s nullglob
+          IPAS=("$RUNNER_TEMP"/export/*.ipa)
+          if (( ${#IPAS[@]} != 1 )); then
+            echo "::error::expected exactly one .ipa in \$RUNNER_TEMP/export, found ${#IPAS[@]}"
+            exit 1
+          fi
+          Scripts/check-exported-ipa.sh "${IPAS[0]}" 2>&1 | tee "$RUNNER_TEMP/check.log"
+          echo "Exported and checked an App Store .ipa; nothing was uploaded by this step." | tee -a "$GITHUB_STEP_SUMMARY"
 
       # DRY RUN ONLY. Sends the exported .ipa to App Store Connect for
       # validation: the server-side checks an upload runs before Apple
@@ -390,7 +404,9 @@ jobs:
           fi
           echo "Dry run: App Store Connect validated the .ipa; nothing was uploaded." | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # THE ONLY UPLOAD. Reachable only from a push of a tag.
+      # THE ONLY UPLOAD. Reachable only from a push of a tag, and only
+      # after the export above passed its checks. It exports again with
+      # destination "upload", which signs the same archive the same way.
       - name: Export & upload to App Store Connect
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:
@@ -401,12 +417,12 @@ jobs:
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/upload.plist" \
-            -exportPath "$RUNNER_TEMP/export" \
+            -exportPath "$RUNNER_TEMP/upload" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            2>&1 | tee "$RUNNER_TEMP/export.log"
+            2>&1 | tee "$RUNNER_TEMP/upload.log"
 
       # Belt-and-braces: runs even if archive/export failed above, and
       # even though $RUNNER_TEMP itself is wiped at the end of the job
@@ -440,7 +456,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/log-tail"
-          for f in archive export validate; do
+          for f in archive export check validate upload; do
             if [[ -f "$RUNNER_TEMP/$f.log" ]]; then
               tail -n 500 "$RUNNER_TEMP/$f.log" \
                 | perl -pe 'for my $v (@ENV{qw(ASC_KEY_ID ASC_ISSUER_ID)}) { s/\Q$v\E/***/g if length($v // "") }' \

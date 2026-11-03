@@ -20,10 +20,11 @@
 #      Never creates, clones, or boots any other device -- fails loudly
 #      if either named device is missing or ambiguous.
 #   2. Boots the named pair.
-#   3. Builds the BurlyPhone and BurlyWatch app targets, then compiles
+#   3. Builds the BurlyPhone and BurlyWatch app targets, then archives
 #      BurlyPhone (with its embedded watch app) in the Release
-#      configuration for a generic iOS device, unsigned -- the configuration
-#      and destination release.yml archives, which nothing else here builds.
+#      configuration for a generic iOS device through
+#      Scripts/archive-release.sh -- the same archive release.yml exports,
+#      which nothing else here builds.
 #   4. Runs the BurlyPhoneUITests XCUITest suite via `xcodebuild test`, then
 #      the BurlyWatchUITests suite the same way (watch app UI testing runs
 #      standalone on the "Burly Watch S11 46mm" sim, no iPhone pairing
@@ -547,15 +548,17 @@ xcodebuild build \
 # The builds above and every test run use Debug, so code that only Release
 # compiles (anything that leans on a `#if DEBUG` symbol from outside it,
 # `#Preview` bodies included) would otherwise first fail at a release tag.
-# Unsigned: this proves the compile, not signing or App ID capabilities.
-log "building BurlyPhone (Release, generic iOS device, unsigned)"
-xcodebuild build \
-  -project "$PROJECT" \
-  -scheme BurlyPhone \
-  -configuration Release \
-  -destination "generic/platform=iOS" \
-  "${COMMON_XCODEBUILD_FLAGS[@]}" \
-  CODE_SIGNING_ALLOWED=NO
+# This archives exactly as release.yml does, through the same script: no
+# certificate, then ad hoc signing with each app's entitlements, checked.
+# It proves the compile and the archive, not the export's cloud signing or
+# the App ID capabilities; a release dry run proves those. The archive goes
+# under the gitignored DerivedData, never into the uploaded run directory.
+RELEASE_ARCHIVE_DIR="$DERIVED_DATA/ReleaseArchive"
+rm -rf "$RELEASE_ARCHIVE_DIR"
+log "archiving BurlyPhone as release.yml does (Release, generic iOS device, no certificate)"
+"$REPO_ROOT/Scripts/archive-release.sh" "$RELEASE_ARCHIVE_DIR/Burly.xcarchive" \
+  -derivedDataPath "$DERIVED_DATA"
+rm -rf "$RELEASE_ARCHIVE_DIR"
 
 # ---------------------------------------------------------------------------
 # Run the UI test suites -- phone (BurlyPhoneUITests) and watch
