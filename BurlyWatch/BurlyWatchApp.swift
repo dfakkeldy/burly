@@ -156,7 +156,8 @@ final class WatchAppModel {
         #endif
         return SessionWorkoutRecorder(
             store: health,
-            controller: WorkoutController(factory: factory)
+            controller: WorkoutController(factory: factory),
+            marks: .userDefaults()
         )
     }
 }

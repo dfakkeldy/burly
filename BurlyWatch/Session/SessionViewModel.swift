@@ -255,6 +255,10 @@ final class SessionViewModel {
         currentItemID.map { engine.session.plannedSetCount($0) } ?? 0
     }
 
+    /// Whether anything is logged yet: the stale prompt then says "Last set"
+    /// rather than "Started" (its time is the session start otherwise).
+    var hasLoggedSets: Bool { !engine.session.allSets.isEmpty }
+
     var currentLoggedSetCount: Int {
         currentItemID.map { engine.session.loggedSetCount($0) } ?? 0
     }

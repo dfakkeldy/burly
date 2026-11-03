@@ -100,7 +100,9 @@ struct LoggingScreenView: View {
                 SessionPromptView(
                     systemImage: "clock.badge.exclamationmark",
                     heading: "Still working out?",
-                    detail: Text("Last set \(staleSince, format: .relative(presentation: .named))"),
+                    detail: viewModel.hasLoggedSets
+                        ? Text("Last set \(staleSince, format: .relative(presentation: .named))")
+                        : Text("Started \(staleSince, format: .relative(presentation: .named))"),
                     identifier: "staleSession",
                     primaryTitle: "End workout",
                     onPrimary: viewModel.endStaleSession,

@@ -193,6 +193,42 @@ struct SessionWorkoutRecorderTests {
         #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
     }
 
+    @Test("a takeover is remembered across a relaunch, so the resumed session's Finish saves nothing")
+    func takeoverSurvivesRelaunch() async {
+        let box = MarkBox()
+        let before = Rig(status: .authorized, marks: box.marks)
+        await before.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        before.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        #expect(box.ids == [sessionID])
+
+        // The relaunch: a fresh recorder and controller, nothing for
+        // HealthKit to recover, the same marks.
+        let after = Rig(status: .authorized, marks: box.marks)
+        await after.recorder.reconcile(activeSessionID: sessionID).value
+        #expect(after.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await after.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(after.store.durationOnlySaves.isEmpty)
+        #expect(box.ids.isEmpty)
+    }
+
+    @Test("discard clears a takeover mark")
+    func discardClearsMark() async {
+        let box = MarkBox()
+        let rig = Rig(status: .authorized, factoryFailure: .anotherWorkoutSessionStarted, marks: box.marks)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(box.ids == [sessionID])
+        await rig.recorder.sessionDidDiscard(sessionID: sessionID).value
+
+        #expect(box.ids.isEmpty)
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+    }
+
     @Test("a session failure for any other reason still falls back to the duration-only workout")
     func otherSessionFailureStillFallsBack() async {
         let rig = Rig(status: .authorized)
@@ -284,7 +320,8 @@ private final class Rig {
         sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in
             try await Task.sleep(for: .seconds(3_600))
         },
-        finishGate: Gate? = nil
+        finishGate: Gate? = nil,
+        marks: SupersededSessionMarks = .none
     ) {
         store = FakeHealthStore(status: status, grant: grant, gate: authorizationGate)
         builder = FakeBuilder(log: log, finishGate: finishGate)
@@ -294,8 +331,20 @@ private final class Rig {
             store: store,
             controller: WorkoutController(factory: factory),
             sleep: sleep,
-            now: { Date(timeIntervalSince1970: 1_700_007_200) }
+            now: { Date(timeIntervalSince1970: 1_700_007_200) },
+            marks: marks
         )
+    }
+}
+
+/// Marks that outlive one `Rig`, standing in for UserDefaults across a
+/// relaunch.
+@MainActor
+private final class MarkBox {
+    var ids: [UUID] = []
+
+    var marks: SupersededSessionMarks {
+        SupersededSessionMarks(load: { self.ids }, save: { self.ids = $0 })
     }
 }
 
