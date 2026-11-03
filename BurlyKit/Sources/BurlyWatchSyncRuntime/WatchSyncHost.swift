@@ -38,9 +38,13 @@
 // and at launch once this build can read the version it holds (the watch
 // app was updated). A held snapshot's transfer metadata still names its
 // snapshot version, so an older snapshot still in flight from before the
-// phone updated does not clear the notice. An applied digest does not clear
-// it either: activation replays the last digest WatchConnectivity holds,
-// which can be older than the snapshot that was held.
+// phone updated does not clear the notice. A held digest names no snapshot
+// version, so when only a digest was held any readable snapshot clears it;
+// the held snapshot the same phone launch sends, or the next activation's
+// replay of that digest, sets it again, while never clearing would leave a
+// rolled-back phone's watch saying "update" for good. An applied digest
+// does not clear it: activation replays the last digest WatchConnectivity
+// holds, which can be older than the snapshot that was held.
 import Foundation
 import Observation
 import os

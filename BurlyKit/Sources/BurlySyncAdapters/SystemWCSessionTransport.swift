@@ -21,6 +21,15 @@ private final class SystemWCSessionFileTransferHandle: WCSessionFileTransferHand
 /// WCSession wrapper used by the phone and watch composition roots. Apple
 /// delegate/KVO callbacks first snapshot Sendable values, then explicitly hop
 /// to MainActor; no SDK-owned queue is assumed to satisfy actor isolation.
+///
+/// Every hop goes through `onMain`, the main dispatch queue, which runs
+/// blocks in the order they were submitted. That order matters: WCSession
+/// clears `hasContentPending` only after it has called the delegate for the
+/// content, so the delegate's hop is submitted before the KVO hop that
+/// reports the cleared flag, and the adapter has counted the content as in
+/// flight before it sees the flag (`WCSessionAdapter`'s background-task
+/// gate). Separate `Task { @MainActor in }` hops carry no such ordering
+/// promise.
 @MainActor
 public final class SystemWCSessionTransport: NSObject, WCSessionTransport {
     public weak var delegate: (any WCSessionTransportDelegate)?
@@ -92,7 +101,7 @@ public final class SystemWCSessionTransport: NSObject, WCSessionTransport {
             guard let rawValue = change.newValue?.rawValue else { return }
             let state = Self.activation(from: rawValue)
             let hasContentPending = observedSession.hasContentPending
-            Task { @MainActor [weak self] in
+            Self.onMain { [weak self] in
                 self?.delegate?.transportSessionStateDidChange(
                     activationState: state,
                     hasContentPending: hasContentPending
@@ -106,12 +115,19 @@ public final class SystemWCSessionTransport: NSObject, WCSessionTransport {
         ) { @Sendable [weak self] observedSession, change in
             guard let hasContentPending = change.newValue else { return }
             let state = Self.activation(from: observedSession.activationState.rawValue)
-            Task { @MainActor [weak self] in
+            Self.onMain { [weak self] in
                 self?.delegate?.transportSessionStateDidChange(
                     activationState: state,
                     hasContentPending: hasContentPending
                 )
             }
+        }
+    }
+
+    /// The one hop from an SDK queue to the main actor (see the type doc).
+    nonisolated private static func onMain(_ body: @escaping @MainActor @Sendable () -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated(body)
         }
     }
 
@@ -192,7 +208,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
         let state = Self.activation(from: activationState.rawValue)
         let hasContentPending = session.hasContentPending
         let transportError = error.map(WCSessionTransportError.init)
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             self?.delegate?.transportActivationDidComplete(
                 state: state,
                 hasContentPending: hasContentPending,
@@ -203,7 +219,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
 
     nonisolated public func sessionReachabilityDidChange(_ session: WCSession) {
         let reachable = session.isReachable
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             self?.delegate?.transportReachabilityDidChange(reachable)
         }
     }
@@ -222,7 +238,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
     nonisolated public func session(_ session: WCSession, didReceive file: WCSessionFile) {
         let metadata = file.metadata.flatMap(Self.metadata(from:))
         let data = try? Data(contentsOf: file.fileURL)
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             guard let self else { return }
             guard let data, let metadata else {
                 self.delegate?.transportDidReceiveMalformed(
@@ -247,7 +263,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
     ) {
         let sessionID = Self.metadata(from: userInfoTransfer.userInfo)?.sessionID
         let transportError = error.map(WCSessionTransportError.init)
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             guard let self else { return }
             guard let sessionID else {
                 self.delegate?.transportDidReceiveMalformed(
@@ -270,7 +286,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
         let sourceURL = fileTransfer.file.fileURL
         try? FileManager.default.removeItem(at: sourceURL)
         let transportError = error.map(WCSessionTransportError.init)
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             guard let self else { return }
             guard let identity = metadata?.snapshot else {
                 self.delegate?.transportDidReceiveMalformed(
@@ -290,7 +306,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
     #if os(iOS)
     nonisolated public func sessionDidBecomeInactive(_ session: WCSession) {
         let hasContentPending = session.hasContentPending
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             self?.delegate?.transportSessionStateDidChange(
                 activationState: .inactive,
                 hasContentPending: hasContentPending
@@ -300,7 +316,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
 
     nonisolated public func sessionDidDeactivate(_ session: WCSession) {
         let hasContentPending = session.hasContentPending
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             guard let self else { return }
             self.delegate?.transportSessionStateDidChange(
                 activationState: .notActivated,
@@ -317,7 +333,7 @@ extension SystemWCSessionTransport: WCSessionDelegate {
     ) {
         let received = Self.received(channel: channel, dictionary: dictionary)
         let metadata = Self.metadata(from: dictionary)
-        Task { @MainActor [weak self] in
+        Self.onMain { [weak self] in
             guard let self else { return }
             guard let (data, metadata) = received else {
                 self.delegate?.transportDidReceiveMalformed(

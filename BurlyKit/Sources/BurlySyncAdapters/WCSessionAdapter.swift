@@ -17,9 +17,10 @@ import Foundation
 /// and the sink's actor hop. The KVO hop that reports the cleared flag is a
 /// separate main-actor task, so without this gate it could complete the task
 /// while a snapshot or digest WatchConnectivity already handed over was
-/// still unwritten. The gate relies on the delegate callback being enqueued
-/// on the main actor before the KVO hop that follows it, which is the order
-/// WatchConnectivity calls them in.
+/// still unwritten. The gate relies on the content reaching this adapter
+/// before the cleared flag does: WCSession calls the delegate for content
+/// before it clears `hasContentPending`, and `SystemWCSessionTransport`
+/// submits both hops to the main queue, which keeps submission order.
 @MainActor
 public final class WCSessionAdapter: WCSessionTransportDelegate {
     private let session: any WCSessionTransport
