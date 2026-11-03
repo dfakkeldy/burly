@@ -33,10 +33,13 @@
 // on "Waiting for iPhone", and it must not vanish on relaunch until the
 // phone happens to push again. The host keeps the held version in
 // `UserDefaults` under `heldSchemaVersionDefaultsKey`, which the watch views
-// read with `@AppStorage`. It is cleared when a snapshot applies (the phone
-// speaks this schema again) and at launch once this build can read the
-// version it holds (the watch app was updated). An applied digest does not
-// clear it: activation replays the last digest WatchConnectivity holds,
+// read with `@AppStorage`. It is cleared when a snapshot newer than any held
+// one applies (the phone speaks this schema again, say after a rollback),
+// and at launch once this build can read the version it holds (the watch
+// app was updated). A held snapshot's transfer metadata still names its
+// snapshot version, so an older snapshot still in flight from before the
+// phone updated does not clear the notice. An applied digest does not clear
+// it either: activation replays the last digest WatchConnectivity holds,
 // which can be older than the snapshot that was held.
 import Foundation
 import Observation
@@ -63,6 +66,9 @@ public final class WatchSyncHost {
     /// Where `heldSchemaVersion` is kept between launches (0 or absent: none
     /// held). Views read it with `@AppStorage`; see the file doc.
     nonisolated public static let heldSchemaVersionDefaultsKey = "burly.sync.heldSchemaVersion"
+    /// The newest snapshot version among held snapshot transfers, so only a
+    /// newer snapshot clears the notice (file doc).
+    nonisolated static let heldSnapshotVersionDefaultsKey = "burly.sync.heldSnapshotVersion"
 
     /// Whether a version stored under `heldSchemaVersionDefaultsKey` is one
     /// this build cannot read.
@@ -75,6 +81,7 @@ public final class WatchSyncHost {
     private let adapter: WCSessionAdapter
     private let session: any WCSessionTransport
     private let defaults: UserDefaults
+    @ObservationIgnored private var heldSnapshotVersion: Int?
 
     public init(
         store: any WatchSyncStore,
@@ -98,9 +105,11 @@ public final class WatchSyncHost {
         let held = defaults.integer(forKey: Self.heldSchemaVersionDefaultsKey)
         if Self.needsAppUpdate(heldSchemaVersion: held) {
             heldSchemaVersion = held
+            heldSnapshotVersion = defaults.object(forKey: Self.heldSnapshotVersionDefaultsKey) as? Int
         } else if held != 0 {
             // This build reads it now: the watch app was updated.
             defaults.removeObject(forKey: Self.heldSchemaVersionDefaultsKey)
+            defaults.removeObject(forKey: Self.heldSnapshotVersionDefaultsKey)
         }
         route.handle = { [weak self] event in self?.handle(event) }
     }
@@ -159,9 +168,9 @@ public final class WatchSyncHost {
             guard channel == .snapshotFile || channel == .digestApplicationContext else { return }
             receive(data, channel: channel)
 
-        case let .envelopeHeld(channel, _, schemaVersion, _):
+        case let .envelopeHeld(channel, _, schemaVersion, metadata):
             WatchSyncLog.logger.notice("held \(channel.rawValue, privacy: .public) envelope at schema \(schemaVersion, privacy: .public); this app needs an update")
-            recordHeld(schemaVersion)
+            recordHeld(schemaVersion, snapshotVersion: metadata.snapshot?.version)
 
         case let .envelopeMalformed(channel, _, reason, _):
             WatchSyncLog.logger.error("malformed \(channel.rawValue, privacy: .public) envelope: \(String(describing: reason), privacy: .public)")
@@ -183,13 +192,13 @@ public final class WatchSyncHost {
                 displayUnit = state.displayUnit
                 restDefault = state.restDefault
                 workingSetGeneration += 1
-                clearHeld()
+                clearHeld(appliedSnapshotVersion: version)
                 WatchSyncLog.logger.info("applied snapshot v\(version, privacy: .public): \(state.displayUnit.rawValue, privacy: .public), rest \(Int(state.restDefault), privacy: .public) s")
             case .appliedDigest:
                 workingSetGeneration += 1
                 WatchSyncLog.logger.info("applied digest")
             case let .heldNeedsAppUpdate(version):
-                recordHeld(version)
+                recordHeld(version, snapshotVersion: nil)
             case .ignoredStaleSnapshot:
                 WatchSyncLog.logger.info("ignored stale snapshot")
             case .malformed, .ignoredWrongDirection:
@@ -200,20 +209,31 @@ public final class WatchSyncHost {
         }
     }
 
-    private func recordHeld(_ schemaVersion: Int) {
+    private func recordHeld(_ schemaVersion: Int, snapshotVersion: Int?) {
         let held = max(heldSchemaVersion ?? 0, schemaVersion)
         heldSchemaVersion = held
         defaults.set(held, forKey: Self.heldSchemaVersionDefaultsKey)
+        if let snapshotVersion {
+            let newest = max(heldSnapshotVersion ?? snapshotVersion, snapshotVersion)
+            heldSnapshotVersion = newest
+            defaults.set(newest, forKey: Self.heldSnapshotVersionDefaultsKey)
+        }
     }
 
-    /// The phone sent a snapshot this build applied, so it speaks this
-    /// schema again (it was rolled back, or an older transfer arrived late
-    /// and the next held one sets the notice again).
-    private func clearHeld() {
+    /// A snapshot this build applied is newer than every held one, so the
+    /// phone speaks this schema again. An older one is a transfer queued
+    /// before the phone updated, and proves nothing.
+    private func clearHeld(appliedSnapshotVersion: Int) {
         guard heldSchemaVersion != nil else { return }
-        WatchSyncLog.logger.info("readable envelope applied; no app update needed")
+        if let heldSnapshotVersion, appliedSnapshotVersion <= heldSnapshotVersion {
+            WatchSyncLog.logger.info("applied snapshot v\(appliedSnapshotVersion, privacy: .public) predates held v\(heldSnapshotVersion, privacy: .public); still needs an update")
+            return
+        }
+        WatchSyncLog.logger.info("readable snapshot applied; no app update needed")
         heldSchemaVersion = nil
+        heldSnapshotVersion = nil
         defaults.removeObject(forKey: Self.heldSchemaVersionDefaultsKey)
+        defaults.removeObject(forKey: Self.heldSnapshotVersionDefaultsKey)
     }
 
     private func retryOutbox(alreadyQueued: Set<UUID>) {

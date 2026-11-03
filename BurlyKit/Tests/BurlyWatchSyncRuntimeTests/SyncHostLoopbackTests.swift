@@ -129,6 +129,49 @@ struct SyncHostLoopbackTests {
         #expect(rig.watchDefaults.object(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == nil)
     }
 
+    @Test("a readable snapshot older than the held one does not clear the notice; a newer one does")
+    func onlyANewerSnapshotClearsTheHold() async throws {
+        let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
+        try await rig.activateBoth()
+        func deliverSnapshot(_ data: Data, version: Int) async {
+            rig.watchSession.delegate?.transportDidReceive(
+                channel: .snapshotFile,
+                data: data,
+                metadata: WCSessionTransferMetadata(
+                    kind: BurlySyncPayloadKind.snapshot.rawValue,
+                    snapshot: SnapshotTransferIdentity(version: version, generation: 1)
+                )
+            )
+            await rig.watchHost.flushEvents()
+        }
+        func readable(version: Int) throws -> Data {
+            try BurlySyncEnvelope(payload: .snapshot(BurlySnapshotPayloadDTO(
+                version: version,
+                exercises: [],
+                routines: [],
+                displayUnit: .kilograms,
+                restDefault: RestDuration.globalDefault
+            ))).encodedData()
+        }
+
+        // The updated phone's snapshot v9 is held...
+        await deliverSnapshot(Data(#"{"schemaVersion":99,"kind":"snapshot","payload":{}}"#.utf8), version: 9)
+        #expect(rig.watchHost.heldSchemaVersion == 99)
+        // ...then v8, queued before the phone updated, arrives late. It
+        // applies, but proves nothing about the phone's schema now.
+        await deliverSnapshot(try readable(version: 8), version: 8)
+        #expect(try rig.watch.watchSyncState().lastAppliedSnapshotVersion == 8)
+        #expect(rig.watchHost.heldSchemaVersion == 99)
+        let relaunched = try WatchSyncHost(store: rig.watch, session: LoopbackSession(), defaults: rig.watchDefaults)
+        #expect(relaunched.heldSchemaVersion == 99)
+
+        // A rolled-back phone continues its version line past the held one.
+        await deliverSnapshot(try readable(version: 10), version: 10)
+        #expect(rig.watchHost.heldSchemaVersion == nil)
+        #expect(rig.watchDefaults.object(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == nil)
+    }
+
     @Test("a held schema this build can read is dropped at launch: the watch app was updated")
     func heldSchemaThisBuildReadsIsDroppedAtLaunch() throws {
         let rig = try Rig()
