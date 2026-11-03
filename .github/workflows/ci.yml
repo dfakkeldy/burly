@@ -8,11 +8,13 @@ on:
     types: [opened, synchronize, reopened, labeled]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
   # A newer push cancels a branch's older run, except on main: there the
   # simulator job takes about an hour, so back-to-back merges cancelled each
-  # other and some main commits never got a simulator verdict. Main runs
-  # queue instead.
+  # other and some main commits never got a simulator verdict. Each main
+  # commit gets its own group instead (a shared group would still let a
+  # newer pending run replace an older pending one), so every main commit
+  # runs to a verdict.
+  group: ci-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:

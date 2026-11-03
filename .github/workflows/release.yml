@@ -5,7 +5,8 @@ name: Release
 # (ASC_KEY_ID / ASC_ISSUER_ID / ASC_PRIVATE_KEY).
 #
 #   - push of a burly-m*, burly-rc* or v* tag: archive, export and check
-#     the .ipa, then UPLOAD to App Store Connect (TestFlight).
+#     the .ipa, then UPLOAD that same .ipa to App Store Connect
+#     (TestFlight) with altool.
 #   - workflow_dispatch: DRY RUN. Archive and export an App Store .ipa
 #     with destination "export", then ask App Store Connect to validate
 #     it. It proves the key's role and the cloud distribution signing,
@@ -253,23 +254,18 @@ jobs:
             "${overrides[@]}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log"
 
-      # Two export-options files, so that "can this run upload?" is
-      # decided by which file a step reads, and the upload step is the
-      # only one that reads the upload file.
-      #   export.plist  -> destination "export": writes an .ipa to disk.
-      #   upload.plist  -> destination "upload": -exportArchive exports AND
-      #                    uploads in one step (the first-party replacement
-      #                    for the old `altool --upload-app` / fastlane
-      #                    pilot/deliver flow; the key is part of xcodebuild
-      #                    itself, not a separate binary).
+      # One export-options file, destination "export": -exportArchive
+      # signs for distribution and writes an .ipa to disk; nothing in it
+      # uploads. Uploading is a separate altool step that sends that same
+      # file, so the .ipa that passed the checks is the one Apple receives.
+      # uploadSymbols puts the dSYMs in the .ipa for that upload.
       # teamID is spelled out because an archive built without a
       # certificate carries no team for the export to read. It is the
       # project's DEVELOPMENT_TEAM, public in project.pbxproj.
       - name: Write export options
         run: |
           set -euo pipefail
-          write_plist() {
-            cat > "$RUNNER_TEMP/$1.plist" <<PLIST
+          cat > "$RUNNER_TEMP/export.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -277,7 +273,7 @@ jobs:
               <key>method</key>
               <string>app-store-connect</string>
               <key>destination</key>
-              <string>$2</string>
+              <string>export</string>
               <key>signingStyle</key>
               <string>automatic</string>
               <key>teamID</key>
@@ -287,11 +283,6 @@ jobs:
           </dict>
           </plist>
           PLIST
-          }
-          write_plist export export
-          if [[ "$IS_TAG_PUSH" == "true" ]]; then
-            write_plist upload upload
-          fi
 
       # Every run, dry run or tag push. destination "export" signs for
       # distribution (which is what needs the Admin-role key and the
@@ -325,22 +316,15 @@ jobs:
           Scripts/check-exported-ipa.sh "${IPAS[0]}" 2>&1 | tee "$RUNNER_TEMP/check.log"
           echo "Exported and checked an App Store .ipa; nothing was uploaded by this step." | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # DRY RUN ONLY. Sends the exported .ipa to App Store Connect for
+      # DRY RUN ONLY. Sends the checked .ipa to App Store Connect for
       # validation: the server-side checks an upload runs before Apple
       # accepts it, but no build is created. The export above never reaches
       # those checks, so without this step a missing purpose string
       # (ITMS-90683) surfaces only on a tag push; Free Lunch's first
       # upload was refused that way. Apple calls this validation limited,
       # so it narrows the gap rather than guaranteeing an upload will pass.
-      #
-      # altool finds an API key only as AuthKey_<key ID>.p8 in
-      # $API_PRIVATE_KEYS_DIR, so the step makes a correctly named copy
-      # (removed by its trap, and by the cleanup step's rm -rf if the step
-      # is killed). Classic flag spelling (-f, -t, --apiKey, --apiIssuer),
-      # as fastlane uses with Xcode 26's altool; no --verbose, which can
-      # echo identifiers into this public log. Xcode 26's altool has exited
-      # 0 on server-side errors, so the step fails on error text as well as
-      # on the exit code, and passes only when altool reports success.
+      # Scripts/altool-ipa.sh holds the key handling and the strict
+      # pass/fail matching shared with the upload step below.
       - name: Validate .ipa with App Store Connect (dry run, no upload)
         if: github.event_name == 'workflow_dispatch'
         timeout-minutes: 15
@@ -349,87 +333,33 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -euo pipefail
-          umask 077
-          KEYS="$RUNNER_TEMP/asc/private_keys"
-          mkdir -p "$KEYS"
-          trap 'rm -rf "$KEYS"' EXIT
-          cp "$RUNNER_TEMP/asc/asc.p8" "$KEYS/AuthKey_${ASC_KEY_ID}.p8"
-
-          shopt -s nullglob
-          IPAS=("$RUNNER_TEMP"/export/*.ipa)
-          if (( ${#IPAS[@]} != 1 )); then
-            echo "::error::expected exactly one .ipa in \$RUNNER_TEMP/export, found ${#IPAS[@]}"
-            exit 1
-          fi
-
-          LOG="$RUNNER_TEMP/validate.log"
-          scrub() { perl -pe 'for my $v (@ENV{qw(ASC_KEY_ID ASC_ISSUER_ID)}) { s/\Q$v\E/***/g if length($v // "") }'; }
-          # Which altool ran, for reading the log later.
-          { xcrun --find altool; xcrun altool --version || true; } 2>&1 | scrub
-
-          set +e
-          API_PRIVATE_KEYS_DIR="$KEYS" xcrun altool --validate-app \
-            -f "${IPAS[0]}" -t ios \
-            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" \
-            2>&1 | scrub | tee "$LOG"
-          rc=${PIPESTATUS[0]}
-          set -e
-
-          # Failure text in the forms altool and Transporter print: a log-level
-          # "ERROR:", "*** Error", "ERROR ITMS-<code>", an NSError dump, the
-          # "VERIFY FAILED" banner, "Failed to validate package", and 90683 as
-          # a whole number (no letter, digit or underscore either side, so
-          # not inside a hex delivery ID, "0x90683" or "ticket90683"). 90683
-          # fails the step even on a WARNING line, on purpose: App Store
-          # Connect refused Free Lunch's first upload outright with it, and
-          # this app embeds a Watch app the same way. Other bare ITMS codes
-          # are not matched because warnings carry them too.
-          ERR='(^|[^[:alnum:]_])error:|\*\*\* ?error|(^|[^[:alnum:]_])error[[:space:]]+itms-[0-9]+|error domain=|(validation|verif(y|ication)|upload) failed|failed to validate|(^|[^[:alnum:]_])90683([^[:alnum:]_]|$)'
-          WARN='(^|[^[:alnum:]_])warn(ing)?:|\*\*\* ?warning|(^|[^[:alnum:]_])warning[[:space:]]+itms-[0-9]+'
-          if (( rc != 0 )) || grep -Eiq "$ERR" "$LOG"; then
-            echo "::error::App Store Connect validation failed (altool exit $rc); see validate.log"
-            exit 1
-          fi
-          { grep -Ei "$WARN" "$LOG" || true; } | head -n 10 | sed 's/^/::warning::/'
-          # Pass only on positive evidence: Xcode 26.6 prints "VERIFY
-          # SUCCEEDED with no errors" and "No errors validating archive"
-          # (seen in this lane's first dry run). Only those two phrasings
-          # count; looser wording such as "not successfully validated"
-          # must not pass. If a later Xcode words it differently, this
-          # fails loudly rather than reporting an unconfirmed validation
-          # as a pass.
-          if ! grep -Eiq 'verify succeeded|no errors validating' "$LOG"; then
-            echo "::error::altool printed no recognised success line; read validate.log"
-            exit 1
-          fi
+          ASC_KEY_PATH="$RUNNER_TEMP/asc/asc.p8" \
+            Scripts/altool-ipa.sh validate "$RUNNER_TEMP/export" "$RUNNER_TEMP/validate.log"
           echo "Dry run: App Store Connect validated the .ipa; nothing was uploaded." | tee -a "$GITHUB_STEP_SUMMARY"
 
       # THE ONLY UPLOAD. Reachable only from a push of a tag, and only
-      # after the export above passed its checks. It exports again with
-      # destination "upload", which signs the same archive the same way.
-      - name: Export & upload to App Store Connect
+      # after the export above passed its checks. It uploads that same
+      # checked .ipa, not a second export, so the file Apple receives is
+      # the file whose signing and entitlements were checked.
+      - name: Upload the checked .ipa to App Store Connect
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        timeout-minutes: 30
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -euo pipefail
-          xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
-            -exportOptionsPlist "$RUNNER_TEMP/upload.plist" \
-            -exportPath "$RUNNER_TEMP/upload" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            2>&1 | tee "$RUNNER_TEMP/upload.log"
+          ASC_KEY_PATH="$RUNNER_TEMP/asc/asc.p8" \
+            Scripts/altool-ipa.sh upload "$RUNNER_TEMP/export" "$RUNNER_TEMP/upload.log"
+          echo "Uploaded the checked .ipa to App Store Connect." | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Belt-and-braces: runs even if archive/export failed above, and
       # even though $RUNNER_TEMP itself is wiped at the end of the job
       # regardless. The key must not survive to the next step's cache
       # or to a debugging shell an operator might attach later in the
-      # same job. Removes the whole directory, so the key copy the
-      # validate step makes for altool goes too if that step was killed.
+      # same job. Removes the whole directory, so the key copy
+      # Scripts/altool-ipa.sh makes beside it goes too if that step was
+      # killed.
       - name: Remove ASC private key
         if: always()
         run: rm -rf "$RUNNER_TEMP/asc"
