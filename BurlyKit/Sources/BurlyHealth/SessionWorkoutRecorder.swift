@@ -76,6 +76,11 @@ public final class SessionWorkoutRecorder {
             switch await bounded({ [controller] in try await controller.start(at: date) }) {
             case .finished(.success):
                 liveSessionID = sessionID
+                // A takeover that landed between the start finishing and
+                // this line found no live session to mark.
+                if controller.lifecycle == .failed(.anotherWorkoutSessionStarted) {
+                    markSuperseded(sessionID)
+                }
             case let .finished(.failure(error)) where Self.isAnotherWorkout(error):
                 markSuperseded(sessionID)
             case .finished(.failure), .timedOut:
