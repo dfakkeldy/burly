@@ -126,6 +126,69 @@ struct SyncHostLoopbackTests {
         #expect(rig.watchHost.retainedBackgroundTaskCount == 0)
         #expect(task.completions == [false])
     }
+
+    @Test("a background task is completed only after the snapshot WatchConnectivity just delivered is in the store")
+    func backgroundTaskWaitsForSnapshotApply() async throws {
+        let rig = try Rig()
+        let bench = ExerciseData(name: "Bench Press", muscleGroups: [.chest], origin: .curated)
+        let routine = RoutineData(
+            name: "Push",
+            orderIndex: 0,
+            items: [RoutineItemData(exerciseID: bench.id, order: 0, defaultSetCount: 3)],
+            updatedAt: .now
+        )
+        try rig.phone.createExercise(bench)
+        try rig.phone.createRoutine(routine)
+        try await rig.activateBoth()
+        let snapshot = try #require(rig.phoneSession.takeFileTransfers().last)
+
+        // A background wake: watchOS hands the app a task, WCSession delivers
+        // the file, then reports nothing pending, all in one turn.
+        let task = LoopbackBackgroundTask()
+        var routineStoredAtCompletion: Bool?
+        task.onComplete = { routineStoredAtCompletion = (try? rig.watch.routine(id: routine.id)) != nil }
+        rig.watchSession.hasContentPending = true
+        rig.watchSession.delegate?.transportSessionStateDidChange(activationState: .activated, hasContentPending: true)
+        rig.watchHost.retainBackgroundTask(task)
+        rig.watchSession.delegate?.transportDidReceive(
+            channel: .snapshotFile,
+            data: snapshot.envelope,
+            metadata: snapshot.metadata
+        )
+        rig.watchSession.hasContentPending = false
+        rig.watchSession.delegate?.transportSessionStateDidChange(activationState: .activated, hasContentPending: false)
+        #expect(task.completions.isEmpty)
+        #expect(try rig.watch.routine(id: routine.id) == nil)
+
+        await rig.watchHost.flushEvents()
+        #expect(task.completions == [false])
+        #expect(routineStoredAtCompletion == true)
+        #expect(rig.watchHost.retainedBackgroundTaskCount == 0)
+    }
+
+    @Test("activation re-applies a digest WatchConnectivity delivered on an earlier launch, before the outbox retry")
+    func activationReappliesHeldDigest() async throws {
+        // Logged and sent on an earlier launch; the phone's digest acking it
+        // was delivered, but the app was suspended before applying it.
+        let session = SessionData(startedAt: .now, endedAt: .now, state: .logged, origin: .live, items: [])
+        let rig = try Rig(seedWatch: { try $0.createSession(session) })
+        let digest = try BurlySyncEnvelope(payload: .digest(BurlyDigestPayloadDTO(
+            snapshotVersion: 0,
+            lastPerformance: [],
+            ackedSessionIDs: [session.id]
+        ))).encodedData()
+        rig.watchSession.receivedApplicationContext = (
+            envelope: digest,
+            metadata: WCSessionTransferMetadata(kind: BurlySyncPayloadKind.digest.rawValue)
+        )
+
+        try await rig.activateBoth()
+
+        #expect(try rig.watch.session(id: session.id) == nil)
+        #expect(try rig.watch.loggedSessionsAwaitingAck().isEmpty)
+        // Pruned before activation's outbox retry, so it was not re-sent.
+        #expect(rig.watchSession.userInfoTransfers.isEmpty)
+    }
 }
 
 // MARK: - Rig
@@ -232,6 +295,7 @@ private final class LoopbackSession: WCSessionTransport {
     var activationState: WCSessionActivation = .notActivated
     var hasContentPending = true
     var outstandingSessionIDs: Set<UUID> = []
+    var receivedApplicationContext: (envelope: Data, metadata: WCSessionTransferMetadata)?
     var transferFileError: (any Error)?
     private(set) var userInfoTransfers: [Transfer] = []
     private(set) var applicationContexts: [Transfer] = []
@@ -280,10 +344,13 @@ private final class LoopbackFileTransferHandle: WCSessionFileTransferHandle {
 @MainActor
 private final class LoopbackBackgroundTask: WCRefreshBackgroundTask {
     private(set) var completions: [Bool] = []
+    /// Runs at the moment of completion, to record what the store held then.
+    var onComplete: (() -> Void)?
 
     var completionID: ObjectIdentifier { ObjectIdentifier(self) }
 
     func setTaskCompletedWithSnapshot(_ snapshot: Bool) {
+        onComplete?()
         completions.append(snapshot)
     }
 }

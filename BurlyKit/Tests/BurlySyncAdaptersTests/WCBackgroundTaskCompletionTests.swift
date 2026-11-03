@@ -64,6 +64,28 @@ struct WCBackgroundTaskCompletionTests {
         #expect(state.retainedTaskIDs.isEmpty)
     }
 
+    @Test("content handed over but not yet applied holds the gate after WCSession drains")
+    func undeliveredContentHoldsTheGate() {
+        var state = WCBackgroundTaskCompletionState<Int>(
+            activationState: .activated,
+            hasContentPending: true
+        )
+
+        #expect(state.retain(3).isEmpty)
+        #expect(state.undeliveredContentChanged(to: true).isEmpty)
+        // WCSession's own queue is empty, but the envelope it delivered is
+        // still on its way to the store.
+        #expect(state.contentPendingChanged(to: false).isEmpty)
+        #expect(state.retainedTaskIDs == [3])
+        #expect(state.undeliveredContentChanged(to: false) == [3])
+        #expect(state.retainedTaskIDs.isEmpty)
+
+        // A new task while content is in flight waits for it too.
+        #expect(state.undeliveredContentChanged(to: true).isEmpty)
+        #expect(state.retain(4).isEmpty)
+        #expect(state.undeliveredContentChanged(to: false) == [4])
+    }
+
     @Test("coordinator retains a burst, completes false once each, and leaks none")
     @MainActor
     func coordinatorBurst() {

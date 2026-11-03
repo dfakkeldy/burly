@@ -46,6 +46,13 @@ public final class SystemWCSessionTransport: NSObject, WCSessionTransport {
         })
     }
 
+    public var receivedApplicationContext: (envelope: Data, metadata: WCSessionTransferMetadata)? {
+        let context = session.receivedApplicationContext
+        guard !context.isEmpty else { return nil }
+        return Self.received(channel: .digestApplicationContext, dictionary: context)
+            .map { (envelope: $0.0, metadata: $0.1) }
+    }
+
     public func activate() {
         session.delegate = self
         installObservationsIfNeeded()

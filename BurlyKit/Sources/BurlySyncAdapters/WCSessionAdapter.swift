@@ -5,6 +5,21 @@ import Foundation
 
 /// Serialized WCSession adapter. All mutable transfer bookkeeping lives on
 /// MainActor; upward delivery is serialized again onto the caller's actor.
+///
+/// ## Background tasks wait for the apply
+///
+/// A retained `WKWatchConnectivityRefreshBackgroundTask` completes only once
+/// WCSession is activated with no content pending *and* every content event
+/// emitted so far has been handled by the sink: received and held
+/// envelopes, and activation completion (the outbox retry runs there).
+/// WCSession clears `hasContentPending` as soon as its delegate received the
+/// content, while the apply runs later, behind this adapter's delivery chain
+/// and the sink's actor hop. The KVO hop that reports the cleared flag is a
+/// separate main-actor task, so without this gate it could complete the task
+/// while a snapshot or digest WatchConnectivity already handed over was
+/// still unwritten. The gate relies on the delegate callback being enqueued
+/// on the main actor before the KVO hop that follows it, which is the order
+/// WatchConnectivity calls them in.
 @MainActor
 public final class WCSessionAdapter: WCSessionTransportDelegate {
     private let session: any WCSessionTransport
@@ -14,6 +29,8 @@ public final class WCSessionAdapter: WCSessionTransportDelegate {
     private let backgroundTasks: WCBackgroundTaskCoordinator
     private var snapshotTransfers: [SnapshotTransferIdentity: any WCSessionFileTransferHandle] = [:]
     private var deliveryTail: Task<Void, Never>?
+    /// Content events emitted and not yet handled by the sink.
+    private var undeliveredContentCount = 0
 
     public init(
         session: any WCSessionTransport,
@@ -101,7 +118,8 @@ public final class WCSessionAdapter: WCSessionTransportDelegate {
     }
 
     /// Test and shutdown seam: waits until every event emitted so far has run
-    /// on the caller-supplied sink actor.
+    /// on the caller-supplied sink actor, and any background task that was
+    /// waiting on them has been completed.
     public func flushEvents() async {
         await deliveryTail?.value
     }
@@ -122,15 +140,29 @@ public final class WCSessionAdapter: WCSessionTransportDelegate {
         hasContentPending: Bool,
         error: WCSessionTransportError?
     ) {
-        backgroundTasks.sessionStateChanged(
-            activationState: state,
-            hasContentPending: hasContentPending
-        )
+        // A digest delivered on an earlier launch can be lost: WCSession
+        // counts it delivered once the delegate got it, and the app may be
+        // suspended before the apply ran. It stays in
+        // `receivedApplicationContext`, and nothing re-sends it until the
+        // phone's history changes. Re-reading it here is safe because the
+        // channel is latest-wins and the apply is idempotent; it goes first
+        // so its acks prune the outbox before activation retries it.
+        if state == .activated, let context = session.receivedApplicationContext {
+            transportDidReceive(
+                channel: .digestApplicationContext,
+                data: context.envelope,
+                metadata: context.metadata
+            )
+        }
         emit(.activationCompleted(
             state: state,
             alreadyQueuedSessionIDs: session.outstandingSessionIDs,
             error: error
         ))
+        backgroundTasks.sessionStateChanged(
+            activationState: state,
+            hasContentPending: hasContentPending
+        )
     }
 
     public func transportReachabilityDidChange(_ reachable: Bool) {
@@ -204,9 +236,38 @@ public final class WCSessionAdapter: WCSessionTransportDelegate {
     private func emit(_ event: WCSessionAdapterEvent) {
         let previous = deliveryTail
         let sink = eventSink
-        deliveryTail = Task {
+        let isContent = Self.isContent(event)
+        if isContent {
+            undeliveredContentCount += 1
+            if undeliveredContentCount == 1 {
+                backgroundTasks.undeliveredContentChanged(to: true)
+            }
+        }
+        deliveryTail = Task { [weak self] in
             await previous?.value
             await sink.receive(event)
+            if isContent { self?.contentDelivered() }
+        }
+    }
+
+    private func contentDelivered() {
+        undeliveredContentCount -= 1
+        if undeliveredContentCount == 0 {
+            backgroundTasks.undeliveredContentChanged(to: false)
+        }
+    }
+
+    /// The events a background wake must see handled before it ends: what
+    /// WatchConnectivity handed over, and activation completion, which runs
+    /// the outbox retry. Transfer-finish facts and plain state changes are
+    /// not, so they never hold a task open.
+    private static func isContent(_ event: WCSessionAdapterEvent) -> Bool {
+        switch event {
+        case .envelopeReceived, .envelopeHeld, .activationCompleted:
+            true
+        case .activationStateChanged, .reachabilityChanged, .envelopeMalformed,
+             .sessionTransferFinished, .snapshotTransferFinished, .transportFailed:
+            false
         }
     }
 }

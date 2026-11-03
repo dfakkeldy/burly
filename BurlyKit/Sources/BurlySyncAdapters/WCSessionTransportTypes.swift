@@ -185,6 +185,10 @@ public protocol WCSessionTransport: AnyObject {
     var activationState: WCSessionActivation { get }
     var hasContentPending: Bool { get }
     var outstandingSessionIDs: Set<UUID> { get }
+    /// The newest application context WCSession received from the peer and
+    /// still holds (`WCSession.receivedApplicationContext`), or `nil` when it
+    /// holds none or the dictionary carries no envelope.
+    var receivedApplicationContext: (envelope: Data, metadata: WCSessionTransferMetadata)? { get }
 
     func activate()
     func transferUserInfo(envelope: Data, metadata: WCSessionTransferMetadata)

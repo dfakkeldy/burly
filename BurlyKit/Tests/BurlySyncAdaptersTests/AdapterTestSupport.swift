@@ -13,6 +13,24 @@ actor RecordingEventSink: WCSessionAdapterEventSink {
     func recordedEvents() -> [WCSessionAdapterEvent] { events }
 }
 
+/// Records each event with a main-actor probe's answer at the moment the
+/// event reached the sink (for example "was the background task already
+/// completed?").
+actor ProbingEventSink: WCSessionAdapterEventSink {
+    private let probe: @MainActor @Sendable () -> Bool
+    private var records: [(event: WCSessionAdapterEvent, probed: Bool)] = []
+
+    init(probe: @escaping @MainActor @Sendable () -> Bool) {
+        self.probe = probe
+    }
+
+    func receive(_ event: WCSessionAdapterEvent) async {
+        records.append((event, await probe()))
+    }
+
+    func probedEvents() -> [(event: WCSessionAdapterEvent, probed: Bool)] { records }
+}
+
 @MainActor
 final class FakeFileTransferHandle: WCSessionFileTransferHandle {
     private(set) var cancellationCount = 0
@@ -33,6 +51,7 @@ final class FakeWCSessionTransport: WCSessionTransport {
     var activationState: WCSessionActivation = .notActivated
     var hasContentPending = true
     var outstandingSessionIDs: Set<UUID> = []
+    var receivedApplicationContext: (envelope: Data, metadata: WCSessionTransferMetadata)?
     private(set) var activationCount = 0
     private(set) var userInfoTransfers: [Transfer] = []
     private(set) var applicationContexts: [Transfer] = []
