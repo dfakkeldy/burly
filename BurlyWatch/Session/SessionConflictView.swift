@@ -26,7 +26,8 @@
 // store save that followed (it recreates a missing session), and leaving
 // let `onResolved` start a session from a screen no longer on show. If the
 // screen goes anyway, the Finish still saves, and only `onResolved` is
-// skipped.
+// skipped; a screen that was only covered calls it when it appears again,
+// rather than coming back stuck on "Saving…".
 import SwiftUI
 import BurlyCore
 import BurlyHealth
@@ -97,7 +98,16 @@ struct SessionConflictView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationBarBackButtonHidden(isFinishing)
-        .onAppear { presence.isOnScreen = true }
+        .onAppear {
+            presence.isOnScreen = true
+            // Covered rather than gone while its Finish saved: carry on
+            // with the Start that Finish cleared the way for, as it would
+            // have on screen.
+            if presence.resolvedWhileHidden {
+                presence.resolvedWhileHidden = false
+                onResolved()
+            }
+        }
         .onDisappear { presence.isOnScreen = false }
         .confirmationDialog(
             "Discard this workout?",
@@ -173,7 +183,13 @@ struct SessionConflictView: View {
             try done.store.saveActiveSession(engine.session)
             done.workoutRecorder?.sessionWasLogged(sessionID: engine.session.id)
             done.sessionLogged(engine.session.id)
-            guard done.presence.isOnScreen else { return }
+            guard done.presence.isOnScreen else {
+                // Not on show: `onAppear` resolves if the screen comes
+                // back, and nothing is left saying "Saving…" meanwhile.
+                done.presence.resolvedWhileHidden = true
+                isFinishing = false
+                return
+            }
             done.onResolved()
         } catch {
             errorMessage = String(describing: error)
@@ -199,6 +215,10 @@ struct SessionConflictView: View {
 @MainActor
 private final class ScreenPresence {
     var isOnScreen = true
+    /// A Finish saved while the screen was hidden, so it skipped
+    /// `onResolved`. A screen that was only covered calls it when it
+    /// appears again; one that is gone never does.
+    var resolvedWhileHidden = false
 }
 
 /// What a Finish needs once HealthKit answers, captured at the tap.
