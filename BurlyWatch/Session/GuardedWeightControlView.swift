@@ -32,24 +32,33 @@ struct GuardedWeightControlView: View {
 
     @State private var crownRotation: Double = 0
     @Environment(\.watchSettings) private var settings
+    /// One width for both lock glyphs: `lock.open.fill` is about 5 pt wider
+    /// than `lock.fill` at this size, and arming used to take those points
+    /// from the number. Leading-aligned, so the lock's body stays put and
+    /// only the shackle opens.
+    @ScaledMetric(relativeTo: .caption) private var lockWidth: CGFloat = 15
 
     /// The number big, its unit small underneath, so the control fits
     /// beside reps on a 42 mm screen; the number shrinks before it would
     /// truncate. The ±micro-buttons are `GuardedWeightAdjustButtons`, which
     /// stand in for the reps control beside this one while armed (see
     /// `ExercisePageView`).
+    ///
+    /// No numeric content transition on the number: no weight change runs
+    /// in an animation, so it never animated, and the 42 mm armed weight
+    /// truncated ("10…") with it rather than shrinking to fit.
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: isArmed ? "lock.open.fill" : "lock.fill")
                 .font(.caption)
                 .foregroundStyle(isArmed ? Color.accentColor : .secondary)
+                .frame(width: lockWidth, alignment: .leading)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 0) {
                 Text(numberText)
                     .font(.system(.title2, design: .rounded, weight: .semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.5)
                 Text(settings.displayUnit.symbol)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -127,14 +136,15 @@ struct GuardedWeightControlView: View {
 
 /// §2 "Armed: ... +/− micro-buttons appear": one step of the configured
 /// increment per tap. Shown only while the weight is armed, in the reps
-/// control's place and at its width (two 44 pt buttons 28 pt apart), in
-/// the armed weight's accent colour; the engine refuses an adjustment
-/// while locked anyway.
+/// control's place, in the armed weight's accent colour; the engine
+/// refuses an adjustment while locked anyway. Two 44 pt buttons 12 pt
+/// apart, narrower than the reps control, so the number being changed
+/// gets more room than it has while locked.
 struct GuardedWeightAdjustButtons: View {
     let onAdjustSteps: (Int) -> Void
 
     var body: some View {
-        HStack(spacing: 28) {
+        HStack(spacing: 12) {
             Button { onAdjustSteps(-1) } label: {
                 Image(systemName: "minus.circle.fill")
                     .font(.title3)

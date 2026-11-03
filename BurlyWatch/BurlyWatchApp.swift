@@ -189,8 +189,16 @@ private struct RootView: View {
     /// Read in `body`, so a newly applied snapshot re-renders with the
     /// phone's new unit and rest default.
     private var settings: WatchSyncedSettings {
-        guard let sync = model.sync else { return WatchSyncedSettings() }
-        return WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
+        var result = WatchSyncedSettings()
+        if let sync = model.sync {
+            result = WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
+        }
+        #if DEBUG
+        if let override = WatchDemoSeed.squatWeightOverride {
+            result.displayUnit = override.unit
+        }
+        #endif
+        return result
     }
 }
 

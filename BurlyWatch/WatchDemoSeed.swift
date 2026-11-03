@@ -57,6 +57,23 @@ enum WatchDemoSeed {
     static var wantsSlowHealth: Bool {
         ProcessInfo.processInfo.environment[healthEnvironmentKey] == "slowFinish"
     }
+
+    /// Optional, for the routines-based scenarios: Back Squat's first
+    /// seeded set as "<number> kg" or "<number> lb" (for example
+    /// "1102.5 lb"), with the watch showing weights in that unit, so a UI
+    /// test can look at a long weight in either unit. An unreadable value
+    /// is ignored, like an unknown fault name.
+    static let squatWeightEnvironmentKey = "BURLY_WATCH_UI_TEST_SQUAT_WEIGHT"
+
+    static var squatWeightOverride: (weight: Weight, unit: WeightUnit)? {
+        guard let raw = ProcessInfo.processInfo.environment[squatWeightEnvironmentKey] else { return nil }
+        let parts = raw.split(separator: " ")
+        guard parts.count == 2,
+              let unit = WeightUnit(rawValue: String(parts[1])),
+              let weight = unit.parse(String(parts[0]))
+        else { return nil }
+        return (weight, unit)
+    }
     /// How many of the faulting method's calls succeed before failures
     /// start (e.g. 1 lets Start's own `saveActiveSession` through so the
     /// logging screen can be reached before a later save fails).
@@ -411,7 +428,7 @@ enum WatchDemoSeed {
                     exerciseID: squatID,
                     performedAt: threeDaysAgo,
                     sets: [
-                        SetSnapshot(weight: Weight(kg: 100), reps: 8),
+                        SetSnapshot(weight: squatWeightOverride?.weight ?? Weight(kg: 100), reps: 8),
                         SetSnapshot(weight: Weight(kg: 102.5), reps: 7),
                         SetSnapshot(weight: Weight(kg: 105), reps: 6)
                     ]

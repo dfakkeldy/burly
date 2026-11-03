@@ -10,6 +10,7 @@ import XCTest
 /// how the old layout's off-screen Log set button passed every test.
 final class WatchSessionUXUITests: XCTestCase {
     private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
+    private static let squatWeightKey = "BURLY_WATCH_UI_TEST_SQUAT_WEIGHT"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -79,6 +80,7 @@ final class WatchSessionUXUITests: XCTestCase {
         XCTAssertTrue(waitFor { (weightControl.value as? String)?.contains("locked") == true })
         let screen = screenBounds(app)
         let entryLogFrame = logButton.frame
+        let lockedWeightFrame = weightControl.frame
 
         weightControl.press(forDuration: 0.6)
         XCTAssertTrue(
@@ -107,6 +109,12 @@ final class WatchSessionUXUITests: XCTestCase {
         // A point or so of play: the weight number rescales in its column.
         let armedLogFrame = try XCTUnwrap(armed[3].1)
         XCTAssertEqual(armedLogFrame.minY, entryLogFrame.minY, accuracy: 2, "Arming must not move Log set")
+        // The -/+ are narrower than reps, so the number being changed never
+        // has less room than it had locked.
+        XCTAssertGreaterThanOrEqual(
+            armedWeight.frame.width, lockedWeightFrame.width - 1,
+            "The armed weight must not be narrower than the locked one (\(lockedWeightFrame.width) pt)"
+        )
         let armedLines: [String] = armed.map { (entry: (String, CGRect?)) -> String in
             "\(entry.0): \(String(describing: entry.1))"
         }
@@ -143,6 +151,79 @@ final class WatchSessionUXUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1)
         print("[crown] armed: weight before \(armedBefore); after \(String(describing: weightControl.value))")
         attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-crown-armed")
+    }
+
+    /// The weight number shows in full, locked and armed, for long weights
+    /// in either unit: on 42 mm the armed weight used to truncate to
+    /// "10…" beside the -/+ buttons. Accessibility reports the value, not
+    /// what the screen drew, so the screenshots are the check that the
+    /// number is whole. This asserts what accessibility can see: the
+    /// seeded value in its unit, the arm, an armed column at least as wide
+    /// as the locked one, and Log set still on screen.
+    ///
+    /// The armed screenshot is taken before the snapshot that shows the
+    /// weight still armed, so it shows the armed layout too.
+    @MainActor
+    func testLongWeightsShowInFullLockedAndArmed() throws {
+        for seeded in ["227.5 kg", "1102.5 lb"] {
+            let name = seeded.replacingOccurrences(of: " ", with: "")
+            let app = XCUIApplication()
+            app.launchEnvironment[Self.scenarioKey] = "routines"
+            app.launchEnvironment[Self.squatWeightKey] = seeded
+            app.launch()
+
+            let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+            XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+            legDayRow.tap()
+
+            let logButton = app.buttons["logSetButton"]
+            XCTAssertTrue(logButton.waitForExistence(timeout: 10))
+            let weightControl = anyElement(app, identifier: "weightControl")
+            XCTAssertTrue(
+                waitFor { (weightControl.value as? String) == "\(seeded), locked" },
+                "Expected \(seeded), locked; got \(String(describing: weightControl.value))"
+            )
+            let screen = screenBounds(app)
+            let lockedWeightFrame = weightControl.frame
+            recordFrames(
+                [("weight control", weightControl), ("reps control", anyElement(app, identifier: "repsControl")), ("Log set", logButton)],
+                in: screen,
+                label: "weight-\(name)-locked"
+            )
+            attachScreenshot(from: app, name: "BurlyWatch-weight-\(name)-locked")
+
+            weightControl.press(forDuration: 0.6)
+            XCTAssertTrue(
+                waitFor { (weightControl.value as? String)?.contains("armed") == true },
+                "Expected the long press to arm the weight control"
+            )
+            attachScreenshot(from: app, name: "BurlyWatch-weight-\(name)-armed")
+            let snapshot = try app.snapshot()
+            let armedWeight = try XCTUnwrap(find(in: snapshot) { $0.identifier == "weightControl" })
+            XCTAssertEqual(
+                armedWeight.value as? String, "\(seeded), armed",
+                "Expected the snapshot to show \(seeded) still armed"
+            )
+            XCTAssertGreaterThanOrEqual(
+                armedWeight.frame.width, lockedWeightFrame.width - 1,
+                "The armed weight must not be narrower than the locked one (\(lockedWeightFrame.width) pt)"
+            )
+            let armed: [(String, CGRect?)] = [
+                ("weight control", armedWeight.frame),
+                ("weight +", find(in: snapshot) { $0.elementType == .button && $0.label == "Increase weight" }?.frame),
+                ("weight -", find(in: snapshot) { $0.elementType == .button && $0.label == "Decrease weight" }?.frame),
+                ("Log set", find(in: snapshot) { $0.identifier == "logSetButton" }?.frame)
+            ]
+            for (part, frame) in armed {
+                let measured = try XCTUnwrap(frame, "Expected the \(part) while armed")
+                XCTAssertTrue(screen.contains(measured), "Expected the \(part) fully on screen while armed, got \(measured) in \(screen)")
+            }
+            let armedLines: [String] = armed.map { (entry: (String, CGRect?)) -> String in
+                "\(entry.0): \(String(describing: entry.1))"
+            }
+            print("[frames] weight-\(name)-armed screen \(screen): " + armedLines.joined(separator: "; "))
+            app.terminate()
+        }
     }
 
     /// §3: once a set is logged the countdown comes into view, and the

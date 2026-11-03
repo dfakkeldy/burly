@@ -198,9 +198,11 @@ struct ExercisePageView: View {
 
                 // §2: "Armed: ... +/− micro-buttons appear." They take the
                 // reps control's place while the weight is armed, so the
-                // row keeps its height and Log set stays where it was. The
-                // arm ends at the next Log set, a page change or 3 s idle,
-                // and reps come back.
+                // row keeps its height and Log set stays where it was. They
+                // are narrower than reps, so the number being changed never
+                // has less room than it had locked. The arm ends at the
+                // next Log set, a page change or 3 s idle, and reps come
+                // back.
                 if viewModel.isWeightArmed {
                     GuardedWeightAdjustButtons(onAdjustSteps: viewModel.adjustWeight(bySteps:))
                         .layoutPriority(1)
