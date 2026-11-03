@@ -676,6 +676,7 @@ final class FaultInjectingStore: BurlyStore {
     func sessions() throws -> [SessionData] { try wrapped.sessions() }
     func sessions(state: SessionState) throws -> [SessionData] { try wrapped.sessions(state: state) }
     func loggedSessionCount() throws -> Int { try wrapped.loggedSessionCount() }
+    func sessionWasDeleted(id: UUID) throws -> Bool { try wrapped.sessionWasDeleted(id: id) }
     @discardableResult
     func deleteSession(id: UUID) throws -> UUID? {
         try maybeFail(.deleteSession)

@@ -479,22 +479,19 @@ final class PhoneHomeViewModel {
 
     /// Plans a parsed Hevy export against the store as it stands right now.
     /// Probes only the file's own session IDs, each with a bounded count
-    /// (`sessionExists`, never a session graph: m7-02 review), not the
-    /// whole history; exercises come from the bounded catalog read,
-    /// archived rows included because they still exist.
+    /// (`sessionExists`, then `sessionWasDeleted`; never a session graph:
+    /// m7-02 review), not the whole history. A workout deleted in History
+    /// is skipped, not re-imported. Exercises come from the bounded catalog
+    /// read, archived rows included because they still exist.
     func planHevyImport(_ result: HevyImportResult, catalog: CatalogSeed) throws -> HevyImportPlan {
-        var existingSessionIDs = Set<UUID>()
-        for session in result.sessions {
-            if try store.sessionExists(id: session.id) {
-                existingSessionIDs.insert(session.id)
-            }
-        }
         let existingExerciseIDs = Set(try store.exercises(includingArchived: true).map(\.id))
+        let store = store
         return try HevyImportPlan.make(
             result: result,
             catalog: catalog,
-            existingSessionIDs: existingSessionIDs,
-            existingExerciseIDs: existingExerciseIDs
+            existingExerciseIDs: existingExerciseIDs,
+            sessionIsStored: { (id: UUID) throws -> Bool in try store.sessionExists(id: id) },
+            sessionWasDeleted: { (id: UUID) throws -> Bool in try store.sessionWasDeleted(id: id) }
         )
     }
 

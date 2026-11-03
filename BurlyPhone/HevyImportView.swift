@@ -309,6 +309,12 @@ private struct HevyImportPreviewView: View {
                             Label("No workouts Burly can import in this file", systemImage: "exclamationmark.triangle.fill")
                                 .font(.headline)
                                 .foregroundStyle(.orange)
+                        } else if preview.deletedInBurlyWorkoutCount > 0 {
+                            // Not "already in Burly": some of them were
+                            // deleted from it, and stay deleted.
+                            Label("Nothing new in this file", systemImage: "checkmark.circle.fill")
+                                .font(.headline)
+                                .foregroundStyle(.green)
                         } else {
                             Label("Everything in this file is already in Burly", systemImage: "checkmark.circle.fill")
                                 .font(.headline)
@@ -333,6 +339,13 @@ private struct HevyImportPreviewView: View {
                     title: "Already in Burly", systemImage: "checkmark.circle",
                     count: preview.alreadyImportedWorkoutCount, identifier: "hevyImport.preview.alreadyImported"
                 )
+                if preview.deletedInBurlyWorkoutCount > 0 {
+                    CountRow(
+                        title: "Deleted in Burly", systemImage: "trash",
+                        count: preview.deletedInBurlyWorkoutCount, identifier: "hevyImport.preview.deletedInBurly",
+                        detail: HevyImportFormat.deletedInBurlyDetail
+                    )
+                }
                 CountRow(
                     title: "Sets", systemImage: "list.number",
                     count: preview.setCount, identifier: "hevyImport.preview.sets"
@@ -428,6 +441,10 @@ private struct HevyImportPreviewView: View {
             return "Nothing was found to import. Anything that was set aside, and why, is listed below."
         }
         let workouts = count == 1 ? "The 1 workout" : "All \(count) workouts"
+        if preview.deletedInBurlyWorkoutCount > 0 {
+            return "\(workouts) in this file \(count == 1 ? "is" : "are") already in your history or deleted from it. "
+                + "Nothing will be added, duplicated or brought back."
+        }
         return "\(workouts) in this file \(count == 1 ? "is" : "are") already in your history. Nothing will be added or duplicated."
     }
 }
@@ -599,6 +616,13 @@ private struct HevyImportSummaryView: View {
                     title: "Already in Burly", systemImage: "checkmark.circle",
                     count: plan.preview.alreadyImportedWorkoutCount, identifier: "hevyImport.summary.alreadyImported"
                 )
+                if plan.preview.deletedInBurlyWorkoutCount > 0 {
+                    CountRow(
+                        title: "Deleted in Burly", systemImage: "trash",
+                        count: plan.preview.deletedInBurlyWorkoutCount, identifier: "hevyImport.summary.deletedInBurly",
+                        detail: HevyImportFormat.deletedInBurlyDetail
+                    )
+                }
                 CountRow(
                     title: "Sets", systemImage: "list.number",
                     count: outcome.setsCreated, identifier: "hevyImport.summary.sets"
@@ -747,6 +771,9 @@ private struct ValueRow: View {
 // MARK: - Formatting
 
 enum HevyImportFormat {
+    /// Under the "Deleted in Burly" count, preview and summary alike.
+    static let deletedInBurlyDetail = "Skipped. Workouts you delete in History stay deleted."
+
     /// Dates in the same (current) zone the parse used, so the range shown
     /// is the range the time-zone footer describes.
     static func dateRange(_ range: ClosedRange<Date>) -> String {

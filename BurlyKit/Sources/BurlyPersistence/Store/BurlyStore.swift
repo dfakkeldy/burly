@@ -843,6 +843,15 @@ public protocol BurlyStore: AnyObject {
     /// workout in a multi-year export never materializes a session graph
     /// the way `session(id:) != nil` does.
     func sessionExists(id: UUID) throws -> Bool
+
+    /// Whether `deleteLoggedSession` removed a session with `id` — the
+    /// import planner's second probe. Hevy session ids are deterministic,
+    /// so a re-import (or a newer, overlapping export) carries the ids of
+    /// workouts the user deleted in History; this is what lets the planner
+    /// skip them rather than quietly undo the delete. Bounded the same way:
+    /// a `fetchCount` on the tombstone's unique `sessionID`. `deleteSession`
+    /// (the watch's Discard) leaves no tombstone, so it answers `false`.
+    func sessionWasDeleted(id: UUID) throws -> Bool
 }
 
 extension BurlyStore {

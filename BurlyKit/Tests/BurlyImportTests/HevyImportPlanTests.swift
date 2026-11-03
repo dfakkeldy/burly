@@ -466,6 +466,84 @@ struct HevyImportPlanTests {
         #expect(try store.exercises(includingArchived: true).filter { $0.origin == .hevyImport }.count == 2)
     }
 
+    @Test("a workout deleted in History is skipped by a re-import and a newer export, and counted as deleted")
+    func deletedWorkoutStaysDeletedAcrossReimports() throws {
+        let store = try SwiftDataStore.phone(at: .inMemory)
+        _ = try SeedLoader.applyBundled(to: store)
+
+        // The planning path the phone runs (PhoneHomeViewModel.planHevyImport):
+        // the store's two bounded probes, nothing mirrored here.
+        func plan(_ csv: String) throws -> HevyImportPlan {
+            try HevyImportPlan.make(
+                result: try parse(csv), catalog: try catalog(),
+                existingExerciseIDs: Set(try store.exercises(includingArchived: true).map(\.id)),
+                sessionIsStored: { (id: UUID) throws -> Bool in try store.sessionExists(id: id) },
+                sessionWasDeleted: { (id: UUID) throws -> Bool in try store.sessionWasDeleted(id: id) }
+            )
+        }
+        func commit(_ plan: HevyImportPlan) -> HevyImportOutcome {
+            plan.apply(createExercise: { try store.createExercise($0) }, createSession: { try store.createSession($0) })
+        }
+
+        let first = try plan(Self.threeWorkouts)
+        #expect(commit(first).matches(first.preview))
+        // The Leg Day on 17 June is in both exports; delete it in History.
+        let legDay = try #require(first.sessionsToCreate.first { $0.routineName == "Leg Day" })
+        _ = try store.deleteLoggedSession(id: legDay.id)
+        #expect(try store.sessionWasDeleted(id: legDay.id))
+        #expect(try store.sessionExists(id: legDay.id) == false)
+
+        // Same file again: nothing new, and the deleted one is not "already
+        // in Burly" — it is counted as deleted, and stays out.
+        let again = try plan(Self.threeWorkouts)
+        #expect(again.preview.isNothingNew)
+        #expect(again.preview.alreadyImportedWorkoutCount == 2)
+        #expect(again.preview.deletedInBurlyWorkoutCount == 1)
+        #expect(again.sessionsToCreate.isEmpty)
+        #expect(commit(again).matches(again.preview))
+        #expect(try store.session(id: legDay.id) == nil)
+
+        // A newer export that repeats it: only the genuinely new workout lands.
+        let newer = try plan(Self.overlappingNewer)
+        #expect(newer.preview.newWorkoutCount == 1)
+        #expect(newer.preview.alreadyImportedWorkoutCount == 1)
+        #expect(newer.preview.deletedInBurlyWorkoutCount == 1)
+        #expect(newer.sessionsToCreate.map(\.id).contains(legDay.id) == false)
+        #expect(commit(newer).matches(newer.preview))
+        #expect(try store.session(id: legDay.id) == nil)
+        #expect(try store.loggedSessionCount() == 3)
+    }
+
+    @Test("a raw deleteSession (the watch's Discard) leaves no tombstone, so it is not reported as deleted")
+    func rawDeleteIsNotADeletedInBurlyWorkout() throws {
+        let store = try SwiftDataStore.phone(at: .inMemory)
+        _ = try SeedLoader.applyBundled(to: store)
+        let result = try parse(Self.threeWorkouts)
+        let first = try HevyImportPlan.make(
+            result: result, catalog: try catalog(),
+            existingSessionIDs: [], existingExerciseIDs: Set(try store.exercises(includingArchived: true).map(\.id))
+        )
+        _ = first.apply(createExercise: { try store.createExercise($0) }, createSession: { try store.createSession($0) })
+        let discarded = try #require(first.sessionsToCreate.first)
+        _ = try store.deleteSession(id: discarded.id)
+        #expect(try store.sessionWasDeleted(id: discarded.id) == false)
+    }
+
+    @Test("an id in both the stored and the deleted set counts once, as stored")
+    func storedWinsOverDeleted() throws {
+        let result = try parse(Self.threeWorkouts)
+        let ids = result.sessions.map(\.id)
+        let plan = try HevyImportPlan.make(
+            result: result, catalog: try catalog(),
+            existingSessionIDs: [ids[0]], deletedSessionIDs: [ids[0], ids[1]],
+            existingExerciseIDs: try allCatalogIDs()
+        )
+        #expect(plan.preview.alreadyImportedWorkoutCount == 1)
+        #expect(plan.preview.deletedInBurlyWorkoutCount == 1)
+        #expect(plan.preview.newWorkoutCount == 1)
+        #expect(plan.preview.workoutsInFile == 3)
+    }
+
     @Test("an archived custom from an earlier import counts as matched and is not re-created")
     func archivedExerciseStillCountsAsExisting() throws {
         let store = try SwiftDataStore.phone(at: .inMemory)

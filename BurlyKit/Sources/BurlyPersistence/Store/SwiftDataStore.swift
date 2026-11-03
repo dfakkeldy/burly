@@ -374,6 +374,13 @@ public final class SwiftDataStore: BurlyStore {
         try context.fetchCount(FetchDescriptor<Session>(predicate: Session.predicate(id: id))) > 0
     }
 
+    public func sessionWasDeleted(id: UUID) throws -> Bool {
+        let descriptor = FetchDescriptor<SessionTombstone>(
+            predicate: #Predicate { $0.sessionID == id }
+        )
+        return try context.fetchCount(descriptor) > 0
+    }
+
     public func sessions() throws -> [SessionData] {
         try context.fetch(
             FetchDescriptor<Session>(
