@@ -101,6 +101,11 @@ enum HevyCSVSchema {
 /// import and reused for every data row.
 struct HevyCSVHeader {
     private let columnIndex: [String: Int]
+    /// How many header columns are a weight column (`weight_kg` or
+    /// `weight_lbs`), counting repeats. More than one means Burly can't
+    /// tell which column holds the real weights — the lookup below would
+    /// silently read the first and ignore the rest.
+    private let weightColumnCount: Int
     let columnCount: Int
     /// EVERY header column's index (not deduplicated by name) whose
     /// trimmed/lowercased name isn't recognized by
@@ -129,9 +134,13 @@ struct HevyCSVHeader {
         columnCount = fields.count
         var map: [String: Int] = [:]
         var unknownIndices: [Int] = []
+        var weightColumns = 0
         for (index, raw) in fields.enumerated() {
             let key = raw.trimmingCharacters(in: .whitespaces).lowercased()
             guard !key.isEmpty else { continue }
+            if key == HevyCSVSchema.weightKilogramsColumn || key == HevyCSVSchema.weightPoundsColumn {
+                weightColumns += 1
+            }
             if map[key] == nil {
                 map[key] = index
             }
@@ -140,13 +149,14 @@ struct HevyCSVHeader {
             }
         }
         columnIndex = map
+        weightColumnCount = weightColumns
         unknownColumnIndices = unknownIndices
     }
 
     /// Which unit the file's weights are in, or `nil` unless exactly one
     /// of `weight_kg`/`weight_lbs` is present: a file with neither has no
     /// weights to read, and a file with both is ambiguous (see
-    /// `hasBothWeightColumns`).
+    /// `hasAmbiguousWeightColumns`).
     var weightUnit: HevyWeightUnit? {
         let kilograms = columnIndex[HevyCSVSchema.weightKilogramsColumn] != nil
         let pounds = columnIndex[HevyCSVSchema.weightPoundsColumn] != nil
@@ -157,12 +167,14 @@ struct HevyCSVHeader {
         }
     }
 
-    /// Both weight columns are present. Burly can't tell which one the
-    /// values should come from, and guessing would silently import every
-    /// weight 2.2x too heavy or too light, so the import is refused.
-    var hasBothWeightColumns: Bool {
-        columnIndex[HevyCSVSchema.weightKilogramsColumn] != nil
-            && columnIndex[HevyCSVSchema.weightPoundsColumn] != nil
+    /// More than one weight column is present: both units, or one unit's
+    /// column repeated. Burly can't tell which column the values should
+    /// come from, and guessing would silently import every weight 2.2x too
+    /// heavy or too light (or a loaded set as bodyweight, if the first
+    /// repeat is blank), so the import is refused. Real Hevy exports carry
+    /// exactly one.
+    var hasAmbiguousWeightColumns: Bool {
+        weightColumnCount > 1
     }
 
     /// Required columns the header lacks. A file with neither weight

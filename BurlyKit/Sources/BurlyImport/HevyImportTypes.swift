@@ -30,9 +30,10 @@ public enum HevyImportError: Error, Sendable, Equatable, LocalizedError {
     /// generic "couldn't read this file." A file with neither weight column
     /// lists them as one entry, `weight_kg or weight_lbs`.
     case unrecognizedHeader(missingColumns: [String])
-    /// The header has both `weight_kg` and `weight_lbs`. Hevy writes one or
-    /// the other, so a file with both has been edited or merged, and Burly
-    /// can't tell which column's numbers are the real ones.
+    /// The header has more than one weight column: both `weight_kg` and
+    /// `weight_lbs`, or either one repeated. Hevy writes exactly one, so a
+    /// file like that has been edited or merged, and Burly can't tell which
+    /// column's numbers are the real ones.
     case ambiguousWeightUnit
 
     public var errorDescription: String? {
@@ -40,7 +41,7 @@ public enum HevyImportError: Error, Sendable, Equatable, LocalizedError {
         case .unrecognizedHeader(let missingColumns):
             return "The file is missing required columns: \(missingColumns.joined(separator: ", "))."
         case .ambiguousWeightUnit:
-            return "The file has both a weight_kg and a weight_lbs column, so Burly can't tell which unit the weights are in. "
+            return "The file has more than one weight column (weight_kg and weight_lbs), so Burly can't tell which weights are the real ones. "
                 + "Export your workouts from Hevy again, without editing the file, and choose that file."
         }
     }

@@ -163,9 +163,9 @@ public enum HevyCSVImporter {
         guard missingColumns.isEmpty else {
             throw HevyImportError.unrecognizedHeader(missingColumns: missingColumns)
         }
-        // Exactly one weight column: a file naming both units is refused
-        // rather than guessed at (see `HevyCSVHeader.hasBothWeightColumns`).
-        guard !header.hasBothWeightColumns, let weightUnit = header.weightUnit else {
+        // Exactly one weight column: a file naming both units, or one
+        // repeated, is refused rather than guessed at (see `HevyCSVHeader.hasAmbiguousWeightColumns`).
+        guard !header.hasAmbiguousWeightColumns, let weightUnit = header.weightUnit else {
             throw HevyImportError.ambiguousWeightUnit
         }
 

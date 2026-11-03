@@ -113,6 +113,22 @@ struct HevyPoundsImportTests {
         #expect(message.contains("weight_kg") && message.contains("weight_lbs"))
     }
 
+    @Test("a repeated weight column is refused too, so a blank first copy can't import a loaded set as bodyweight")
+    func repeatedWeightColumnIsRefused() throws {
+        for header in [
+            "title,start_time,end_time,exercise_title,set_type,weight_lbs,weight_lbs,reps",
+            "title,start_time,end_time,exercise_title,set_type,weight_kg,weight_kg,reps"
+        ] {
+            let repeated = Self.csv([
+                header,
+                #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","Bench Press (Barbell)","normal",,225,5"#
+            ])
+            #expect(throws: HevyImportError.ambiguousWeightUnit) {
+                _ = try HevyCSVImporter.parse(csv: repeated, catalog: try catalog())
+            }
+        }
+    }
+
     @Test("a header with neither weight column is an unrecognized header naming the either-or requirement")
     func neitherWeightColumnIsRefused() throws {
         let neither = Self.csv([
