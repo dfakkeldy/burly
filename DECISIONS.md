@@ -29,7 +29,9 @@ the procedure in `Schema/CurrentSchema.swift`:
   SwiftData failures that forced the split. Real V1 and V2 share entity
   names but no shared entity differs in shape, and opening a 0.9.1 store
   realises both exactly as a device will, so `ShippedStoreMigrationTests`
-  runs in the ordinary pass.
+  runs in the ordinary pass. First hosted evidence: CI run 41681740096
+  (Xcode 26.6, macos-26) passed both processes, 927 tests in the ordinary
+  pass and the spike alone; #52 lists the reruns.
 
 V2 is frozen in turn once 1.0 ships; the next change is a V3.
 

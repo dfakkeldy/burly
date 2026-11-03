@@ -418,6 +418,9 @@ final class PhoneHomeViewModel {
     /// the job by hand.
     func deleteHistorySession(_ session: SessionData) throws {
         let linkedWorkoutID = try store.deleteLoggedSession(id: session.id)
+        // A retry after a failed swipe delete: that row said the workout
+        // is still in History, which is no longer true.
+        historyNotices.removeAll { $0.id == session.id }
         sync?.historyDidChange()
         load()
         loadSessionsForDisplay()
