@@ -309,7 +309,10 @@ final class PhoneWCSessionBridge: PhoneSyncTransporting, PhoneDigestPublishing {
     weak var adapter: WCSessionAdapter?
     /// The size of the last digest envelope handed to the adapter. A failed
     /// `updateApplicationContext` comes back later as an event with no
-    /// payload, so the host reads the size from here to log it.
+    /// payload, so the host reads the size from here to log it. A newer
+    /// publish can land before that event, in which case the logged size is
+    /// the newer digest's; digests are coalesced, so that is rare and the
+    /// two are usually close in size.
     private(set) var lastDigestEnvelopeByteCount: Int?
 
     func transmitSnapshot(_ payload: BurlySnapshotPayloadDTO, generation: Int) async throws {

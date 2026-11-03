@@ -42,7 +42,9 @@
 // hundred exercises, each last done in a session this digest acknowledges),
 // the acks for the sessions whose numbers were left out are held back for
 // a later digest: the watch keeps those sessions, and resends them, rather
-// than losing their numbers.
+// than losing their numbers. That is a deliberate exception to "the
+// digest carries the machine's ack set as is": `PhoneSyncMachine` still
+// holds the ack, untouched, and only this one payload leaves it out.
 //
 // The degenerate case still holds: an empty store (nothing ever logged, or
 // everything since deleted) produces an empty `lastPerformance`, emittable
