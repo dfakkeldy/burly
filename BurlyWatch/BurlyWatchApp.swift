@@ -197,6 +197,9 @@ private struct RootView: View {
         if let override = WatchDemoSeed.squatWeightOverride {
             result.displayUnit = override.unit
         }
+        if let idle = WatchDemoSeed.armIdleTimeoutOverride {
+            result.weightIdleTimeout = idle
+        }
         #endif
         return result
     }

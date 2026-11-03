@@ -54,8 +54,12 @@ struct ExercisePageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 2)
             }
+            // Only a scroll of the lifter's own cancels a pending reveal. A
+            // touch that has not moved (`.tracking`) is also the Log set
+            // tap that started the rest; cancelling on it could lose the
+            // reveal.
             .onScrollPhaseChange { _, phase in
-                if phase == .tracking || phase == .interacting {
+                if phase == .interacting {
                     revealTask?.cancel()
                 }
             }
@@ -64,44 +68,42 @@ struct ExercisePageView: View {
             // Log set, so it can start partly off screen; bring it in
             // whenever a new rest starts. `startedAt` changes only on a new
             // rest, so ±15 and skip do not move the page.
+            //
+            // Every reveal waits for the tap or page turn that caused it to
+            // settle, then tries once more; a second scroll to the same
+            // place does nothing. Run at once, a reveal after Log set never
+            // came, or came seconds late, on the hosted simulator, and one
+            // during a page turn stopped short (17 of 42 pt on 46 mm).
             .onChange(of: viewModel.restTimer?.startedAt) { _, startedAt in
                 guard isCurrent, startedAt != nil else { return }
-                revealRest(proxy)
+                revealRest(proxy, after: Self.settleDelays)
             }
             // The same for a rest already running when this page becomes
             // the current one (paging during a rest) or first appears
-            // (Resume mid-rest). These wait for the pager to settle: run
-            // while its page turn was still moving, the scroll stopped
-            // short (17 of 42 pt on the 46 mm simulator), so it is tried
-            // again a moment later, unless the lifter has scrolled since; a
-            // second scroll to the same place does nothing.
+            // (Resume mid-rest).
             .onChange(of: isCurrent) { _, nowCurrent in
                 guard nowCurrent, viewModel.isRestRunning else { return }
-                revealRest(proxy, after: Self.pageSettleDelays)
+                revealRest(proxy, after: Self.settleDelays)
             }
             .onAppear {
                 guard isCurrent, viewModel.isRestRunning else { return }
-                revealRest(proxy, after: Self.pageSettleDelays)
+                revealRest(proxy, after: Self.settleDelays)
             }
         }
     }
 
-    private static let pageSettleDelays: [Duration] = [.milliseconds(450), .milliseconds(700)]
+    private static let settleDelays: [Duration] = [.milliseconds(450), .milliseconds(700)]
 
     /// Scrolls the controls row to the top of the visible area, just under
     /// the navigation bar: the header goes out of view, and weight and reps,
     /// Log set and the countdown fill the screen. Anchoring the banner's
     /// bottom instead put the weight and reps row under the clock and the
     /// ellipsis button, so the top of reps + opened the actions sheet.
-    /// Always deferred at least one turn, so controls that have only just
-    /// been added are laid out first.
-    private func revealRest(_ proxy: ScrollViewProxy, after delays: [Duration] = [.zero]) {
+    private func revealRest(_ proxy: ScrollViewProxy, after delays: [Duration]) {
         revealTask?.cancel()
         revealTask = Task { @MainActor in
             for delay in delays {
-                if delay > .zero {
-                    try? await Task.sleep(for: delay)
-                }
+                try? await Task.sleep(for: delay)
                 guard !Task.isCancelled, isCurrent, viewModel.isRestRunning else { return }
                 withAnimation {
                     proxy.scrollTo(Self.controlsRowID, anchor: .top)

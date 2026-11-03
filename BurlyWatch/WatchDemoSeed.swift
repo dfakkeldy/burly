@@ -74,6 +74,20 @@ enum WatchDemoSeed {
         else { return nil }
         return (weight, unit)
     }
+
+    /// Optional: seconds an armed weight stays armed while idle, instead of
+    /// §2's 3. For UI tests that read an armed weight: on the hosted
+    /// simulator one accessibility read can take 2-5 s, so a 3 s arm
+    /// lapsed before the test could see it. A test of the lapse itself
+    /// leaves this unset.
+    static let armIdleEnvironmentKey = "BURLY_WATCH_UI_TEST_ARM_IDLE_SECONDS"
+
+    static var armIdleTimeoutOverride: TimeInterval? {
+        guard let raw = ProcessInfo.processInfo.environment[armIdleEnvironmentKey],
+              let seconds = TimeInterval(raw), seconds > 0
+        else { return nil }
+        return seconds
+    }
     /// How many of the faulting method's calls succeed before failures
     /// start (e.g. 1 lets Start's own `saveActiveSession` through so the
     /// logging screen can be reached before a later save fails).

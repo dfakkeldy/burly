@@ -36,6 +36,11 @@ final class SessionActionsUITests: XCTestCase {
 
         let logSet = app.buttons["logSetButton"]
         for expectedCounter in ["Set 2 of 3", "Set 3 of 3", "All 3 sets logged"] {
+            // From the second set on, a rest is running and its reveal
+            // moves Log set.
+            if expectedCounter != "Set 2 of 3" {
+                waitForRestInView(app)
+            }
             XCTAssertTrue(logSet.waitForExistence(timeout: 5))
             logSet.tap()
             XCTAssertTrue(
@@ -303,6 +308,37 @@ final class SessionActionsUITests: XCTestCase {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
         start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    /// After a Log set that starts a rest, waits for the page's reveal to
+    /// finish: the countdown fully on screen and Log set no longer moving.
+    /// The reveal lands a moment after the tap; a tap sent before it lands
+    /// hits whatever has scrolled under it, and on the hosted simulator
+    /// that was the countdown, whose tap skips the rest.
+    private func waitForRestInView(_ app: XCUIApplication, line: UInt = #line) {
+        let screen = screenBounds(app)
+        let remaining = app.staticTexts["restTimer.remaining"]
+        let logButton = app.buttons["logSetButton"]
+        var lastLogFrame = CGRect.null
+        let settled = waitFor(timeout: 10) {
+            guard remaining.exists, screen.contains(remaining.frame) else { return false }
+            let logFrame = logButton.frame
+            defer { lastLogFrame = logFrame }
+            return logFrame == lastLogFrame
+        }
+        XCTAssertTrue(
+            settled,
+            "Expected the rest countdown to come into view after Log set, got \(remaining.frame) in \(screen)",
+            line: line
+        )
+    }
+
+    /// The visible screen: the app's window, or the application element's
+    /// own frame if watchOS reports no window.
+    private func screenBounds(_ app: XCUIApplication) -> CGRect {
+        let window = app.windows.firstMatch
+        if window.exists, !window.frame.isEmpty { return window.frame }
+        return app.frame
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {

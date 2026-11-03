@@ -11,6 +11,10 @@ import XCTest
 final class WatchSessionUXUITests: XCTestCase {
     private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
     private static let squatWeightKey = "BURLY_WATCH_UI_TEST_SQUAT_WEIGHT"
+    /// Keeps an armed weight armed for 30 s instead of 3 (`WatchDemoSeed`),
+    /// for tests that read the armed state: on the hosted simulator one
+    /// accessibility read can take seconds, and the arm lapsed first.
+    private static let armIdleKey = "BURLY_WATCH_UI_TEST_ARM_IDLE_SECONDS"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -68,6 +72,7 @@ final class WatchSessionUXUITests: XCTestCase {
     func testLogSetStaysOnScreenWhileTheWeightIsArmed() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.armIdleKey] = "30"
         app.launch()
 
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
@@ -121,10 +126,10 @@ final class WatchSessionUXUITests: XCTestCase {
         print("[frames] armed screen \(screen): " + armedLines.joined(separator: "; "))
         attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-armed")
 
-        // No tap on + here: the arm lapses after 3 s idle, and these frame
-        // queries can take that long, so a late tap would land on reps +
-        // in the same place. Log set locks the weight whether or not the
-        // arm has lapsed by now.
+        // No tap on + here: this test is about layout, and under the
+        // default 3 s idle lock a late tap would land on reps + in the same
+        // place. Log set locks the weight whether or not the arm has
+        // lapsed by now.
         logButton.tap()
         XCTAssertTrue(
             waitFor { (weightControl.value as? String)?.contains("locked") == true },
@@ -170,6 +175,7 @@ final class WatchSessionUXUITests: XCTestCase {
             let app = XCUIApplication()
             app.launchEnvironment[Self.scenarioKey] = "routines"
             app.launchEnvironment[Self.squatWeightKey] = seeded
+            app.launchEnvironment[Self.armIdleKey] = "30"
             app.launch()
 
             let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
