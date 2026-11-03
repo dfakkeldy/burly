@@ -30,22 +30,29 @@ public struct PhoneWatchSettings: Sendable, Equatable {
 
 public enum SnapshotPayloadBuilder {
     /// Builds the §5 `snapshot` payload at `version` from current store
-    /// truth: every non-archived routine and every exercise it references.
+    /// truth: every non-archived routine and the whole exercise catalog,
+    /// archived rows included.
     ///
     /// Archived routines are left out on purpose. §5 calls this a
     /// "whole-working-set replace" of what the watch actually uses to start
-    /// and log workouts — the routine list (§2 Start) and the swap/add
-    /// catalog picker (§2 mid-session edits) both already hide archived
-    /// rows on the phone. Picker visibility controls what users may newly
-    /// choose; it does not invalidate an existing live routine item, so an
-    /// archived exercise still referenced by a non-archived routine is sent
-    /// with that routine. The watch must retain the reference rather than
-    /// rendering an item with no exercise. The watch never
-    /// accumulates history (§1), so it has no symmetric reason to carry an
-    /// archived routine's name forward the way a phone-side history row
-    /// does. A `needsNaming` placeholder the watch just created and the
-    /// phone hasn't merged yet is never archived, so it always rides along
-    /// normally.
+    /// and log workouts, and the routine list (§2 Start) hides archived
+    /// routines. The watch never accumulates history (§1), so it has no
+    /// reason to carry an archived routine's name forward the way a
+    /// phone-side history row does; the replace deletes it there.
+    ///
+    /// Exercises are the opposite: §5's snapshot is the "full catalog", and
+    /// an archived exercise travels with its `archivedAt`. That is how an
+    /// archive reaches the watch. The watch's replace updates only the
+    /// exercises a payload names (a placeholder the watch created and the
+    /// phone has not ingested yet is in no snapshot, and must survive it),
+    /// so an exercise left out would keep its old, unarchived copy there
+    /// and stay in the swap/add picker. That covers both phone archives:
+    /// the catalog's "Archive exercise" and the naming queue's merge, which
+    /// archives the placeholder (§6). The phone store has no way to delete
+    /// an exercise (§1), so every exercise the watch was ever sent is in
+    /// every later snapshot. Archiving only hides an exercise from the
+    /// picker: a live routine item or a session in flight that already
+    /// names it still resolves it.
     ///
     /// `settings` are read when the snapshot is built, like the store, so a
     /// push always carries the phone's current unit and rest default.
@@ -56,10 +63,7 @@ public enum SnapshotPayloadBuilder {
         settings: PhoneWatchSettings = PhoneWatchSettings()
     ) throws -> BurlySnapshotPayloadDTO {
         let routines = try store.routines(includingArchived: false)
-        let referencedExerciseIDs = Set(routines.flatMap { $0.items.compactMap(\.exerciseID) })
-        let exercises = try store.exercises(includingArchived: true).filter {
-            $0.archivedAt == nil || referencedExerciseIDs.contains($0.id)
-        }
+        let exercises = try store.exercises(includingArchived: true)
         return BurlySnapshotPayloadDTO(
             version: version,
             exercises: exercises,
