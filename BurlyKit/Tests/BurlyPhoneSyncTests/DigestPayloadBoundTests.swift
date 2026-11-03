@@ -113,8 +113,8 @@ struct DigestPayloadBoundTests {
 
     // MARK: - Routine dates
 
-    @Test("each non-archived routine's latest logged start is reported; archived and never-performed routines are not")
-    func routineDatesForTheWorkingSet() throws {
+    @Test("each stored routine's latest logged start is reported, archived ones too; deleted and never-performed routines are not")
+    func routineDatesForStoredRoutines() throws {
         let store = try makePhoneStore()
         let bench = Fixture.exercise(name: "Bench Press")
         try store.createExercise(bench)
@@ -122,18 +122,26 @@ struct DigestPayloadBoundTests {
         let pull = Fixture.routine(name: "Pull", orderIndex: 1, over: [bench])
         let never = Fixture.routine(name: "Never", orderIndex: 2, over: [bench])
         let retired = Fixture.routine(name: "Retired", orderIndex: 3, over: [bench])
-        for routine in [push, pull, never, retired] { try store.createRoutine(routine) }
+        let deleted = Fixture.routine(name: "Deleted", orderIndex: 4, over: [bench])
+        for routine in [push, pull, never, retired, deleted] { try store.createRoutine(routine) }
 
         try store.createSession(Fixture.session(from: push, startedAt: Fixture.epoch))
         try store.createSession(Fixture.session(from: push, startedAt: Fixture.epoch.addingTimeInterval(86_400)))
         try store.createSession(Fixture.session(from: pull, startedAt: Fixture.epoch.addingTimeInterval(3_600)))
         try store.createSession(Fixture.session(from: retired, startedAt: Fixture.epoch))
+        try store.createSession(Fixture.session(from: deleted, startedAt: Fixture.epoch))
+        // Archived: the watch may still list it until the snapshot that
+        // archives it arrives, which can be after this digest.
         try store.archiveRoutine(id: retired.id, at: Fixture.epoch.addingTimeInterval(7_200))
+        // Deleted: its sessions keep the routine id, but there is no
+        // routine left to show.
+        try store.deleteRoutine(id: deleted.id)
 
         let payload = try SessionDigestGenerator.generate(from: store, snapshotVersion: 1, ackedSessionIDs: [])
         #expect(payload.routineLastPerformed == [
             BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: Fixture.epoch.addingTimeInterval(86_400)),
-            BurlyRoutineLastPerformedDTO(routineID: pull.id, performedAt: Fixture.epoch.addingTimeInterval(3_600))
+            BurlyRoutineLastPerformedDTO(routineID: pull.id, performedAt: Fixture.epoch.addingTimeInterval(3_600)),
+            BurlyRoutineLastPerformedDTO(routineID: retired.id, performedAt: Fixture.epoch)
         ].sorted { $0.routineID.uuidString < $1.routineID.uuidString })
     }
 

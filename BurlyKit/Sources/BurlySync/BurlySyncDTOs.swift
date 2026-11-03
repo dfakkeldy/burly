@@ -153,8 +153,10 @@ public struct BurlySessionPayloadDTO: Sendable, Equatable, Codable {
 ///
 /// ## Routine dates (additive within schema 2)
 ///
-/// `routineLastPerformed` carries each non-archived routine's latest logged
-/// session start, so the watch keeps showing §2's "last done N days ago"
+/// `routineLastPerformed` carries each stored routine's latest logged
+/// session start (archived routines included, so a digest that overtakes
+/// the snapshot archiving one cannot blank a row the watch still shows),
+/// so the watch keeps showing §2's "last done N days ago"
 /// after it prunes the sessions the phone acknowledged. It is an additive
 /// key, not a schema bump, on purpose. A schema-2 watch that predates it
 /// ignores the key (this decoder, like every payload decoder here, reads
@@ -170,9 +172,9 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
     public let snapshotVersion: Int
     public let lastPerformance: [ExerciseLastPerformanceData]
     public let ackedSessionIDs: [UUID]
-    /// When present, complete for the phone's non-archived routines: one
-    /// that is absent has no logged session on the phone. `nil` when the
-    /// sender predates the key. See the type doc.
+    /// When present, complete for the routines the phone stores: one that
+    /// is absent has no logged session on the phone (or was deleted).
+    /// `nil` when the sender predates the key. See the type doc.
     public let routineLastPerformed: [BurlyRoutineLastPerformedDTO]?
 
     public init(

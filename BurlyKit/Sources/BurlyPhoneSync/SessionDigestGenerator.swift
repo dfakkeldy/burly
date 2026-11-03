@@ -82,7 +82,7 @@ public enum SessionDigestGenerator {
     /// Derives and builds the §5 `digest` payload: the machine-owned
     /// `snapshotVersion`/`ackedSessionIDs` (`PhoneSyncMachine.Command
     /// .publishDigest`'s two facts), `lastPerformance` for the watch's
-    /// working set, and each non-archived routine's last-performed date, all
+    /// working set, and each stored routine's last-performed date, all
     /// read from `store` **at the moment this runs**, never from a cached or
     /// earlier read, which is what makes "at generation time" true rather
     /// than aspirational.
@@ -99,7 +99,13 @@ public enum SessionDigestGenerator {
     ) throws -> BurlyDigestPayloadDTO {
         let workingSet = try WatchWorkingSet(from: store)
         let slices = try store.latestLoggedSetSlices(forExercises: Set(workingSet.exercises.map(\.id)))
-        let routineIDs = Set(workingSet.routines.map(\.id))
+        // Every routine the phone stores, archived ones included, not only
+        // the snapshot's: the digest and the snapshot travel separately, so
+        // a digest that dropped an archived routine's date could reach the
+        // watch first and show "Never done" on a row the old snapshot still
+        // lists. Routines are user-authored and few; a deleted routine's
+        // date is not sent.
+        let routineIDs = Set(try store.routines(includingArchived: true).map(\.id))
         let routineDates = try store.routineLastPerformedDates()
             .filter { routineIDs.contains($0.key) }
             .map { BurlyRoutineLastPerformedDTO(routineID: $0.key, performedAt: $0.value) }
