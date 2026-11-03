@@ -55,10 +55,11 @@ Deleting a workout in iPhone History removes it from Burly's history and
 stats, and it stays deleted: the watch cannot send it back, and a later
 Hevy import skips it. If the watch saved it to Apple Health, the phone also
 asks Health to delete it. That is the only time the iPhone app asks for
-Health access, and it asks only to write workouts; it reads nothing from
-Health. Whether iOS lets the iPhone app delete a workout the watch app
-saved has not been checked on a device yet. When it can't, History says so
-and you can delete the workout in the Health app.
+Health access, and it asks only to write workouts; to find the workout it
+looks only among the ones Burly saved. Whether iOS lets the iPhone app
+delete a workout the watch app saved has not been checked on a device yet.
+When it can't, History says so and you can delete the workout in the
+Health app.
 
 ## Simulator acceptance
 

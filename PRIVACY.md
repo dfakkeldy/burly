@@ -41,9 +41,10 @@ workout, and on iPhone only when you delete a workout Burly saved to Health
 When you delete a workout in Burly on iPhone and Burly saved it to Health,
 Burly also asks Health to delete that workout. The first time, iPhone may
 ask whether Burly can write workouts to Health; that is the only Health
-access the iPhone app asks for, and it reads nothing from Health. If Burly
-can't delete the workout, Burly tells you, and you can delete it in the
-Health app.
+access the iPhone app asks for. To find the workout, Burly looks only among
+the workouts it saved itself; it reads no other Health data. If Burly can't
+delete the workout, Burly tells you, and you can delete it in the Health
+app.
 
 Health data is used only for these purposes. It is never used for
 advertising or marketing, never sold, and never shared with anyone. If you
