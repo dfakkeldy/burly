@@ -296,7 +296,7 @@ for directory in (phone_dir, watch_dir):
             suggested = attachment.get("suggestedHumanReadableName", "")
             match = re.fullmatch(r"(.+)_\d+_[0-9A-Fa-f-]{36}\.png", suggested)
             name = match.group(1) if match else os.path.splitext(suggested)[0]
-            if name in found:
+            if name in found and name in wanted:
                 sys.exit(f"two attachments are named {name!r}")
             found[name] = os.path.join(directory, attachment["exportedFileName"])
 

@@ -82,9 +82,10 @@ final class StoreScreenshotsUITests: XCTestCase {
         XCTAssertTrue(anyElement(app, identifier: "statsTab.muscleSplit.chart").exists, "Expected the muscle split chart")
         capture("04_iphone_volume")
 
-        // The routine builder, on Push.
+        // The routine builder, on Push. The row is a plain-style button, so
+        // only its text takes a tap (a tap at the row's center misses).
         app.tabBars.buttons["Routines"].tap()
-        let push = anyElement(app, identifier: "routinesTab.openRoutine.\(Self.pushRoutineID)")
+        let push = app.staticTexts["routinesTab.routineRow.\(Self.pushRoutineID)"]
         XCTAssertTrue(push.waitForExistence(timeout: 10), "Expected the seeded Push routine")
         push.tap()
         XCTAssertTrue(
