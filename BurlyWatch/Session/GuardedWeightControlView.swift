@@ -137,14 +137,18 @@ struct GuardedWeightControlView: View {
 /// §2 "Armed: ... +/− micro-buttons appear": one step of the configured
 /// increment per tap. Shown only while the weight is armed, in the reps
 /// control's place, in the armed weight's accent colour; the engine
-/// refuses an adjustment while locked anyway. Two 44 pt buttons 12 pt
-/// apart, narrower than the reps control, so the number being changed
-/// gets more room than it has while locked.
+/// refuses an adjustment while locked anyway. Two 44 pt buttons at the
+/// ends of whatever width they are given (`ExercisePageView` gives them
+/// the reps control's), so − and + sit where reps' − and + were.
 struct GuardedWeightAdjustButtons: View {
     let onAdjustSteps: (Int) -> Void
 
+    /// Their width with no reps control to match: two 44 pt buttons 28 pt
+    /// apart, about the reps control's own.
+    static let fallbackWidth: CGFloat = 116
+
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 0) {
             Button { onAdjustSteps(-1) } label: {
                 Image(systemName: "minus.circle.fill")
                     .font(.title3)
@@ -154,6 +158,7 @@ struct GuardedWeightAdjustButtons: View {
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Decrease weight")
+            Spacer(minLength: 28)
             Button { onAdjustSteps(1) } label: {
                 Image(systemName: "plus.circle.fill")
                     .font(.title3)

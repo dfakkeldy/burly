@@ -38,6 +38,11 @@ struct ExercisePageView: View {
     /// cancels it, so a delayed retry never pulls the page back.
     @State private var revealTask: Task<Void, Never>?
 
+    /// The reps control's width as last laid out, which the armed weight's
+    /// -/+ take in its place. Reps always show before an arm, since every
+    /// page opens locked.
+    @State private var repsControlWidth: CGFloat?
+
     private var isCurrent: Bool { item.id == viewModel.currentItemID }
 
     private static let controlsRowID = "exercisePage.controlsRow"
@@ -69,41 +74,48 @@ struct ExercisePageView: View {
             // whenever a new rest starts. `startedAt` changes only on a new
             // rest, so ±15 and skip do not move the page.
             //
-            // Every reveal waits for the tap or page turn that caused it to
-            // settle, then tries once more; a second scroll to the same
-            // place does nothing. Run at once, a reveal after Log set never
-            // came, or came seconds late, on the hosted simulator, and one
-            // during a page turn stopped short (17 of 42 pt on 46 mm).
+            // It scrolls at once and again 450 ms and 1.15 s later; a
+            // second scroll to the same place does nothing. On the hosted
+            // simulator each kind alone sometimes never landed: the scroll
+            // at once (with the Log set tap still being handled), and the
+            // delayed ones on a page just opened.
             .onChange(of: viewModel.restTimer?.startedAt) { _, startedAt in
                 guard isCurrent, startedAt != nil else { return }
-                revealRest(proxy, after: Self.settleDelays)
+                revealRest(proxy, after: Self.newRestDelays)
             }
             // The same for a rest already running when this page becomes
             // the current one (paging during a rest) or first appears
-            // (Resume mid-rest).
+            // (Resume mid-rest). These wait for the pager to settle: run
+            // while its page turn was still moving, the scroll stopped
+            // short (17 of 42 pt on the 46 mm simulator).
             .onChange(of: isCurrent) { _, nowCurrent in
                 guard nowCurrent, viewModel.isRestRunning else { return }
-                revealRest(proxy, after: Self.settleDelays)
+                revealRest(proxy, after: Self.pageSettleDelays)
             }
             .onAppear {
                 guard isCurrent, viewModel.isRestRunning else { return }
-                revealRest(proxy, after: Self.settleDelays)
+                revealRest(proxy, after: Self.pageSettleDelays)
             }
         }
     }
 
-    private static let settleDelays: [Duration] = [.milliseconds(450), .milliseconds(700)]
+    private static let newRestDelays: [Duration] = [.zero, .milliseconds(450), .milliseconds(700)]
+    private static let pageSettleDelays: [Duration] = [.milliseconds(450), .milliseconds(700)]
 
     /// Scrolls the controls row to the top of the visible area, just under
     /// the navigation bar: the header goes out of view, and weight and reps,
     /// Log set and the countdown fill the screen. Anchoring the banner's
     /// bottom instead put the weight and reps row under the clock and the
     /// ellipsis button, so the top of reps + opened the actions sheet.
+    /// A zero delay still runs a main-actor turn later, so controls that
+    /// have only just been added are laid out first.
     private func revealRest(_ proxy: ScrollViewProxy, after delays: [Duration]) {
         revealTask?.cancel()
         revealTask = Task { @MainActor in
             for delay in delays {
-                try? await Task.sleep(for: delay)
+                if delay > .zero {
+                    try? await Task.sleep(for: delay)
+                }
                 guard !Task.isCancelled, isCurrent, viewModel.isRestRunning else { return }
                 withAnimation {
                     proxy.scrollTo(Self.controlsRowID, anchor: .top)
@@ -199,14 +211,16 @@ struct ExercisePageView: View {
                 )
 
                 // §2: "Armed: ... +/− micro-buttons appear." They take the
-                // reps control's place while the weight is armed, so the
-                // row keeps its height and Log set stays where it was. They
-                // are narrower than reps, so the number being changed never
-                // has less room than it had locked. The arm ends at the
-                // next Log set, a page change or 3 s idle, and reps come
-                // back.
+                // reps control's place while the weight is armed, at its
+                // measured width, so the number has the same room armed and
+                // locked: it keeps its size, the row keeps its height and
+                // Log set stays where it was. Narrower -/+ let the armed
+                // number grow, which moved Log set 6 pt down on 46 mm. The
+                // arm ends at the next Log set, a page change or 3 s idle,
+                // and reps come back.
                 if viewModel.isWeightArmed {
                     GuardedWeightAdjustButtons(onAdjustSteps: viewModel.adjustWeight(bySteps:))
+                        .frame(width: repsControlWidth ?? GuardedWeightAdjustButtons.fallbackWidth)
                         .layoutPriority(1)
                         .transition(.opacity)
                 } else {
@@ -216,6 +230,11 @@ struct ExercisePageView: View {
                         onDecrement: viewModel.decrementReps,
                         onAdjustSteps: viewModel.adjustReps(bySteps:)
                     )
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.size.width
+                    } action: { width in
+                        repsControlWidth = width
+                    }
                     .layoutPriority(1)
                 }
             }

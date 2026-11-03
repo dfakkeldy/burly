@@ -114,11 +114,11 @@ final class WatchSessionUXUITests: XCTestCase {
         // A point or so of play: the weight number rescales in its column.
         let armedLogFrame = try XCTUnwrap(armed[3].1)
         XCTAssertEqual(armedLogFrame.minY, entryLogFrame.minY, accuracy: 2, "Arming must not move Log set")
-        // The -/+ are narrower than reps, so the number being changed never
-        // has less room than it had locked.
-        XCTAssertGreaterThanOrEqual(
-            armedWeight.frame.width, lockedWeightFrame.width - 1,
-            "The armed weight must not be narrower than the locked one (\(lockedWeightFrame.width) pt)"
+        // The -/+ take the reps control's width, so the number has the same
+        // room armed and locked.
+        XCTAssertEqual(
+            armedWeight.frame.width, lockedWeightFrame.width, accuracy: 1,
+            "The armed weight column must keep the locked one's width"
         )
         let armedLines: [String] = armed.map { (entry: (String, CGRect?)) -> String in
             "\(entry.0): \(String(describing: entry.1))"
@@ -163,15 +163,16 @@ final class WatchSessionUXUITests: XCTestCase {
     /// "10…" beside the -/+ buttons. Accessibility reports the value, not
     /// what the screen drew, so the screenshots are the check that the
     /// number is whole. This asserts what accessibility can see: the
-    /// seeded value in its unit, the arm, an armed column at least as wide
-    /// as the locked one, and Log set still on screen.
+    /// seeded value in its unit, the arm, an armed column as wide as the
+    /// locked one, and Log set on screen and where it was.
     ///
     /// The armed screenshot is taken before the snapshot that shows the
     /// weight still armed, so it shows the armed layout too.
     @MainActor
     func testLongWeightsShowInFullLockedAndArmed() throws {
         for seeded in ["227.5 kg", "1102.5 lb"] {
-            let name = seeded.replacingOccurrences(of: " ", with: "")
+            // No "." in attachment names: the exported name cuts there.
+            let name = seeded.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: ".", with: "_")
             let app = XCUIApplication()
             app.launchEnvironment[Self.scenarioKey] = "routines"
             app.launchEnvironment[Self.squatWeightKey] = seeded
@@ -191,6 +192,7 @@ final class WatchSessionUXUITests: XCTestCase {
             )
             let screen = screenBounds(app)
             let lockedWeightFrame = weightControl.frame
+            let lockedLogFrame = logButton.frame
             recordFrames(
                 [("weight control", weightControl), ("reps control", anyElement(app, identifier: "repsControl")), ("Log set", logButton)],
                 in: screen,
@@ -210,9 +212,9 @@ final class WatchSessionUXUITests: XCTestCase {
                 armedWeight.value as? String, "\(seeded), armed",
                 "Expected the snapshot to show \(seeded) still armed"
             )
-            XCTAssertGreaterThanOrEqual(
-                armedWeight.frame.width, lockedWeightFrame.width - 1,
-                "The armed weight must not be narrower than the locked one (\(lockedWeightFrame.width) pt)"
+            XCTAssertEqual(
+                armedWeight.frame.width, lockedWeightFrame.width, accuracy: 1,
+                "The armed weight column must keep the locked one's width"
             )
             let armed: [(String, CGRect?)] = [
                 ("weight control", armedWeight.frame),
@@ -224,6 +226,8 @@ final class WatchSessionUXUITests: XCTestCase {
                 let measured = try XCTUnwrap(frame, "Expected the \(part) while armed")
                 XCTAssertTrue(screen.contains(measured), "Expected the \(part) fully on screen while armed, got \(measured) in \(screen)")
             }
+            let armedLogFrame = try XCTUnwrap(armed[3].1)
+            XCTAssertEqual(armedLogFrame.minY, lockedLogFrame.minY, accuracy: 2, "Arming must not move Log set")
             let armedLines: [String] = armed.map { (entry: (String, CGRect?)) -> String in
                 "\(entry.0): \(String(describing: entry.1))"
             }
