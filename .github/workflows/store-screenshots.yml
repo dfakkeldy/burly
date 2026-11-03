@@ -15,8 +15,18 @@ on:
   pull_request:
     types: [labeled, synchronize]
 
+# A newer capture of the same ref cancels an older one. A run whose capture
+# job will skip (another label added, a push to an unlabelled PR) gets a
+# group of its own instead, so it can never cancel a capture: concurrency
+# cancels when a run is queued, before any job's `if` is read (ci.yml run
+# 41666073484 was cancelled that way by a label it ignores). The condition
+# below must stay the same as jobs.capture.if.
 concurrency:
-  group: store-screenshots-${{ github.ref }}
+  group: >-
+    store-screenshots-${{ github.ref }}${{ !(github.event_name == 'workflow_dispatch' ||
+    (github.event.action == 'labeled' && github.event.label.name == 'store-screenshots') ||
+    (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'store-screenshots')))
+    && format('-skip-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 permissions:

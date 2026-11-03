@@ -26,9 +26,12 @@
 # when all of them pass do they replace the PNGs in fastlane/screenshots/
 # en-US, so a failed run never leaves a half-updated listing.
 #
-# Raw output (logs, result bundles, every attachment) goes to
-# Scripts/output/screenshots/<UTC-timestamp>-<pid>/. Takes the same simulator lock
-# as acceptance-sim.sh, and shuts down only the simulators it booted.
+# The build carries the listing's version (BURLY_APP_VERSION, default 1.0.0,
+# as the Fastfile's listing lane uses), so Settings never shows the
+# project's development version. Raw output (logs, result bundles, every
+# attachment) goes to Scripts/output/screenshots/<UTC-timestamp>-<pid>/; the
+# newest 5 run directories are kept. Takes the same simulator lock as
+# acceptance-sim.sh, and shuts down only the simulators it booted.
 #
 # Usage: Scripts/capture-store-screenshots.sh
 # (Agents on the build Mac run it through the build-slot wrapper.)
@@ -38,7 +41,9 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$REPO_ROOT/Burly.xcodeproj"
 DERIVED_DATA="$REPO_ROOT/DerivedData"
+OUTPUT_DIR="$REPO_ROOT/Scripts/output/screenshots"
 RUN_DIR=""
+RUNS_TO_KEEP=5
 STORE_DIR="$REPO_ROOT/fastlane/screenshots/en-US"
 LOCK_DIR="${BURLY_LOCK_DIR:-${TMPDIR:-/tmp}/burly-sim.lock}"
 
@@ -47,6 +52,8 @@ PHONE_TYPE_NAME="iPhone 17 Pro Max"
 PHONE_SIZE="1320x2868"
 WATCH_NAME="Burly Watch S11 46mm"
 WATCH_SIZE="416x496"
+APP_VERSION="${BURLY_APP_VERSION:-1.0.0}"
+BUILD_NUMBER=1
 
 # The store set, in store order. Each name is an attachment name in its
 # StoreScreenshotsUITests; any other attachment stays in the run directory.
@@ -85,7 +92,7 @@ fail() { echo "store-screenshots: FATAL: $*" >&2; exit 1; }
 # an owner file, is reclaimed, by the same rule acceptance-sim.sh uses.
 lock_is_stale() {
   local owner_pid="" owner_ts="" since
-  read -r owner_pid owner_ts < "$LOCK_DIR/owner" 2> /dev/null
+  [[ -r "$LOCK_DIR/owner" ]] && read -r owner_pid owner_ts < "$LOCK_DIR/owner"
   if [[ "$owner_pid" =~ ^[0-9]+$ && "$owner_ts" =~ ^[0-9]+$ ]]; then
     kill -0 "$owner_pid" 2> /dev/null && return 1
     since=$owner_ts
@@ -95,11 +102,14 @@ lock_is_stale() {
   (( $(date +%s) - since >= 30 * 60 ))
 }
 for _ in $(seq 1 270); do
-  if mkdir "$LOCK_DIR" 2> /dev/null; then
+  if mkdir_err="$(mkdir "$LOCK_DIR" 2>&1)"; then
     LOCK_OWNED=1
     echo "$$ $(date +%s)" > "$LOCK_DIR/owner"
     break
   fi
+  # Only an existing lock is worth waiting for; a missing parent or a
+  # permission error never clears by itself.
+  [[ "$mkdir_err" == *"File exists"* ]] || fail "could not create the simulator lock $LOCK_DIR: $mkdir_err"
   if lock_is_stale; then
     log "reclaiming the stale simulator lock $LOCK_DIR"
     rm -f "$LOCK_DIR/owner"
@@ -110,9 +120,18 @@ for _ in $(seq 1 270); do
 done
 [[ $LOCK_OWNED == 1 ]] || fail "simulator lock $LOCK_DIR still held after 45 minutes"
 # After the lock, with the pid, so two runs never share a run directory.
-RUN_DIR="$REPO_ROOT/Scripts/output/screenshots/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+# Then keep only the newest RUNS_TO_KEEP (names sort by their UTC prefix).
+RUN_DIR="$OUTPUT_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$RUN_DIR"
 log "run directory: $RUN_DIR"
+OLD_RUNS=()
+while IFS= read -r old_run; do
+  OLD_RUNS+=("$old_run")
+done < <(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+for (( i = 0; i < ${#OLD_RUNS[@]} - RUNS_TO_KEEP; i++ )); do
+  log "pruning old run directory: ${OLD_RUNS[$i]}"
+  rm -rf "${OLD_RUNS[$i]}"
+done
 
 # ---------------------------------------------------------------------------
 # Resolve both simulators on the newest runtimes, by exact name. Prints
@@ -248,6 +267,7 @@ run_capture() {
     -derivedDataPath "$DERIVED_DATA" \
     -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
     -resultBundlePath "$bundle" -only-testing:"$test" \
+    MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     > "$RUN_DIR/$name.log" 2>&1 || rc=$?
   grep -E "error:|Test Case .*(passed|failed|skipped)|\*\* TEST" "$RUN_DIR/$name.log" | tail -20 >&2
 
