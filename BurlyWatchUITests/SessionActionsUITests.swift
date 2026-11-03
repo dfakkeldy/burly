@@ -81,9 +81,11 @@ final class SessionActionsUITests: XCTestCase {
     }
 
     /// Skip goes to the NEXT visible exercise, not back to the first. The
-    /// pager is paged with the Digital Crown, which is what drives a
-    /// `.verticalPage` `TabView` on the watch; swipes are routed to the
-    /// page's own scroll view instead.
+    /// middle page is reached with Move up rather than by paging: on the
+    /// logging screen the Digital Crown drives the focused reps control
+    /// (`RepsControlView` is focusable), so `rotateDigitalCrown` changes
+    /// reps instead of turning the page, which an earlier run of this test
+    /// showed.
     func testSkippingMiddleExerciseAdvancesAndKeepsRenderedOrdinalsDense() throws {
         let app = launchLegDay()
         let exerciseName = app.staticTexts["exercisePage.name"]
@@ -97,10 +99,17 @@ final class SessionActionsUITests: XCTestCase {
             "Expected the second add to render as the third page, got \(String(describing: exerciseName.value))"
         )
 
+        // Back Squat, Pull-Up, Barbell Bench Press: Pull-Up is now the
+        // middle page, and still the current one.
+        openActions(in: app)
+        let moveUp = app.buttons["sessionActions.moveUp"]
+        XCTAssertTrue(scrollUntilExists(app, moveUp))
+        moveUp.tap()
         XCTAssertTrue(
-            crownPage(in: app) { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
-            "Expected the crown to page back to the middle exercise"
+            waitFor { exerciseName.exists && (exerciseName.value as? String) == "Exercise 2 of 3" },
+            "Expected Pull-Up on the middle page, got \(String(describing: exerciseName.value))"
         )
+        XCTAssertEqual(exerciseName.label, "Pull-Up")
 
         openActions(in: app)
         let skip = app.buttons["sessionActions.skipExercise"]
@@ -108,7 +117,7 @@ final class SessionActionsUITests: XCTestCase {
         skip.tap()
 
         XCTAssertTrue(
-            waitFor { exerciseName.exists && exerciseName.label == "Pull-Up" },
+            waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
             "Skipping the middle exercise must advance to the next visible exercise, not restart the workout"
         )
         XCTAssertTrue(
@@ -257,19 +266,6 @@ final class SessionActionsUITests: XCTestCase {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
         start.press(forDuration: 0.05, thenDragTo: end)
-    }
-
-    /// Pages the vertical pager with the Digital Crown until `condition`
-    /// holds. Which crown direction moves to the previous page is not
-    /// documented for XCUITest, so this tries one way, then the other; a
-    /// turn past either end of the pager is a no-op.
-    private func crownPage(in app: XCUIApplication, until condition: () -> Bool) -> Bool {
-        for delta in [0.5, 0.5, -0.5, -0.5, -0.5, -0.5] {
-            if condition() { return true }
-            XCUIDevice.shared.rotateDigitalCrown(delta: delta)
-            if waitFor(timeout: 2, condition) { return true }
-        }
-        return condition()
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {

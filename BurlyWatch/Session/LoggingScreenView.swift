@@ -25,8 +25,22 @@ import BurlyPersistence
 /// already-presented `NavigationStack` directly (see that file's doc) --
 /// so only the one remaining chained presentation (discard) is left here,
 /// and it has been reliably green.
+///
+/// The edits that change which pages the pager shows (skip, move, add,
+/// swap) wait here for `onDismiss` too, so the pager's data changes only
+/// while it is on screen. Applied while the full-screen sheet still covered
+/// it, a skip of the only exercise left the old page drawn and the
+/// empty-session state never appeared (reproduced by
+/// `SessionActionsUITests`; the unmerged m2-04 branch saw the same with
+/// reorder and add, late rather than never).
 enum PendingSessionAction: Equatable {
     case requestDiscard
+    case skipCurrent
+    case moveCurrentUp
+    case moveCurrentDown
+    case addExercise(UUID)
+    case swap(itemID: UUID, exerciseID: UUID)
+    case addPlaceholder
 }
 
 struct LoggingScreenView: View {
@@ -164,7 +178,10 @@ struct LoggingScreenView: View {
         // to change). `ExercisePickerView` no longer wraps itself in a
         // `NavigationStack` (it's shared with the pushed-destination use
         // above), so this call site supplies one.
-        .sheet(isPresented: isShowingPickerBinding) {
+        //
+        // Like the actions sheet, the choice is applied from `onDismiss`
+        // (`PendingSessionAction`'s doc), once the pager is back on screen.
+        .sheet(isPresented: isShowingPickerBinding, onDismiss: applyPendingAction) {
             if let context = viewModel.pickerContext {
                 NavigationStack {
                     ExercisePickerView(
@@ -173,12 +190,16 @@ struct LoggingScreenView: View {
                         onSelect: { exerciseID in
                             switch context {
                             case .swap(let itemID):
-                                viewModel.swap(currentItem: itemID, to: exerciseID)
+                                pendingAction = .swap(itemID: itemID, exerciseID: exerciseID)
                             case .add:
-                                viewModel.addExercise(exerciseID)
+                                pendingAction = .addExercise(exerciseID)
                             }
+                            viewModel.pickerContext = nil
                         },
-                        onAddPlaceholder: viewModel.addPlaceholderExercise,
+                        onAddPlaceholder: {
+                            pendingAction = .addPlaceholder
+                            viewModel.pickerContext = nil
+                        },
                         onCancel: { viewModel.pickerContext = nil }
                     )
                 }
@@ -218,26 +239,37 @@ struct LoggingScreenView: View {
         }
     }
 
+    /// The pager is part of this view's own body, not the content of the
+    /// 1 Hz `TimelineView` below: nothing on a page reads the timeline's
+    /// date (the rest banner has its own), and a page set built inside the
+    /// timeline's closure changes only when that closure runs again.
     @ViewBuilder
     private var loggingBody: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            Group {
-                if viewModel.items.isEmpty {
-                    emptySessionPlaceholder
-                } else {
-                    TabView(selection: viewModel.pagingSelection) {
-                        ForEach(viewModel.items) { item in
-                            ExercisePageView(viewModel: viewModel, item: item)
-                                .tag(item.id as UUID?)
-                        }
+        Group {
+            if viewModel.items.isEmpty {
+                emptySessionPlaceholder
+            } else {
+                TabView(selection: viewModel.pagingSelection) {
+                    ForEach(viewModel.items) { item in
+                        ExercisePageView(viewModel: viewModel, item: item)
+                            .tag(item.id as UUID?)
                     }
-                    .tabViewStyle(.verticalPage)
                 }
+                .tabViewStyle(.verticalPage)
+                // A skip, move or add builds a fresh pager on the new page
+                // order instead of asking the watch's page controller to
+                // reshuffle its pages in place.
+                .id(viewModel.items.map(\.id))
             }
+        }
+        .background {
             // §2 Always-On: "1 Hz TimelineView." The tick itself is the
             // side effect hook, not the render -- see `SessionViewModel
             // .tick()`'s doc.
-            .onChange(of: context.date) { _, _ in viewModel.tick() }
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Color.clear
+                    .onChange(of: context.date) { _, _ in viewModel.tick() }
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -278,6 +310,18 @@ struct LoggingScreenView: View {
         switch action {
         case .requestDiscard:
             viewModel.requestDiscard()
+        case .skipCurrent:
+            viewModel.skipCurrentExercise()
+        case .moveCurrentUp:
+            viewModel.moveCurrentUp()
+        case .moveCurrentDown:
+            viewModel.moveCurrentDown()
+        case .addExercise(let exerciseID):
+            viewModel.addExercise(exerciseID)
+        case .swap(let itemID, let exerciseID):
+            viewModel.swap(currentItem: itemID, to: exerciseID)
+        case .addPlaceholder:
+            viewModel.addPlaceholderExercise()
         }
     }
 
