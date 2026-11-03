@@ -201,11 +201,11 @@ struct ExercisePageView: View {
             // watchOS Double Tap gesture. Disabled while there is nothing
             // honest to log yet (m2-03 review finding 3): an honestly-empty
             // prefill must not be logged as an invented bodyweight×8 just
-            // because Double Tap fired. The bordered style adds its own
-            // padding, so the button still measures at least 44 pt tall.
+            // because Double Tap fired. The bordered style adds 8 pt of
+            // padding, so the button measures 44 pt tall.
             Button(action: viewModel.logCurrentSet) {
                 Text("Log set")
-                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .frame(maxWidth: .infinity, minHeight: 36)
             }
             .buttonStyle(.borderedProminent)
             .handGestureShortcut(.primaryAction)

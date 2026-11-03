@@ -33,14 +33,15 @@ struct RestTimerBanner: View {
     /// time, flanked by explicit 44 pt adjustment targets.
     ///
     /// The row's intrinsic width is kept deliberately below a 41 mm watch's
-    /// content width, not merely equal to it: 44 (−15) + 6 + 60 (ring) + 6 +
-    /// 44 (+15) = 160 pt, vs. 176 pt at the previous 8 pt spacing / 72 pt
+    /// content width, not merely equal to it: 44 (−15) + 6 + 52 (ring) + 6 +
+    /// 44 (+15) = 152 pt, vs. 176 pt at the previous 8 pt spacing / 72 pt
     /// ring. The ±15 buttons' own 44×44 hit targets (`adjustmentButton`) are
-    /// untouched -- only the decorative ring shrinks, and its 60 pt
-    /// tap-to-skip region still clears the 44 pt minimum. The row is 60 pt
-    /// tall with no padding, so on a 42 mm screen the weight and reps row,
-    /// Log set and this row all fit under the navigation bar together
-    /// (`ExercisePageView`).
+    /// untouched -- only the decorative ring shrinks, and its 52 pt
+    /// tap-to-skip region still clears the 44 pt minimum, with room inside
+    /// for the longest rest, "5:00". The row is 52 pt tall with no padding:
+    /// on the 42 mm simulator a 60 pt ring ended 0.5 pt above the bottom
+    /// edge with the weight and reps row and Log set above it
+    /// (`ExercisePageView`), and 2.5 pt below it after paging mid-rest.
     private func activeCountdown(remaining: TimeInterval) -> some View {
         HStack(spacing: 6) {
             adjustmentButton(delta: -15, title: "-15", identifier: "restTimer.decreaseButton")
@@ -56,7 +57,7 @@ struct RestTimerBanner: View {
 
                 remainingLabel(remaining: remaining)
             }
-            .frame(width: 60, height: 60)
+            .frame(width: 52, height: 52)
             .contentShape(Circle())
             .onTapGesture(perform: onSkip)
 
