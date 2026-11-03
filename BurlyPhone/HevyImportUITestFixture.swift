@@ -12,6 +12,7 @@
 // which `DEVELOPMENT_ASSET_PATHS` strips from archived builds, and is
 // excluded from Release builds by name (see the BurlyPhone target's
 // `EXCLUDED_SOURCE_FILE_NAMES`). It is invented data, not anyone's history.
+// A header-only fixture is small enough to live inline below instead.
 
 import Foundation
 
@@ -27,10 +28,23 @@ enum HevyImportUITestFixture {
         /// `HevyImportPlanTests.appUITestFixtureParsesToTheNumbersTheUITestAsserts`
         /// and asserted again by ImportUITests.
         case synthetic
+        /// A header naming both `weight_kg` and `weight_lbs`, which the
+        /// importer refuses as ambiguous. Inline: one header and one row.
+        case twoWeightColumns
 
-        var resourceName: String {
+        var resourceName: String? {
             switch self {
             case .synthetic: "HevySyntheticFixture"
+            case .twoWeightColumns: nil
+            }
+        }
+
+        var inlineCSV: String? {
+            switch self {
+            case .synthetic: nil
+            case .twoWeightColumns:
+                "title,start_time,end_time,exercise_title,set_type,weight_kg,weight_lbs,reps\n"
+                    + "\"Push Day\",\"2025-06-15 08:00:00\",\"2025-06-15 08:45:00\",\"Bench Press (Barbell)\",\"normal\",100,220,5\n"
             }
         }
     }
@@ -58,8 +72,12 @@ enum HevyImportUITestFixture {
         guard let fixture = Fixture(rawValue: raw) else {
             return .failure(FixtureError.unrecognizedFixture(raw))
         }
-        guard let url = Bundle.main.url(forResource: fixture.resourceName, withExtension: "csv") else {
-            return .failure(FixtureError.resourceMissing(fixture.resourceName))
+        if let csv = fixture.inlineCSV {
+            return .success(Data(csv.utf8))
+        }
+        let name = fixture.resourceName ?? raw
+        guard let url = Bundle.main.url(forResource: name, withExtension: "csv") else {
+            return .failure(FixtureError.resourceMissing(name))
         }
         return Result { try Data(contentsOf: url) }
     }

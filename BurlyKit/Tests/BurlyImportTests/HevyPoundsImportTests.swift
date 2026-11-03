@@ -135,7 +135,7 @@ struct HevyPoundsImportTests {
             "title,start_time,end_time,exercise_title,set_type,reps",
             #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","Bench Press (Barbell)","normal",5"#
         ])
-        #expect(throws: HevyImportError.unrecognizedHeader(missingColumns: ["weight_kg or weight_lbs"])) {
+        #expect(throws: HevyImportError.unrecognizedHeader(missingColumns: ["weight_kg (or weight_lbs)"])) {
             _ = try HevyCSVImporter.parse(csv: neither, catalog: try catalog())
         }
 
@@ -143,17 +143,22 @@ struct HevyPoundsImportTests {
             "title,start_time,end_time,exercise_title,set_type",
             #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","Bench Press (Barbell)","normal""#
         ])
-        #expect(throws: HevyImportError.unrecognizedHeader(missingColumns: ["weight_kg or weight_lbs", "reps"])) {
+        #expect(throws: HevyImportError.unrecognizedHeader(missingColumns: ["weight_kg (or weight_lbs)", "reps"])) {
             _ = try HevyCSVImporter.parse(csv: neitherAndNoReps, catalog: try catalog())
         }
     }
 
-    @Test("an empty file names the weight requirement along with the other required columns")
+    @Test("an empty file names every requirement, in the same order as a header missing them all")
     func emptyFileNamesEveryRequirement() {
-        #expect(throws: HevyImportError.unrecognizedHeader(
-            missingColumns: ["title", "start_time", "end_time", "exercise_title", "set_type", "reps", "weight_kg or weight_lbs"]
-        )) {
+        let everyRequirement = ["title", "start_time", "end_time", "exercise_title", "set_type", "weight_kg (or weight_lbs)", "reps"]
+        #expect(HevyCSVHeader(fields: []).missingRequiredColumns == everyRequirement)
+        #expect(throws: HevyImportError.unrecognizedHeader(missingColumns: everyRequirement)) {
             _ = try HevyCSVImporter.parse(csv: "", catalog: try catalog())
+        }
+        // A header row of unknown columns lacks the same columns, in the
+        // same order.
+        #expect(throws: HevyImportError.unrecognizedHeader(missingColumns: everyRequirement)) {
+            _ = try HevyCSVImporter.parse(csv: Self.csv(["date,notes"]), catalog: try catalog())
         }
     }
 
@@ -250,6 +255,69 @@ struct HevyPoundsImportTests {
             #expect(result.summary.cardioRowsSkipped == 0, "distance \(bad)")
             #expect(result.summary.malformedRows.first?.reason == .invalidDistance(bad), "distance \(bad)")
         }
+    }
+
+    /// What a row with both distance columns comes to, by its
+    /// (distance_km, distance_miles) values.
+    enum BothDistancesOutcome: Sendable {
+        case cardio
+        case imports
+        case invalidDistance(String)
+    }
+
+    @Test(
+        "with both distance columns, each value is checked and either one above zero makes the row cardio",
+        arguments: [
+            ("0", "2.0", BothDistancesOutcome.cardio),
+            ("2.0", "0", BothDistancesOutcome.cardio),
+            ("0", "0", BothDistancesOutcome.imports),
+            ("far", "2.0", BothDistancesOutcome.invalidDistance("far")),
+            ("2.0", "far", BothDistancesOutcome.invalidDistance("far"))
+        ] as [(String, String, BothDistancesOutcome)]
+    )
+    func bothDistanceColumns(kilometers: String, miles: String, outcome: BothDistancesOutcome) throws {
+        let csv = Self.csv([
+            "title,start_time,end_time,exercise_title,set_type,weight_kg,reps,distance_km,distance_miles",
+            #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","Bench Press (Barbell)","normal",100,5,\#(kilometers),\#(miles)"#
+        ])
+        let summary = try parse(csv).summary
+
+        switch outcome {
+        case .cardio:
+            #expect(summary.cardioRowsSkipped == 1)
+            #expect(summary.setsImported == 0)
+            #expect(summary.malformedRowCount == 0)
+        case .imports:
+            #expect(summary.cardioRowsSkipped == 0)
+            #expect(summary.setsImported == 1)
+            #expect(summary.malformedRowCount == 0)
+        case .invalidDistance(let text):
+            #expect(summary.cardioRowsSkipped == 0)
+            #expect(summary.setsImported == 0)
+            #expect(summary.malformedRows.map(\.reason) == [.invalidDistance(text)])
+        }
+        #expect(summary.unknownColumnValuesDropped == 0)
+    }
+
+    @Test(
+        "a header mixing units converts weights by the weight column's own unit; the distance column's unit doesn't matter",
+        arguments: [
+            ("weight_lbs", "distance_km", Weight(pounds: 225).kg),
+            ("weight_kg", "distance_miles", 225.0)
+        ] as [(String, String, Double)]
+    )
+    func mixedUnitHeader(weightColumn: String, distanceColumn: String, expectedKg: Double) throws {
+        let csv = Self.csv([
+            "title,start_time,end_time,exercise_title,set_type,\(weightColumn),reps,\(distanceColumn),duration_seconds",
+            #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","Bench Press (Barbell)","normal",225,5,,"#,
+            #""Push Day","2025-06-15 08:00:00","2025-06-15 08:45:00","Running","normal",,,3.1,900"#
+        ])
+        let result = try parse(csv)
+
+        #expect(allSets(result).map(\.weightKg) == [expectedKg])
+        #expect(result.summary.cardioRowsSkipped == 1)
+        #expect(result.summary.malformedRowCount == 0)
+        #expect(result.summary.unknownColumnValuesDropped == 0)
     }
 
     @Test("a cardio row in a pound file still has its RPE counted as dropped")

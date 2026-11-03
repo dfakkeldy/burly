@@ -44,6 +44,7 @@ final class ImportUITests: XCTestCase {
     private static let scenarioEmpty = "empty"
     private static let fixtureKey = "BURLY_PHONE_UI_TEST_HEVY_FIXTURE"
     private static let fixtureSynthetic = "synthetic"
+    private static let fixtureTwoWeightColumns = "twoWeightColumns"
 
     func testLargestTextImportConfirmationCompletes() throws {
         continueAfterFailure = false
@@ -196,6 +197,33 @@ final class ImportUITests: XCTestCase {
         app.tabBars.buttons["History"].tap()
         XCTAssertTrue(sessionRows.firstMatch.waitForExistence(timeout: 15))
         XCTAssertEqual(distinctIdentifiers(sessionRows), 3, "Expected the re-import to leave History unchanged")
+    }
+
+    /// A file naming both weight units read fine, so its refusal is the
+    /// header-problem screen, not "Couldn't read that file".
+    func testTwoWeightColumnsShowHeaderProblemNotReadError() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
+        app.launchEnvironment[Self.fixtureKey] = Self.fixtureTwoWeightColumns
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+        app.tabBars.buttons["Settings"].tap()
+        let importRow = element(app, "settingsTab.importRow")
+        XCTAssertTrue(importRow.waitForExistence(timeout: 10))
+        importRow.tap()
+        let choose = app.buttons["hevyImport.chooseFileButton"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 15))
+        choose.tap()
+
+        let heading = app.staticTexts["hevyImport.headerError.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 15), "Expected the header-problem screen")
+        XCTAssertEqual(heading.label, "This file has more than one weight column")
+        let message = app.staticTexts["hevyImport.headerError.message"]
+        XCTAssertTrue(message.label.contains("weight_kg, weight_lbs"), "Got: \(message.label)")
+        XCTAssertTrue(message.label.contains("nothing was imported"), "Got: \(message.label)")
+        XCTAssertFalse(app.staticTexts["hevyImport.readError.heading"].exists)
+        XCTAssertTrue(app.buttons["hevyImport.chooseAnotherButton"].exists)
     }
 
     /// Backing out of the welcome's import lands in the tab shell, and the
