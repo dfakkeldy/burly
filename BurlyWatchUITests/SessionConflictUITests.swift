@@ -266,6 +266,7 @@ final class SessionConflictUITests: XCTestCase {
         XCTAssertTrue(saving.waitForExistence(timeout: 3), "Expected progress while Finish waits on HealthKit")
         XCTAssertFalse(discardButton.isEnabled, "Discard must be disabled while Finish waits on HealthKit")
         XCTAssertFalse(finishButton.isEnabled, "Finish must not run twice")
+        XCTAssertEqual(finishButton.label, "Saving…", "The button still in view must say the Finish is saving")
         attachScreenshot(from: app, name: "BurlyWatch-sessionConflictView-finishing")
 
         // Where the back chevron sits: with it hidden, nothing happens.
@@ -308,6 +309,7 @@ final class SessionConflictUITests: XCTestCase {
         XCTAssertTrue(saving.waitForExistence(timeout: 3), "Expected progress while Finish waits on HealthKit")
         XCTAssertFalse(keepGoing.isEnabled, "Keep going must be disabled while Finish waits on HealthKit")
         XCTAssertFalse(discard.isEnabled, "Discard must be disabled while Finish waits on HealthKit")
+        XCTAssertEqual(finishButton.label, "Saving…", "The button still in view must say the Finish is saving")
         attachScreenshot(from: app, name: "BurlyWatch-summary-finishing")
 
         XCTAssertTrue(

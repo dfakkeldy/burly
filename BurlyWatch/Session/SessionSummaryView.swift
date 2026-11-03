@@ -96,7 +96,9 @@ struct SessionSummaryView: View {
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("sessionSummary.doneButton")
                 } else {
-                    Button("Finish", action: onFinish)
+                    // "Saving…" on the button itself while Finish waits: the
+                    // button is what is still in view after the tap.
+                    Button(isFinishing && saveError == nil ? "Saving…" : "Finish", action: onFinish)
                         .buttonStyle(.borderedProminent)
                         .disabled(isFinishing)
                         .accessibilityIdentifier("sessionSummary.finishButton")

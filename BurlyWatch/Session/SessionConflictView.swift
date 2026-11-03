@@ -73,7 +73,10 @@ struct SessionConflictView: View {
                         .accessibilityIdentifier("sessionConflict.error")
                 }
 
-                Button("Finish it", action: finish)
+                // The button reads "Saving…" while Finish waits: it is the
+                // part of this screen still in view after the tap, and the
+                // spinner below it can sit under the bottom edge.
+                Button(isFinishing ? "Saving…" : "Finish it", action: finish)
                     .buttonStyle(.borderedProminent)
                     .disabled(isFinishing)
                     .accessibilityIdentifier("sessionConflict.finishButton")
