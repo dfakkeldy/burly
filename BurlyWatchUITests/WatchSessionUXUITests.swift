@@ -110,10 +110,27 @@ final class WatchSessionUXUITests: XCTestCase {
             waitFor { (weightControl.value as? String)?.contains("locked") == true },
             "Expected logging to lock the weight again"
         )
+        let repsControl = anyElement(app, identifier: "repsControl")
         XCTAssertTrue(
-            anyElement(app, identifier: "repsControl").waitForExistence(timeout: 3),
+            repsControl.waitForExistence(timeout: 3),
             "Expected the reps control back once the weight locked"
         )
+
+        // Records, does not assert: what the Digital Crown turns on this
+        // screen, locked and armed, is a product call (PR 54).
+        let exerciseName = app.staticTexts["exercisePage.name"]
+        let lockedBefore = "reps \(String(describing: repsControl.value)), page \(String(describing: exerciseName.value))"
+        XCUIDevice.shared.rotateDigitalCrown(delta: 1)
+        Thread.sleep(forTimeInterval: 1)
+        let lockedAfter = "reps \(String(describing: repsControl.value)), page \(String(describing: exerciseName.value))"
+        print("[crown] locked: before \(lockedBefore); after \(lockedAfter)")
+        weightControl.press(forDuration: 0.6)
+        _ = waitFor { (weightControl.value as? String)?.contains("armed") == true }
+        let armedBefore = String(describing: weightControl.value)
+        XCUIDevice.shared.rotateDigitalCrown(delta: 1)
+        Thread.sleep(forTimeInterval: 1)
+        print("[crown] armed: weight before \(armedBefore); after \(String(describing: weightControl.value))")
+        attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-crown-armed")
     }
 
     /// §3: once a set is logged the countdown comes into view, and the
