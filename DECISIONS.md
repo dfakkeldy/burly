@@ -1,5 +1,47 @@
 <!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
+## 2026-11-03 — Watch snapshots carry the full catalog; background tasks wait for the apply
+
+#49. The snapshot now carries every exercise, archived ones included with
+their `archivedAt`. The watch already copies `archivedAt` on apply, so an
+archive or a naming-queue merge on the phone hides the exercise from the
+watch picker. Archiving by absence was rejected: a placeholder the watch
+created and the phone has not ingested yet is in no snapshot and must
+survive it. The phone cannot delete an exercise, so every exercise the
+watch was sent appears in every later snapshot. Archived routines are
+still left out.
+
+"Waiting for iPhone" now means no snapshot has been applied, not "no
+routines". After the first snapshot the watch shows its routine list even
+when it is empty, with Empty session. The newer-schema "Update Burly"
+notice is kept in `UserDefaults` (`burly.sync.heldSchemaVersion`) and
+shown on the routine list too, because the only code between the sync
+host and the list is `ContentView`, which another package owns. Only a
+readable snapshot newer than the held one clears it, or the watch app
+updating.
+
+A Watch Connectivity background task now completes only after three
+gates: WCSession is activated, `hasContentPending` is false, and
+`hasUndeliveredContent` is false (content events counted until the sink
+has handled them: received and held envelopes, plus activation
+completion). WCSession clears `hasContentPending` once the delegate
+received the content, not once the app wrote it. `SystemWCSessionTransport`
+hops to the main dispatch queue in callback order, so the adapter counts
+the content before it sees the cleared flag. That WCSession ordering is
+an assumption from the documented background-task pattern; it has not
+been observed on hardware. On activation, the adapter re-reads
+`WCSession.receivedApplicationContext` and delivers it as a digest
+before it reports activation, so a digest lost to suspension is applied
+and its acks prune the outbox before the outbox retry runs.
+
+An unrecoverable phone sync journal is reset from `PhoneSyncHost` at the
+first foreground (`sceneDidBecomeActive()`), if it is still unrecoverable
+then, and never at launch: a read blocked by data protection before first
+unlock looks the same at launch. The reset's known cost: if the journal
+had already sent snapshots, the watch ignores the restarted snapshot
+versions until they pass the last one it applied. The wire protocol still
+has no epoch.
+
 ## 2026-10-31 — The store text describes Apple Health again; acceptance compiles Release
 
 #13 put HealthKit on the watch, and #39, merged just before it, had
@@ -101,9 +143,9 @@ built at launch from its app delegate (Watch Connectivity can wake either app
 with no view on screen): `PhoneSyncHost` binds `PhoneSyncCoordinator` to the
 WCSession adapter, `WatchSyncHost` does the same for `WatchSyncCoordinator`,
 and the watch delegate hands every Watch Connectivity background task to the
-adapter's `hasContentPending` completion rule. UI-test scenario launches get
-their seeded store and no sync, so the standalone UI suites never touch
-WCSession.
+adapter's `hasContentPending` completion rule. (Superseded by 2026-11-03.)
+UI-test scenario launches get their seeded store and no sync, so the
+standalone UI suites never touch WCSession.
 
 Snapshot schema 2 adds the phone's display unit and global rest default. A
 schema-1 body decodes as kilograms and 90 s, the only values a schema-1 phone
