@@ -250,6 +250,13 @@ final class SessionViewModel {
     /// from.
     var canLogCurrentSet: Bool { currentItemID != nil && currentReps != nil }
 
+    /// One-based position of `itemID` among the pages the pager shows, or
+    /// `nil` once it is skipped (a `TabView` can still be drawing the page
+    /// it is about to remove, so callers treat `nil` as "no ordinal").
+    func pageOrdinal(for itemID: UUID) -> Int? {
+        engine.session.unskippedItemIndex(of: itemID).map { $0 + 1 }
+    }
+
     func plannedSetCount(for itemID: UUID) -> Int { engine.session.plannedSetCount(itemID) }
     func loggedSetCount(for itemID: UUID) -> Int { engine.session.loggedSetCount(itemID) }
     func exerciseID(for itemID: UUID) -> UUID? { engine.session.item(itemID)?.exerciseID }
@@ -510,10 +517,13 @@ final class SessionViewModel {
         persist()
     }
 
+    /// Routes to the next visible exercise, not back to the first one --
+    /// skipping B in A/B/C lands on C, never on an A the lifter may
+    /// already have finished (`ActiveSession.nextUnskippedItemID(after:)`).
     func skipCurrentExercise() {
         guard let id = currentItemID else { return }
         try? engine.skipExercise(itemID: id)
-        applyCurrentItem(engine.session.unskippedItems.first?.id)
+        applyCurrentItem(engine.session.nextUnskippedItemID(after: id))
     }
 
     func moveCurrentUp() {
