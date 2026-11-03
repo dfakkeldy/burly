@@ -28,6 +28,12 @@ public final class SessionWorkoutRecorder {
     /// The Burly session the live workout belongs to, if one is running.
     public private(set) var liveSessionID: UUID?
 
+    /// Sessions whose live workout could not start because another app's
+    /// workout was starting (§4). A takeover of a running workout needs no
+    /// entry here: the controller itself holds `.failed(.anotherWorkoutSessionStarted)`
+    /// until Finish or Discard cleans it up.
+    private var supersededSessionIDs: Set<UUID> = []
+
     public init(
         store: any WorkoutHealthStore,
         controller: WorkoutController,
@@ -55,11 +61,24 @@ public final class SessionWorkoutRecorder {
             }
             guard store.authorizationStatus == .authorized else { return }
             await discardLiveWorkout()
-            guard case .finished(.success) = await bounded({ [controller] in
-                try await controller.start(at: date)
-            }) else { return }
-            liveSessionID = sessionID
+            switch await bounded({ [controller] in try await controller.start(at: date) }) {
+            case .finished(.success):
+                liveSessionID = sessionID
+            case let .finished(.failure(error)) where Self.isAnotherWorkout(error):
+                supersededSessionIDs.insert(sessionID)
+            case .finished(.failure), .timedOut:
+                break
+            }
         }
+    }
+
+    /// §4: true once another app's workout has taken over this session's
+    /// live workout, or kept it from starting. The logging screen polls
+    /// this to offer "another workout is running" with finish-or-discard;
+    /// `sessionDidFinish` then saves no workout for the session.
+    public func anotherWorkoutTookOver(sessionID: UUID) -> Bool {
+        if supersededSessionIDs.contains(sessionID) { return true }
+        return liveSessionID == sessionID && controller.lifecycle == .failed(.anotherWorkoutSessionStarted)
     }
 
     /// Saves the session's workout. A live workout for this session runs
@@ -67,6 +86,10 @@ public final class SessionWorkoutRecorder {
     /// duration-only workout is saved unless one is already linked
     /// (recovery matrix row 2, and the guard against a second write after a
     /// crash between the HealthKit save and the store save).
+    ///
+    /// When another app's workout took over (§4), nothing is saved: that
+    /// app has its own workout for the same time, and a second one from
+    /// Burly, live or duration-only, would overlap it in Health.
     public func sessionDidFinish(
         sessionID: UUID,
         startedAt: Date,
@@ -75,22 +98,33 @@ public final class SessionWorkoutRecorder {
         await enqueue { [self] in
             let metadata = WorkoutMetadata.linking(sessionID: sessionID)
             if liveSessionID == sessionID {
+                if controller.lifecycle == .failed(.anotherWorkoutSessionStarted) {
+                    await discardLiveWorkout()
+                    return .supersededByAnotherWorkout
+                }
                 switch await bounded({ [controller] in
                     try await controller.finish(at: endedAt, metadata: metadata)
                 }) {
                 case let .finished(.success(workoutID)):
                     liveSessionID = nil
                     return .live(workoutID: workoutID)
-                case .finished(.failure):
+                case let .finished(.failure(error)):
                     // Clean up what is left, then fall through to the
                     // duration-only save; the linked-workout check below
-                    // keeps a half-finished save from being doubled.
+                    // keeps a half-finished save from being doubled. A
+                    // takeover during the end sequence saves nothing.
+                    let tookOver = Self.isAnotherWorkout(error)
+                        || controller.lifecycle == .failed(.anotherWorkoutSessionStarted)
                     await discardLiveWorkout()
+                    if tookOver { return .supersededByAnotherWorkout }
                 case .timedOut:
                     // The end sequence may still complete on its own, so a
                     // second save here could duplicate it.
                     return .notSaved
                 }
+            }
+            if supersededSessionIDs.remove(sessionID) != nil {
+                return .supersededByAnotherWorkout
             }
 
             guard store.authorizationStatus == .authorized else { return .notSaved }
@@ -115,6 +149,7 @@ public final class SessionWorkoutRecorder {
     @discardableResult
     public func sessionDidDiscard(sessionID: UUID) -> Task<Void, Never> {
         enqueue { [self] in
+            supersededSessionIDs.remove(sessionID)
             guard liveSessionID == sessionID else { return }
             await discardLiveWorkout()
         }
@@ -146,6 +181,10 @@ public final class SessionWorkoutRecorder {
     }
 
     // MARK: - Internals
+
+    private static func isAnotherWorkout(_ error: any Error) -> Bool {
+        (error as? WorkoutControllerError) == .anotherWorkoutSessionStarted
+    }
 
     /// Discards whatever live workout the controller owns, bounded.
     private func discardLiveWorkout() async {

@@ -154,6 +154,61 @@ struct SessionWorkoutRecorderTests {
         #expect(recording == .retrospective(workoutID: rig.store.savedWorkoutID))
     }
 
+    @Test("another app's workout taking over is reported, and Finish saves no overlapping workout")
+    func takeoverSavesNothing() async {
+        let rig = Rig(status: .authorized)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+        rig.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: UUID()))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(recording.workoutID == nil)
+        #expect(rig.log.calls.contains(.discardWorkout))
+        #expect(!rig.log.calls.contains { if case .finishWorkout = $0 { true } else { false } })
+        #expect(rig.store.durationOnlySaves.isEmpty)
+        #expect(rig.recorder.liveSessionID == nil)
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+    }
+
+    @Test("a live start refused because another workout started saves no duration-only workout")
+    func startRefusedByAnotherWorkoutSavesNothing() async {
+        let rig = Rig(status: .authorized, factoryFailure: .anotherWorkoutSessionStarted)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(rig.store.durationOnlySaves.isEmpty)
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+    }
+
+    @Test("a session failure for any other reason still falls back to the duration-only workout")
+    func otherSessionFailureStillFallsBack() async {
+        let rig = Rig(status: .authorized)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        rig.resources.session.stateHandler?(.failed(.operationFailed("sensor")))
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording != .supersededByAnotherWorkout)
+        #expect(recording != .notSaved)
+    }
+
     @Test("a stuck end sequence times out without a second save")
     func stuckFinishTimesOut() async {
         let rig = Rig(status: .authorized, sleep: { _ in await Task.yield() }, finishGate: Gate())
