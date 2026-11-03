@@ -61,29 +61,41 @@ struct ExercisePageView: View {
             }
             // The same for a rest already running when this page becomes
             // the current one (paging during a rest) or first appears
-            // (Resume mid-rest).
+            // (Resume mid-rest). These wait for the pager to settle: run
+            // while its page turn was still moving, the scroll stopped
+            // short (17 of 42 pt on the 46 mm simulator), so it is tried
+            // again a moment later; a second scroll to the same place does
+            // nothing.
             .onChange(of: isCurrent) { _, nowCurrent in
                 guard nowCurrent, viewModel.isRestRunning else { return }
-                revealRest(proxy)
+                revealRest(proxy, after: Self.pageSettleDelays)
             }
             .onAppear {
                 guard isCurrent, viewModel.isRestRunning else { return }
-                revealRest(proxy)
+                revealRest(proxy, after: Self.pageSettleDelays)
             }
         }
     }
+
+    private static let pageSettleDelays: [Duration] = [.milliseconds(450), .milliseconds(700)]
 
     /// Scrolls the controls row to the top of the visible area, just under
     /// the navigation bar: the header goes out of view, and weight and reps,
     /// Log set and the countdown fill the screen. Anchoring the banner's
     /// bottom instead put the weight and reps row under the clock and the
     /// ellipsis button, so the top of reps + opened the actions sheet.
-    /// Deferred one turn so a page that has only just become current has
-    /// laid out its controls.
-    private func revealRest(_ proxy: ScrollViewProxy) {
+    /// Always deferred at least one turn, so controls that have only just
+    /// been added are laid out first.
+    private func revealRest(_ proxy: ScrollViewProxy, after delays: [Duration] = [.zero]) {
         Task { @MainActor in
-            withAnimation {
-                proxy.scrollTo(Self.controlsRowID, anchor: .top)
+            for delay in delays {
+                if delay > .zero {
+                    try? await Task.sleep(for: delay)
+                }
+                guard isCurrent, viewModel.isRestRunning else { return }
+                withAnimation {
+                    proxy.scrollTo(Self.controlsRowID, anchor: .top)
+                }
             }
         }
     }

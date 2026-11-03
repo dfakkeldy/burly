@@ -95,7 +95,8 @@ final class WatchSessionUXUITests: XCTestCase {
                 "Expected the \(name) fully on screen while armed, got \(element.frame) in \(screen)"
             )
         }
-        XCTAssertEqual(logButton.frame.minY, entryLogFrame.minY, accuracy: 1, "Arming must not move Log set")
+        // A point or so of play: the weight number rescales in its column.
+        XCTAssertEqual(logButton.frame.minY, entryLogFrame.minY, accuracy: 2, "Arming must not move Log set")
         recordFrames(elements, in: screen, label: "armed")
         attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-armed")
 
