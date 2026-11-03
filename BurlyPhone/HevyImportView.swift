@@ -190,8 +190,8 @@ private struct HevyImportIntroView: View {
                 IntroPoint(
                     systemImage: "minus.circle",
                     title: "What's left out",
-                    message: "Cardio, RPE, supersets, exercise notes, and failure or drop-set markers "
-                        + "(those sets come in as normal sets). The preview counts each one."
+                    message: "Timed or distance sets (cardio, planks, hangs, carries), RPE, supersets, exercise notes, "
+                        + "and failure or drop-set markers (those sets come in as normal sets). The preview counts each one."
                 )
                 IntroPoint(
                     systemImage: "heart.text.square",
@@ -451,9 +451,9 @@ private struct HevyImportDropReport: View {
     var body: some View {
         Section {
             CountRow(
-                title: "Cardio rows", systemImage: "figure.run",
+                title: "Timed or distance rows", systemImage: "figure.run",
                 count: summary.cardioRowsSkipped, identifier: "\(identifierPrefix).drop.cardio",
-                detail: "Apple Workout already tracks cardio."
+                detail: "Cardio, planks, hangs and carries. Burly logs sets by weight and reps, and Apple Workout tracks cardio."
             )
             CountRow(
                 title: "RPE values", systemImage: "gauge.with.dots.needle.33percent",
