@@ -149,10 +149,11 @@ struct HevyImportView: View {
     }
 
     /// Hevy writes one weight column, in the account's unit, so a file with
-    /// two has been edited or merged.
+    /// two (both units, or one repeated) has been edited or merged.
     private static let ambiguousWeightColumnsMessage =
-        "Burly found more than one weight column (weight_kg, weight_lbs), so it can't tell which weights are the real ones, "
-        + "and nothing was imported. Export your workouts from Hevy again, without editing the file, and choose that file."
+        "Burly can't tell which of them holds the real weights, so nothing was imported. "
+        + "A Hevy export has just one, weight_kg or weight_lbs. "
+        + "Export your workouts from Hevy again, without editing the file, and choose that file."
 
     /// The picker, or — in DEBUG builds launched by a UI test — the bundled
     /// synthetic export (the Files picker is not drivable by XCUITest).

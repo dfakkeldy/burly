@@ -220,7 +220,7 @@ final class ImportUITests: XCTestCase {
         XCTAssertTrue(heading.waitForExistence(timeout: 15), "Expected the header-problem screen")
         XCTAssertEqual(heading.label, "This file has more than one weight column")
         let message = app.staticTexts["hevyImport.headerError.message"]
-        XCTAssertTrue(message.label.contains("weight_kg, weight_lbs"), "Got: \(message.label)")
+        XCTAssertTrue(message.label.contains("weight_kg or weight_lbs"), "Got: \(message.label)")
         XCTAssertTrue(message.label.contains("nothing was imported"), "Got: \(message.label)")
         XCTAssertFalse(app.staticTexts["hevyImport.readError.heading"].exists)
         XCTAssertTrue(app.buttons["hevyImport.chooseAnotherButton"].exists)
