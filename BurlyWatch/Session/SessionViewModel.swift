@@ -102,12 +102,6 @@ final class SessionViewModel {
     private(set) var isShowingAnotherWorkout = false
     private var didNoteAnotherWorkout = false
 
-    /// True between the two steps of skipping the last visible exercise
-    /// (`skipCurrentExercise()`): the logging screen already shows the
-    /// empty-session state while the skip itself waits in `pendingLastSkip`.
-    private(set) var isClearingLastPage = false
-    private var pendingLastSkip: UUID?
-
     /// What happened in HealthKit when this session finished; `nil` until
     /// then, and always `nil` without a recorder.
     private(set) var workoutRecording: WorkoutRecording?
@@ -620,34 +614,10 @@ final class SessionViewModel {
     /// Routes to the next visible exercise, not back to the first one --
     /// skipping B in A/B/C lands on C, never on an A the lifter may
     /// already have finished (`ActiveSession.nextUnskippedItemID(after:)`).
-    ///
-    /// Skipping the last visible exercise goes in two steps: first
-    /// `isClearingLastPage` takes the pager off screen with its pages and
-    /// selection untouched, then the empty-session screen's `onAppear`
-    /// calls `finishClearingLastPage()` to apply the skip. Done in one step,
-    /// the watch's vertical-page `TabView` lost its only page and its
-    /// selection in the same update that removed it, and the screen kept
-    /// drawing the skipped page (`SessionActionsUITests`; the m2-04 branch
-    /// saw the same).
     func skipCurrentExercise() {
         guard let id = currentItemID else { return }
-        if engine.session.unskippedItems.map(\.id) == [id] {
-            pendingLastSkip = id
-            isClearingLastPage = true
-            return
-        }
         try? engine.skipExercise(itemID: id)
         applyCurrentItem(engine.session.nextUnskippedItemID(after: id))
-    }
-
-    /// The second step of skipping the last visible exercise; a no-op
-    /// unless one is pending.
-    func finishClearingLastPage() {
-        guard let id = pendingLastSkip else { return }
-        pendingLastSkip = nil
-        try? engine.skipExercise(itemID: id)
-        applyCurrentItem(engine.session.nextUnskippedItemID(after: id))
-        isClearingLastPage = false
     }
 
     func moveCurrentUp() {

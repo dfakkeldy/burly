@@ -33,7 +33,6 @@ struct LoggingScreenView: View {
     @State private var viewModel: SessionViewModel
     @State private var isShowingActions = false
     @State private var pendingAction: PendingSessionAction?
-    @State private var tickScheduleStart = Date.now
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @Environment(\.scenePhase) private var scenePhase
@@ -124,9 +123,6 @@ struct LoggingScreenView: View {
                     destructiveTitle: "Discard",
                     onDestructive: viewModel.discardAfterAnotherWorkout
                 )
-            } else if viewModel.items.isEmpty || viewModel.isClearingLastPage {
-                emptySessionScreen
-                    .onAppear { viewModel.finishClearingLastPage() }
             } else {
                 loggingBody
             }
@@ -222,54 +218,37 @@ struct LoggingScreenView: View {
         }
     }
 
-    /// The pager. Its empty state is not a branch in here: see `body`.
     @ViewBuilder
     private var loggingBody: some View {
-        ticking {
-            TabView(selection: viewModel.pagingSelection) {
-                ForEach(viewModel.items) { item in
-                    ExercisePageView(viewModel: viewModel, item: item)
-                        .tag(item.id as UUID?)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Group {
+                if viewModel.items.isEmpty {
+                    emptySessionPlaceholder
+                } else {
+                    TabView(selection: viewModel.pagingSelection) {
+                        ForEach(viewModel.items) { item in
+                            ExercisePageView(viewModel: viewModel, item: item)
+                                .tag(item.id as UUID?)
+                        }
+                    }
+                    .tabViewStyle(.verticalPage)
                 }
             }
-            .tabViewStyle(.verticalPage)
+            // §2 Always-On: "1 Hz TimelineView." The tick itself is the
+            // side effect hook, not the render -- see `SessionViewModel
+            // .tick()`'s doc.
+            .onChange(of: context.date) { _, _ in viewModel.tick() }
         }
-        .toolbar { actionsToolbar }
-    }
-
-    /// No exercises left to page through (an empty session, or every one
-    /// skipped). A sibling of the pager in `body`'s top-level switch, like
-    /// the summary. Skipping the last page reaches it in two steps
-    /// (`SessionViewModel.skipCurrentExercise()`'s doc): the pager leaves
-    /// with its pages untouched, the way it does for the summary, which has
-    /// always redrawn, and the skip lands once this screen is up.
-    private var emptySessionScreen: some View {
-        ticking { emptySessionPlaceholder }
-            .toolbar { actionsToolbar }
-    }
-
-    /// §2 Always-On: "1 Hz TimelineView." The tick itself is the side
-    /// effect hook, not the render -- see `SessionViewModel.tick()`'s doc.
-    /// The schedule's start is fixed: `body` reads the pager's items, so it
-    /// runs again on every tick, and a schedule starting `.now` each time
-    /// would hand the timeline a new date at once, tick again, and spin.
-    private func ticking<Content: View>(@ViewBuilder _ content: @escaping () -> Content) -> some View {
-        TimelineView(.periodic(from: tickScheduleStart, by: 1)) { context in
-            content()
-                .onChange(of: context.date) { _, _ in viewModel.tick() }
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var actionsToolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                isShowingActions = true
-            } label: {
-                Image(systemName: "ellipsis.circle")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isShowingActions = true
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityIdentifier("ellipsisMenu")
+                .accessibilityLabel("Workout actions")
             }
-            .accessibilityIdentifier("ellipsisMenu")
-            .accessibilityLabel("Workout actions")
         }
     }
 
