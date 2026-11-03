@@ -139,9 +139,27 @@ jobs:
       # re-derive it later.
       - name: Extract what's-new from tag annotation
         id: whats-new
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          Scripts/release-notes.sh "${{ steps.version.outputs.tag }}" | tee "$RUNNER_TEMP/whats-new.txt"
+          # actions/checkout leaves refs/tags/$TAG as a LIGHTWEIGHT ref: it
+          # fetches all tags, sees that the ref resolves to the tag object
+          # rather than GITHUB_SHA, and force-fetches "+<sha>:refs/tags/<tag>"
+          # over it. release-notes.sh then rightly refuses to read a commit
+          # message and prints its placeholder. Free Lunch's first real
+          # upload (fl-m0, 2026-11-02) showed this with the same checkout
+          # settings as above. So fetch the tag object back, and use it only
+          # if it still points at the commit this run built (the tag may
+          # have moved since). Missing notes must not block an upload, so
+          # any failure here warns and writes a one-line note instead.
+          if git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG" \
+            && [[ "$(git rev-parse "refs/tags/$TAG^{commit}")" == "$GITHUB_SHA" ]]; then
+            Scripts/release-notes.sh "$TAG" | tee "$RUNNER_TEMP/whats-new.txt"
+          else
+            echo "::warning::Could not restore the annotated tag $TAG at $GITHUB_SHA; what's-new not extracted."
+            echo "No release notes extracted ($TAG could not be re-fetched at the commit this run built)." | tee "$RUNNER_TEMP/whats-new.txt"
+          fi
           {
             echo "## What's new (from tag annotation)"
             echo '```'
