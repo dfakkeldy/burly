@@ -1,0 +1,287 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import XCTest
+
+/// §2's mid-session ellipsis menu: add/remove set, skip, move up/down and
+/// the add-exercise picker. Ported from the unmerged m2-04 branch, whose
+/// runs saw the pager keep drawing the old pages after a skip, a reorder or
+/// an add. Every test here therefore asserts the screen reached after each
+/// mutation -- the page's name and its "Exercise N of M" value -- not just
+/// that an action row was tappable. Accessibility text is a snapshot of the
+/// last render, so a stale value here means the screen did not redraw.
+final class SessionActionsUITests: XCTestCase {
+    private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
+
+    func testAddAndRemoveEmptySetUpdateCounterAndRespectAvailability() throws {
+        let app = launchLegDay()
+        let setCounter = app.staticTexts["exercisePage.setCounter"]
+        XCTAssertTrue(waitFor { setCounter.exists && setCounter.label == "Set 1 of 3" })
+
+        openActions(in: app)
+        let addSet = app.buttons["sessionActions.addSet"]
+        XCTAssertTrue(scrollUntilExists(app, addSet))
+        XCTAssertTrue(addSet.isEnabled, "A current exercise should allow adding a set")
+        addSet.tap()
+        XCTAssertTrue(waitFor { setCounter.exists && setCounter.label == "Set 1 of 4" })
+
+        openActions(in: app)
+        let removeEmptySet = app.buttons["sessionActions.removeEmptySet"]
+        XCTAssertTrue(scrollUntilExists(app, removeEmptySet))
+        XCTAssertTrue(removeEmptySet.isEnabled, "An unlogged fourth slot should be removable")
+        removeEmptySet.tap()
+        XCTAssertTrue(waitFor { setCounter.exists && setCounter.label == "Set 1 of 3" })
+
+        let logSet = app.buttons["logSetButton"]
+        for expectedCounter in ["Set 2 of 3", "Set 3 of 3", "All 3 sets logged"] {
+            XCTAssertTrue(logSet.waitForExistence(timeout: 5))
+            logSet.tap()
+            XCTAssertTrue(
+                waitFor { setCounter.exists && setCounter.label == expectedCounter },
+                "Expected '\(expectedCounter)', got '\(setCounter.label)'"
+            )
+        }
+
+        openActions(in: app)
+        XCTAssertTrue(scrollUntilExists(app, removeEmptySet))
+        XCTAssertFalse(
+            removeEmptySet.isEnabled,
+            "Remove empty set must be disabled when every slot holds a logged set"
+        )
+    }
+
+    func testSkipReturnsToEmptySessionAndDisablesItemActionsWithoutCurrentItem() throws {
+        let app = launchLegDay()
+
+        openActions(in: app)
+        let skip = app.buttons["sessionActions.skipExercise"]
+        XCTAssertTrue(scrollUntilExists(app, skip))
+        XCTAssertTrue(skip.isEnabled)
+        skip.tap()
+
+        let emptySessionAdd = app.buttons["emptySession.addExercise"]
+        XCTAssertTrue(
+            emptySessionAdd.waitForExistence(timeout: 5),
+            "Skipping Leg Day's only exercise should render the empty-session state"
+        )
+        XCTAssertFalse(app.staticTexts["exercisePage.name"].exists, "The skipped page must be gone")
+
+        openActions(in: app)
+        let addSet = app.buttons["sessionActions.addSet"]
+        let removeEmptySet = app.buttons["sessionActions.removeEmptySet"]
+        let skippedAction = app.buttons["sessionActions.skipExercise"]
+        XCTAssertTrue(scrollUntilExists(app, addSet))
+        XCTAssertTrue(scrollUntilExists(app, removeEmptySet))
+        XCTAssertTrue(scrollUntilExists(app, skippedAction))
+        XCTAssertFalse(addSet.isEnabled, "Add set must be disabled with no current exercise")
+        XCTAssertFalse(removeEmptySet.isEnabled, "Remove empty set must be disabled with no current exercise")
+        XCTAssertFalse(skippedAction.isEnabled, "Skip must be disabled with no current exercise")
+    }
+
+    /// Skip goes to the NEXT visible exercise, not back to the first. The
+    /// pager is paged with the Digital Crown, which is what drives a
+    /// `.verticalPage` `TabView` on the watch; swipes are routed to the
+    /// page's own scroll view instead.
+    func testSkippingMiddleExerciseAdvancesAndKeepsRenderedOrdinalsDense() throws {
+        let app = launchLegDay()
+        let exerciseName = app.staticTexts["exercisePage.name"]
+
+        addExercise(named: "Barbell Bench Press", in: app)
+        XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" })
+        addExercise(named: "Pull-Up", in: app)
+        XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Pull-Up" })
+        XCTAssertTrue(
+            waitFor { (exerciseName.value as? String) == "Exercise 3 of 3" },
+            "Expected the second add to render as the third page, got \(String(describing: exerciseName.value))"
+        )
+
+        XCTAssertTrue(
+            crownPage(in: app) { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
+            "Expected the crown to page back to the middle exercise"
+        )
+
+        openActions(in: app)
+        let skip = app.buttons["sessionActions.skipExercise"]
+        XCTAssertTrue(scrollUntilExists(app, skip))
+        skip.tap()
+
+        XCTAssertTrue(
+            waitFor { exerciseName.exists && exerciseName.label == "Pull-Up" },
+            "Skipping the middle exercise must advance to the next visible exercise, not restart the workout"
+        )
+        XCTAssertTrue(
+            waitFor { (exerciseName.value as? String) == "Exercise 2 of 2" },
+            "After skipping the middle of three, the last visible page must be Exercise 2 of 2, got \(String(describing: exerciseName.value))"
+        )
+    }
+
+    func testMoveUpChangesTheRenderedPagerOrder() throws {
+        let app = launchLegDay()
+        let exerciseName = app.staticTexts["exercisePage.name"]
+
+        addExercise(named: "Barbell Bench Press", in: app)
+        XCTAssertTrue(waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" })
+        XCTAssertTrue(
+            waitFor { (exerciseName.value as? String) == "Exercise 2 of 2" },
+            "The added exercise must render after Back Squat, got \(String(describing: exerciseName.value))"
+        )
+
+        openActions(in: app)
+        let moveUp = app.buttons["sessionActions.moveUp"]
+        XCTAssertTrue(scrollUntilExists(app, moveUp))
+        XCTAssertTrue(moveUp.isEnabled)
+        moveUp.tap()
+
+        XCTAssertTrue(
+            waitFor { exerciseName.exists && (exerciseName.value as? String) == "Exercise 1 of 2" },
+            "Move up must change the rendered page from second to first, got \(String(describing: exerciseName.value))"
+        )
+        XCTAssertTrue(waitFor { exerciseName.label == "Barbell Bench Press" })
+
+        openActions(in: app)
+        let moveDown = app.buttons["sessionActions.moveDown"]
+        XCTAssertTrue(scrollUntilExists(app, moveDown))
+        XCTAssertTrue(moveDown.isEnabled)
+        moveDown.tap()
+        XCTAssertTrue(
+            waitFor { exerciseName.exists && (exerciseName.value as? String) == "Exercise 2 of 2" },
+            "Move down must return the exercise to the second page, got \(String(describing: exerciseName.value))"
+        )
+    }
+
+    /// §2 picker order: recents first. Back Squat is both in this session
+    /// and has the seeded digest, so it heads the add picker ahead of
+    /// alphabetically earlier curated rows.
+    func testAddExercisePickerPutsRecentExerciseFirstAndPlaceholderRoutesToNewPage() throws {
+        let app = launchLegDay()
+        let exerciseName = app.staticTexts["exercisePage.name"]
+
+        openActions(in: app)
+        let addExercise = app.buttons["sessionActions.addExercise"]
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        addExercise.tap()
+
+        let firstCatalogRow = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercisePicker.row.'")
+        ).element(boundBy: 0)
+        XCTAssertTrue(firstCatalogRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitFor { firstCatalogRow.label == "Back Squat" },
+            "The recently used exercise must precede alphabetically earlier curated rows, got '\(firstCatalogRow.label)'"
+        )
+
+        let placeholder = app.buttons["exercisePicker.addPlaceholder"]
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 5))
+        placeholder.tap()
+        XCTAssertTrue(
+            waitFor { exerciseName.exists && exerciseName.label == "Custom exercise" },
+            "Custom (name later) should create and route to the new placeholder page"
+        )
+        XCTAssertTrue(
+            waitFor { (exerciseName.value as? String) == "Exercise 2 of 2" },
+            "The placeholder must render as the second page, got \(String(describing: exerciseName.value))"
+        )
+    }
+
+    // MARK: - Helpers
+
+    private func launchLegDay() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launch()
+
+        let legDay = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDay.waitForExistence(timeout: 15))
+        legDay.tap()
+        XCTAssertTrue(app.staticTexts["exercisePage.name"].waitForExistence(timeout: 10))
+        return app
+    }
+
+    private func openActions(in app: XCUIApplication) {
+        let ellipsis = anyElement(app, identifier: "ellipsisMenu")
+        XCTAssertTrue(ellipsis.waitForExistence(timeout: 5))
+        ellipsis.tap()
+    }
+
+    private func addExercise(named name: String, in app: XCUIApplication) {
+        openActions(in: app)
+        let addExercise = app.buttons["sessionActions.addExercise"]
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        addExercise.tap()
+        selectPickerExercise(named: name, in: app)
+    }
+
+    /// watchOS exposes `.searchable` through its dictation/scribble UI, not
+    /// as an XCUI search field, so scroll the real list until the row is
+    /// realized and hittable.
+    private func selectPickerExercise(
+        named name: String,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let exercise = app.buttons["exercisePicker.row.\(name)"]
+        XCTAssertTrue(
+            app.buttons["exercisePicker.addPlaceholder"].waitForExistence(timeout: 5)
+                || exercise.waitForExistence(timeout: 1),
+            "Expected the exercise picker to open",
+            file: file,
+            line: line
+        )
+        for _ in 0..<40 {
+            if exercise.exists && exercise.isHittable {
+                exercise.tap()
+                return
+            }
+            dragUpOneRow(in: app)
+        }
+        XCTFail("Expected \(name) in the exercise picker", file: file, line: line)
+    }
+
+    /// Full-screen watch swipes jump from rows 1-4 to rows 6-9, so a lazy
+    /// row at position 5 is never realized. Move roughly one row at a time.
+    private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 20) -> Bool {
+        for _ in 0..<maxAttempts {
+            if element.exists {
+                Thread.sleep(forTimeInterval: 0.4)
+                return true
+            }
+            dragUpOneRow(in: app)
+        }
+        return element.exists
+    }
+
+    private func dragUpOneRow(in app: XCUIApplication) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    /// Pages the vertical pager with the Digital Crown until `condition`
+    /// holds. Which crown direction moves to the previous page is not
+    /// documented for XCUITest, so this tries one way, then the other; a
+    /// turn past either end of the pager is a no-op.
+    private func crownPage(in app: XCUIApplication, until condition: () -> Bool) -> Bool {
+        for delta in [0.5, 0.5, -0.5, -0.5, -0.5, -0.5] {
+            if condition() { return true }
+            XCUIDevice.shared.rotateDigitalCrown(delta: delta)
+            if waitFor(timeout: 2, condition) { return true }
+        }
+        return condition()
+    }
+
+    private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return condition()
+    }
+
+    private func anyElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+}

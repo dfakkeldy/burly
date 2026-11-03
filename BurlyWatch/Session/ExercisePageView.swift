@@ -56,11 +56,20 @@ struct ExercisePageView: View {
                 .font(.headline)
                 .lineLimit(2)
                 .accessibilityIdentifier("exercisePage.name")
+                .accessibilityValue(ordinalText)
             Text(setCounterText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("exercisePage.setCounter")
         }
+    }
+
+    /// The pager shows one exercise at a time; this tells VoiceOver (and the
+    /// UI tests) where this one sits in the visible order, which is what a
+    /// skip, move or add changes. Empty for a page mid-removal.
+    private var ordinalText: String {
+        guard let ordinal = viewModel.pageOrdinal(for: item.id) else { return "" }
+        return "Exercise \(ordinal) of \(viewModel.items.count)"
     }
 
     private var setCounterText: String {
