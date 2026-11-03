@@ -33,6 +33,7 @@ struct LoggingScreenView: View {
     @State private var viewModel: SessionViewModel
     @State private var isShowingActions = false
     @State private var pendingAction: PendingSessionAction?
+    @State private var tickScheduleStart = Date.now
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @Environment(\.scenePhase) private var scenePhase
@@ -226,9 +227,11 @@ struct LoggingScreenView: View {
     /// its content closure: the shape `SessionActionsUITests` has run green
     /// on (a pager moved out of the closure was one of m2-04's suspects).
     /// The screens that replace the pager tick through `SessionTicker`.
+    /// Both schedules start at a fixed date, so a body that runs again on a
+    /// tick never hands its timeline a new start (`SessionTicker`'s doc).
     @ViewBuilder
     private var loggingBody: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: tickScheduleStart, by: 1)) { context in
             Group {
                 if viewModel.items.isEmpty {
                     emptySessionPlaceholder

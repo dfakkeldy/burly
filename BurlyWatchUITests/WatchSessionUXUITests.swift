@@ -229,6 +229,20 @@ final class WatchSessionUXUITests: XCTestCase {
             "The rest countdown must keep running on the logging screen: it read \(secondsBefore) s before the gestures and \(String(describing: remaining.value)) after"
         )
 
+        // The banner counts down on its own timeline, so that alone does
+        // not show the view model's tick. Only `SessionViewModel.tick()`
+        // locks an armed weight after 3 s idle: the arm lapsing does.
+        let weightControl = anyElement(app, identifier: "weightControl")
+        weightControl.press(forDuration: 0.6)
+        XCTAssertTrue(
+            waitFor { (weightControl.value as? String)?.contains("armed") == true },
+            "Expected the long press to arm the weight control"
+        )
+        XCTAssertTrue(
+            waitFor(timeout: 10) { (weightControl.value as? String)?.contains("locked") == true },
+            "Expected the session's 1 Hz tick to lock the idle weight, got \(String(describing: weightControl.value))"
+        )
+
         // The way out is the actions menu: End workout -> Finish -> Done.
         anyElement(app, identifier: "ellipsisMenu").tap()
         let endWorkout = app.buttons["sessionActions.endWorkout"]
