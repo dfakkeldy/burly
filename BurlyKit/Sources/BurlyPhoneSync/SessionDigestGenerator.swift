@@ -8,54 +8,159 @@
 //
 // ## The contract, restated as code
 //
-// `lastPerformance` must be the **complete latest-per-exercise derivation
-// over the phone's full current `.logged` history at generation time** — not
-// a delta, not "what changed", the whole thing. The watch trusts this and
-// cannot verify it (see `SessionDigestReceipt`'s doc for why checking is
-// worse than trusting): an absent entry is read as "history holds nothing
-// for that exercise" and drives a prune. So this file's one job is to make
-// that true, every time, including the degenerate case — an empty store
-// (nothing ever logged, or everything since deleted) legitimately produces
-// an empty `lastPerformance`, and that must be emittable even alongside a
-// non-empty `ackedSessionIDs` (the acked-then-deleted sequence
-// `BurlyStore.applyDigest`'s doc walks through). Nothing here validates
-// `ackedSessionIDs` against `lastPerformance` — they are two independent
-// machine-owned/derived facts, exactly as `PhoneSyncMachine.Command
-// .publishDigest`'s two parameters are.
+// Every `lastPerformance` entry is the **exact latest-per-exercise
+// derivation over the phone's full current `.logged` history at generation
+// time** — not a delta, not "what changed". Which exercises get an entry is
+// bounded, in two steps, because the digest rides `updateApplicationContext`
+// and that channel refuses a payload over roughly 64 KB (an undocumented
+// limit; WCError `payloadTooLarge`). An unbounded digest made a heavy
+// history (a multi-year Hevy import) fail every publish, silently and
+// forever: no acks, so no pruning on the watch.
 //
-// ## Bounded, not looped (m4-04)
+// 1. **The watch's working set.** Only exercises the current snapshot
+//    carries (`WatchWorkingSet`: the non-archived catalog plus archived
+//    exercises a live routine still uses). The watch cannot start or add
+//    anything else, so it can never show a ghost row for anything else.
+// 2. **A byte budget** (`applicationContextByteBudget`). Hevy imports its
+//    exercises non-archived, so step 1 alone still leaves hundreds of
+//    entries. When the encoded envelope would exceed the budget, entries
+//    are kept in order of use — exercises a routine starts with first, then
+//    the most recently performed — until the next one would not fit.
 //
-// This reads `BurlyStore.allLoggedSetSlices()` exactly **once** — the flat,
-// non-relationship-hydrating shape every other §7 query uses, restricted to
-// `.logged` sessions, at a cost proportional to total logged `SetRecord`
-// count. It does not loop `loggedSetSlices(exerciseID:since:through:)` once
-// per catalog exercise: the digest derives one complete latest-per-exercise
-// result from a single current history projection rather than assembling
-// separate per-exercise reads.
+// The watch upserts the entries it receives and never deletes a row for an
+// exercise a digest leaves out (`BurlyStore.applyDigest`), so an absent
+// entry means "no update", not "erase". It is still a claim the watch acts
+// on: it prunes an acknowledged session whatever the entries say, and an
+// exercise whose latest numbers were in that session would be left with
+// older ones. The ordering is what makes that safe in practice: an
+// acknowledged session is at most §5's 30-day ack retention old, so its
+// exercises rank among the most recently performed and are the last to be
+// trimmed.
+//
+// The degenerate case still holds: an empty store (nothing ever logged, or
+// everything since deleted) produces an empty `lastPerformance`, emittable
+// alongside a non-empty `ackedSessionIDs` (the acked-then-deleted sequence
+// `BurlyStore.applyDigest`'s doc walks through). `ackedSessionIDs` is never
+// trimmed: it is what lets the watch prune, and §5's 30-day retention in
+// `PhoneSyncMachine` already bounds it to the sessions a watch delivered in
+// that window (Hevy-imported sessions are never acknowledged). Nothing here
+// validates the acks against `lastPerformance`; they are two independent
+// facts, exactly as `PhoneSyncMachine.Command.publishDigest`'s two
+// parameters are.
+//
+// ## A narrow read, not full history (issue #24)
+//
+// This used to read `BurlyStore.allLoggedSetSlices()`, every logged set the
+// phone holds, on the main actor at every history change and launch: 8.4 s
+// at 50k sets on hosted CI, for 12 entries. It now asks the store only for
+// each working-set exercise's latest session
+// (`BurlyStore.latestLoggedSetSlices(forExercises:)`), which picks winners
+// with the same `LatestLoggedSession.isLater` rule this file's derivation
+// uses, so the derivation below returns exactly what it would have returned
+// over full history.
 import Foundation
 import BurlyCore
 import BurlyPersistence
 import BurlySync
+import os
 
 public enum SessionDigestGenerator {
-    /// Derives and builds the full §5 `digest` payload: the machine-owned
+    /// The encoded-envelope ceiling `generate` trims `lastPerformance` to:
+    /// 48 KB, a quarter under the roughly 64 KB that Watch Connectivity's
+    /// application context accepts, leaving room for the dictionary
+    /// wrapping the envelope and for an uncertain limit Apple does not
+    /// document.
+    public static let applicationContextByteBudget = 48 * 1024
+
+    /// Derives and builds the §5 `digest` payload: the machine-owned
     /// `snapshotVersion`/`ackedSessionIDs` (`PhoneSyncMachine.Command
-    /// .publishDigest`'s two facts) plus `lastPerformance`, derived from
-    /// `store`'s full current `.logged` history **at the moment this runs**
-    /// — never a cached or earlier-fetched slice list, which is what makes
-    /// "at generation time" true rather than aspirational.
+    /// .publishDigest`'s two facts), `lastPerformance` for the watch's
+    /// working set, and each non-archived routine's last-performed date, all
+    /// read from `store` **at the moment this runs**, never from a cached or
+    /// earlier read, which is what makes "at generation time" true rather
+    /// than aspirational.
+    ///
+    /// The returned payload's encoded envelope stays within `byteBudget`
+    /// unless the acks and routine dates alone exceed it (they are never
+    /// trimmed; see the file doc).
     @MainActor
     public static func generate(
         from store: any BurlyStore,
         snapshotVersion: Int,
-        ackedSessionIDs: Set<UUID>
+        ackedSessionIDs: Set<UUID>,
+        byteBudget: Int = applicationContextByteBudget
     ) throws -> BurlyDigestPayloadDTO {
-        let slices = try store.allLoggedSetSlices()
-        return BurlyDigestPayloadDTO(
+        let workingSet = try WatchWorkingSet(from: store)
+        let slices = try store.latestLoggedSetSlices(forExercises: Set(workingSet.exercises.map(\.id)))
+        let routineIDs = Set(workingSet.routines.map(\.id))
+        let routineDates = try store.routineLastPerformedDates()
+            .filter { routineIDs.contains($0.key) }
+            .map { BurlyRoutineLastPerformedDTO(routineID: $0.key, performedAt: $0.value) }
+            .sorted { $0.routineID.uuidString < $1.routineID.uuidString }
+        let payload = BurlyDigestPayloadDTO(
             snapshotVersion: snapshotVersion,
             lastPerformance: latestPerformancePerExercise(from: slices),
-            ackedSessionIDs: ackedSessionIDs
+            ackedSessionIDs: ackedSessionIDs.sorted { $0.uuidString < $1.uuidString },
+            routineLastPerformed: routineDates
         )
+        return try fitting(payload, within: byteBudget, routineExerciseIDs: workingSet.routineExerciseIDs)
+    }
+
+    /// `payload` itself when its encoded envelope fits `budget`; otherwise
+    /// the same payload with `lastPerformance` cut to the entries that fit,
+    /// kept in this order: exercises in `routineExerciseIDs` first, then by
+    /// `performedAt`, newest first, then by exercise id. The kept entries
+    /// stay sorted by exercise id, like every digest, so equal input always
+    /// encodes to equal bytes.
+    ///
+    /// Sizes are measured, not estimated: each entry is encoded once with
+    /// the same encoder the envelope uses, and JSON array encoding adds
+    /// exactly one comma per extra element, so the sum is the envelope's
+    /// size. The result is checked by encoding it anyway.
+    static func fitting(
+        _ payload: BurlyDigestPayloadDTO,
+        within budget: Int,
+        routineExerciseIDs: Set<UUID>
+    ) throws -> BurlyDigestPayloadDTO {
+        let fullSize = try envelopeByteCount(payload)
+        guard fullSize > budget else { return payload }
+
+        let ranked = payload.lastPerformance.sorted { lhs, rhs in
+            let lhsInRoutine = routineExerciseIDs.contains(lhs.exerciseID)
+            let rhsInRoutine = routineExerciseIDs.contains(rhs.exerciseID)
+            if lhsInRoutine != rhsInRoutine { return lhsInRoutine }
+            if lhs.performedAt != rhs.performedAt { return lhs.performedAt > rhs.performedAt }
+            return lhs.exerciseID.uuidString < rhs.exerciseID.uuidString
+        }
+        let encoder = JSONEncoder()
+        var used = try envelopeByteCount(payload.replacingLastPerformance([]))
+        var kept: [ExerciseLastPerformanceData] = []
+        for entry in ranked {
+            let cost = try encoder.encode(entry).count + (kept.isEmpty ? 0 : 1)
+            guard used + cost <= budget else { break }
+            used += cost
+            kept.append(entry)
+        }
+
+        var trimmed = payload.replacingLastPerformance(
+            kept.sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
+        )
+        // The arithmetic above is exact; this only guards a future encoder
+        // change that would break it.
+        while try envelopeByteCount(trimmed) > budget, !kept.isEmpty {
+            kept.removeLast()
+            trimmed = payload.replacingLastPerformance(
+                kept.sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
+            )
+        }
+        PhoneSyncLog.logger.notice("digest trimmed to \(kept.count, privacy: .public) of \(payload.lastPerformance.count, privacy: .public) exercises: \(fullSize, privacy: .public) bytes exceeded the \(budget, privacy: .public)-byte budget")
+        return trimmed
+    }
+
+    /// The byte count of `payload`'s envelope exactly as
+    /// `PhoneWCSessionBridge.publishDigest` encodes it.
+    static func envelopeByteCount(_ payload: BurlyDigestPayloadDTO) throws -> Int {
+        try BurlySyncEnvelope(payload: .digest(payload)).encodedData().count
     }
 
     /// The pure derivation, separated from the store fetch so the property
@@ -67,7 +172,8 @@ public enum SessionDigestGenerator {
     /// For each distinct, non-`nil` `exerciseID` present in `slices`: finds
     /// the session with the latest `sessionStartedAt` that has any set
     /// against that exercise (ties broken by session id, descending, for
-    /// full determinism — see `isNewer` below), and returns every slice
+    /// full determinism — `LatestLoggedSession.isLater`, the rule the
+    /// store's narrow read shares), and returns every slice
     /// belonging to *that* (exercise, session) pair as the entry's `sets`.
     ///
     /// **Sets are ordered by their own `order` field — their position
@@ -105,7 +211,10 @@ public enum SessionDigestGenerator {
 
             let candidate = (sessionID: slice.sessionID, startedAt: slice.sessionStartedAt)
             if let current = winners[exerciseID] {
-                if isNewer(candidate, than: current) {
+                if LatestLoggedSession.isLater(
+                    (startedAt: candidate.startedAt, sessionID: candidate.sessionID),
+                    than: (startedAt: current.startedAt, sessionID: current.sessionID)
+                ) {
                     winners[exerciseID] = candidate
                 }
             } else {
@@ -131,20 +240,16 @@ public enum SessionDigestGenerator {
         let exerciseID: UUID
         let sessionID: UUID
     }
+}
 
-    /// `candidate` wins over `current` when it started later, or — on an
-    /// exact `startedAt` tie, which real wall-clock timestamps rarely
-    /// produce but synthetic or coarse ones can — when its session id sorts
-    /// higher as a string. Either way the choice is a pure function of the
-    /// input, never of fetch order.
-    private static func isNewer(
-        _ candidate: (sessionID: UUID, startedAt: Date),
-        than current: (sessionID: UUID, startedAt: Date)
-    ) -> Bool {
-        if candidate.startedAt != current.startedAt {
-            return candidate.startedAt > current.startedAt
-        }
-        return candidate.sessionID.uuidString > current.sessionID.uuidString
+private extension BurlyDigestPayloadDTO {
+    func replacingLastPerformance(_ entries: [ExerciseLastPerformanceData]) -> BurlyDigestPayloadDTO {
+        BurlyDigestPayloadDTO(
+            snapshotVersion: snapshotVersion,
+            lastPerformance: entries,
+            ackedSessionIDs: ackedSessionIDs,
+            routineLastPerformed: routineLastPerformed
+        )
     }
 }
 

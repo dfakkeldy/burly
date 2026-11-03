@@ -20,9 +20,16 @@ public struct WatchSyncStateData: Sendable, Equatable, Codable {
     public var displayUnit: WeightUnit
     /// The phone's §3 global rest default from the last applied snapshot.
     public var restDefault: TimeInterval
+    /// Each routine's last-performed date as the phone's last applied
+    /// digest reported it, for §2's "last done N days ago". The watch prunes
+    /// the sessions the phone acknowledged, so without this every routine
+    /// would read "Never done" once sync caught up. Empty until a digest
+    /// from a phone that sends them arrives.
+    public var routineLastPerformedAt: [UUID: Date]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, lastAppliedSnapshotVersion, lastAckedSessionIDs, displayUnit, restDefault
+        case routineLastPerformedAt
     }
 
     public init(
@@ -30,13 +37,15 @@ public struct WatchSyncStateData: Sendable, Equatable, Codable {
         lastAppliedSnapshotVersion: Int? = nil,
         lastAckedSessionIDs: Set<UUID> = [],
         displayUnit: WeightUnit = .kilograms,
-        restDefault: TimeInterval = RestDuration.globalDefault
+        restDefault: TimeInterval = RestDuration.globalDefault,
+        routineLastPerformedAt: [UUID: Date] = [:]
     ) {
         self.schemaVersion = schemaVersion
         self.lastAppliedSnapshotVersion = lastAppliedSnapshotVersion
         self.lastAckedSessionIDs = lastAckedSessionIDs
         self.displayUnit = displayUnit
         self.restDefault = RestDuration.clamped(restDefault)
+        self.routineLastPerformedAt = routineLastPerformedAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -45,15 +54,16 @@ public struct WatchSyncStateData: Sendable, Equatable, Codable {
         guard version == 0 || version == 1 else {
             throw WatchSyncStateDecodingError.unsupportedSchemaVersion(version)
         }
-        // The two settings are additive within journal schema 1: a journal
-        // written before they existed reads as the defaults, which is what
-        // the watch was showing then.
+        // The two settings and the routine dates are additive within journal
+        // schema 1: a journal written before they existed reads as the
+        // defaults, which is what the watch was showing then.
         self.init(
             schemaVersion: 1,
             lastAppliedSnapshotVersion: try container.decodeIfPresent(Int.self, forKey: .lastAppliedSnapshotVersion),
             lastAckedSessionIDs: try container.decodeIfPresent(Set<UUID>.self, forKey: .lastAckedSessionIDs) ?? [],
             displayUnit: try container.decodeIfPresent(WeightUnit.self, forKey: .displayUnit) ?? .kilograms,
-            restDefault: try container.decodeIfPresent(TimeInterval.self, forKey: .restDefault) ?? RestDuration.globalDefault
+            restDefault: try container.decodeIfPresent(TimeInterval.self, forKey: .restDefault) ?? RestDuration.globalDefault,
+            routineLastPerformedAt: try container.decodeIfPresent([UUID: Date].self, forKey: .routineLastPerformedAt) ?? [:]
         )
     }
 }

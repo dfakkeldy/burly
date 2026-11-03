@@ -982,6 +982,89 @@ public final class SwiftDataStore: BurlyStore {
         try fetchSetSlices(predicate: nil, exerciseID: nil)
     }
 
+    /// Issue #24's projection. The cost that made the full-history digest
+    /// slow was materialising every `SetRecord` (50k at the benchmark
+    /// scale); this materialises `SessionItem` rows plus their session and
+    /// exercise (one prefetch each) and then decodes only the winning
+    /// sessions' sets.
+    ///
+    /// No predicate, deliberately: the item filter "has any sets" would be
+    /// a to-many relationship predicate, and relationship predicates have
+    /// crashed this project's CI runner before (`setRecordFilterPredicate`'s
+    /// doc). Instead each exercise's candidate sessions are walked newest
+    /// first, and only the top candidate's `sets` relationship is faulted;
+    /// an empty one (the "latest-empty" case) falls through to the next.
+    /// In ordinary history that is one small fault per exercise.
+    public func latestLoggedSetSlices(forExercises exerciseIDs: Set<UUID>) throws -> [SetRecordSlice] {
+        guard !exerciseIDs.isEmpty else { return [] }
+
+        var descriptor = FetchDescriptor<SessionItem>()
+        descriptor.relationshipKeyPathsForPrefetching = [\.session, \.exercise]
+
+        struct Candidate {
+            let sessionID: UUID
+            let startedAt: Date
+            var items: [SessionItem]
+        }
+        var candidates: [UUID: [UUID: Candidate]] = [:]
+        for item in try context.fetch(descriptor) {
+            guard
+                let exerciseID = item.exercise?.id,
+                exerciseIDs.contains(exerciseID),
+                let session = item.session,
+                // Swift-side for the reason every other read gives:
+                // `SessionState` cannot be captured in a `#Predicate`.
+                session.state == .logged
+            else { continue }
+            candidates[exerciseID, default: [:]][
+                session.id,
+                default: Candidate(sessionID: session.id, startedAt: session.startedAt, items: [])
+            ].items.append(item)
+        }
+
+        var slices: [SetRecordSlice] = []
+        for (exerciseID, bySession) in candidates {
+            let newestFirst = bySession.values.sorted {
+                LatestLoggedSession.isLater(
+                    (startedAt: $0.startedAt, sessionID: $0.sessionID),
+                    than: (startedAt: $1.startedAt, sessionID: $1.sessionID)
+                )
+            }
+            for candidate in newestFirst {
+                let records = candidate.items.flatMap(\.sets)
+                guard !records.isEmpty else { continue }
+                for record in records {
+                    slices.append(SetRecordSlice(
+                        sessionID: candidate.sessionID,
+                        sessionStartedAt: candidate.startedAt,
+                        exerciseID: exerciseID,
+                        // Throws on a corrupt stored weight, like every
+                        // other read of this column (finding M5).
+                        set: try record.snapshot()
+                    ))
+                }
+                break
+            }
+        }
+        return slices
+    }
+
+    public func routineLastPerformedDates() throws -> [UUID: Date] {
+        // No relationship prefetching: like `allLoggedSessionDates()`, this
+        // reads `Session`'s own columns only.
+        var latest: [UUID: Date] = [:]
+        for session in try context.fetch(FetchDescriptor<Session>()) {
+            guard session.state == .logged, let routineID = session.routineID else { continue }
+            if let current = latest[routineID], current >= session.startedAt { continue }
+            latest[routineID] = session.startedAt
+        }
+        guard kind == .watch else { return latest }
+        // The watch has pruned what the phone acknowledged (§1), so the
+        // phone's last reported dates fill the gap. A session the watch
+        // still holds (finished, not yet acknowledged) can be newer.
+        return latest.merging(try watchSyncState().routineLastPerformedAt, uniquingKeysWith: max)
+    }
+
     // MARK: - Phone-shell existence/count (m5-01; bounded)
     //
     // m5-01 review round 2, finding 1: round 1 (401646f) shipped both
@@ -1687,13 +1770,18 @@ extension SwiftDataStore: WatchSyncStore {
         }
     }
 
-    /// The transport-facing digest route delegates to `applyDigest`, the one
-    /// public digest executor. That executor persists its ack replay guard in
-    /// the same save as performance upserts and pruning.
+    /// The transport-facing digest route shares `applyDigest`'s transaction.
+    /// It persists the ack replay guard and the phone's routine dates in the
+    /// same save as performance upserts and pruning, so a pruned session's
+    /// "last done" can never go missing between two saves.
     public func applyWatchDigest(_ payload: BurlyDigestPayloadDTO) throws {
-        try applyDigest(
+        guard kind == .watch else {
+            throw BurlyStoreError.operationRequiresWatchStore
+        }
+        try applyDigestTransaction(
             lastPerformance: payload.lastPerformance,
-            ackedSessionIDs: payload.ackedSessionIDs
+            ackedSessionIDs: payload.ackedSessionIDs,
+            routineLastPerformed: payload.routineLastPerformed
         )
     }
 
@@ -1712,11 +1800,24 @@ extension SwiftDataStore: WatchSyncStore {
     /// Shared, sealed digest transaction for the public store seam and the
     /// watch runtime. All throws happen in the planning phase; after the
     /// first mutation there is only one `commit()`.
+    ///
+    /// `routineLastPerformed` is `nil` from `applyDigest`, which has no
+    /// routine dates to give and leaves the stored ones alone. From the
+    /// transport it replaces them whole: the digest is latest-wins and
+    /// complete for the phone's routines, so a date the phone no longer
+    /// reports (its session was deleted) must not linger.
     private func applyDigestTransaction(
         lastPerformance: [ExerciseLastPerformanceData],
-        ackedSessionIDs: [UUID]
+        ackedSessionIDs: [UUID],
+        routineLastPerformed: [BurlyRoutineLastPerformedDTO]? = nil
     ) throws {
         try validateLastPerformance(lastPerformance)
+        // Same rule as a duplicate exercise entry: two dates for one
+        // routine are not something the phone ever describes.
+        if let routineLastPerformed,
+           let duplicate = firstDuplicateID(in: routineLastPerformed.map(\.routineID)) {
+            throw BurlyStoreError.duplicateID(duplicate)
+        }
 
         let journal = try watchSyncJournal()
         // Fetch all affected rows up front. `upsert`/`prune` used to fetch as
@@ -1742,6 +1843,11 @@ extension SwiftDataStore: WatchSyncStore {
         let activeSessionIDs = Set(ackedSessionIDs.filter { existingSessions[$0]?.state == .active })
         var nextState = try recoveredWatchSyncState(from: journal)
         nextState.lastAckedSessionIDs = Set(ackedSessionIDs).subtracting(activeSessionIDs)
+        if let routineLastPerformed {
+            nextState.routineLastPerformedAt = Dictionary(
+                uniqueKeysWithValues: routineLastPerformed.map { ($0.routineID, $0.performedAt) }
+            )
+        }
         let encodedNextState = try JSONEncoder().encode(nextState)
 
         do {

@@ -67,6 +67,7 @@ public final class PhoneSyncHost {
 
     public let coordinator: PhoneSyncCoordinator
     private let adapter: WCSessionAdapter
+    private let bridge: PhoneWCSessionBridge
     private let session: any WCSessionTransport
     private let statePersisting: any PhoneSyncStatePersisting
     private let isWatchAppInstalled: @MainActor () -> Bool
@@ -108,6 +109,7 @@ public final class PhoneSyncHost {
         bridge.adapter = adapter
         self.coordinator = coordinator
         self.adapter = adapter
+        self.bridge = bridge
         self.session = session
         self.statePersisting = statePersisting
         self.isWatchAppInstalled = isWatchAppInstalled
@@ -258,8 +260,11 @@ public final class PhoneSyncHost {
 
             case let .transportFailed(.publishDigest, error):
                 // Latest-wins: the next history change or launch publishes
-                // a fresh digest derived from store truth.
-                PhoneSyncLog.logger.error("digest publish failed: \(error.description, privacy: .public)")
+                // a fresh digest derived from store truth. The size is the
+                // first thing to know: an oversized payload fails the same
+                // way every time (see `SessionDigestGenerator`'s budget).
+                let size = bridge.lastDigestEnvelopeByteCount.map { "\($0) bytes" } ?? "size unknown"
+                PhoneSyncLog.logger.error("digest publish failed (\(size, privacy: .public)): \(error.description, privacy: .public)")
 
             case .reachabilityChanged, .sessionTransferFinished:
                 break
@@ -295,6 +300,10 @@ public final class PhoneSyncHost {
 @MainActor
 final class PhoneWCSessionBridge: PhoneSyncTransporting, PhoneDigestPublishing {
     weak var adapter: WCSessionAdapter?
+    /// The size of the last digest envelope handed to the adapter. A failed
+    /// `updateApplicationContext` comes back later as an event with no
+    /// payload, so the host reads the size from here to log it.
+    private(set) var lastDigestEnvelopeByteCount: Int?
 
     func transmitSnapshot(_ payload: BurlySnapshotPayloadDTO, generation: Int) async throws {
         let envelope = try BurlySyncEnvelope(payload: .snapshot(payload)).encodedData()
@@ -314,7 +323,8 @@ final class PhoneWCSessionBridge: PhoneSyncTransporting, PhoneDigestPublishing {
     func publishDigest(_ payload: BurlyDigestPayloadDTO) async {
         do {
             let envelope = try BurlySyncEnvelope(payload: .digest(payload)).encodedData()
-            PhoneSyncLog.logger.info("publishing digest at snapshot v\(payload.snapshotVersion, privacy: .public), \(payload.ackedSessionIDs.count, privacy: .public) acked")
+            lastDigestEnvelopeByteCount = envelope.count
+            PhoneSyncLog.logger.info("publishing digest at snapshot v\(payload.snapshotVersion, privacy: .public), \(payload.ackedSessionIDs.count, privacy: .public) acked, \(payload.lastPerformance.count, privacy: .public) exercises, \(payload.routineLastPerformed.count, privacy: .public) routines, \(envelope.count, privacy: .public) bytes")
             adapter?.execute(.publishDigest(envelope: envelope))
         } catch {
             PhoneSyncLog.logger.error("digest did not encode: \(String(describing: error), privacy: .public)")
