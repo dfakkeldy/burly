@@ -27,7 +27,7 @@
 # en-US, so a failed run never leaves a half-updated listing.
 #
 # Raw output (logs, result bundles, every attachment) goes to
-# Scripts/output/screenshots/<UTC-timestamp>/. Takes the same simulator lock
+# Scripts/output/screenshots/<UTC-timestamp>-<pid>/. Takes the same simulator lock
 # as acceptance-sim.sh, and shuts down only the simulators it booted.
 #
 # Usage: Scripts/capture-store-screenshots.sh
@@ -38,7 +38,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$REPO_ROOT/Burly.xcodeproj"
 DERIVED_DATA="$REPO_ROOT/DerivedData"
-RUN_DIR="$REPO_ROOT/Scripts/output/screenshots/$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DIR=""
 STORE_DIR="$REPO_ROOT/fastlane/screenshots/en-US"
 LOCK_DIR="${BURLY_LOCK_DIR:-${TMPDIR:-/tmp}/burly-sim.lock}"
 
@@ -81,16 +81,28 @@ log() { echo "store-screenshots: $*" >&2; }
 fail() { echo "store-screenshots: FATAL: $*" >&2; exit 1; }
 
 # acceptance-sim.sh's lock (CI passes its own BURLY_LOCK_DIR); wait up to 45
-# minutes for it.
+# minutes for it. A lock whose owner is dead and 30 minutes old is reclaimed,
+# by the same rule acceptance-sim.sh uses.
 for _ in $(seq 1 270); do
   if mkdir "$LOCK_DIR" 2> /dev/null; then
     LOCK_OWNED=1
     echo "$$ $(date +%s)" > "$LOCK_DIR/owner"
     break
   fi
+  owner_pid="" owner_ts=""
+  read -r owner_pid owner_ts < "$LOCK_DIR/owner" 2> /dev/null
+  if [[ "${owner_pid:-}" =~ ^[0-9]+$ && "${owner_ts:-}" =~ ^[0-9]+$ ]] \
+    && (( $(date +%s) - owner_ts >= 30 * 60 )) && ! kill -0 "$owner_pid" 2> /dev/null; then
+    log "reclaiming the stale lock of dead pid $owner_pid"
+    rm -f "$LOCK_DIR/owner"
+    rmdir "$LOCK_DIR" 2> /dev/null
+    continue
+  fi
   sleep 10
 done
 [[ $LOCK_OWNED == 1 ]] || fail "simulator lock $LOCK_DIR still held after 45 minutes"
+# After the lock, with the pid, so two runs never share a run directory.
+RUN_DIR="$REPO_ROOT/Scripts/output/screenshots/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$RUN_DIR"
 log "run directory: $RUN_DIR"
 
