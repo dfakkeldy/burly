@@ -532,11 +532,12 @@ final class SessionViewModel {
     /// same "missed finish" repeat after a resume that saw the screen wake
     /// in time.
     ///
-    /// The ticker runs under every screen `LoggingScreenView` shows,
-    /// prompts included, so this returns early once there is nothing to
-    /// time: a finishing or finished session is already `.logged` in
-    /// memory, a discarded one is gone, and under a blocking save failure
-    /// a `persist()` here would replace the retry that failure is holding.
+    /// The tick also runs under the summary preview and the §4 prompts
+    /// (`LoggingScreenView`'s `SessionTicker`), so this returns early once
+    /// there is nothing to time: a finishing or finished session is already
+    /// `.logged` in memory, a discarded one is gone, and under a blocking
+    /// save failure a `persist()` here would replace the retry that failure
+    /// is holding.
     func tick() {
         guard !isFinishing, finishedSummary == nil, !didDiscard, saveFailure == nil else { return }
         let before = engine.session.restTimer
