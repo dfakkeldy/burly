@@ -19,10 +19,13 @@ struct RoutineListView: View {
 
     var body: some View {
         List {
+            // Both notes drop the row platter, so they read as notes, not
+            // as buttons beside the real rows.
             if WatchSyncHost.needsAppUpdate(heldSchemaVersion: heldSchemaVersion) {
                 Text("Your iPhone has a newer Burly. Update Burly on Apple Watch to get your latest routines.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
                     .accessibilityIdentifier("routineList.updateNotice")
             }
 
@@ -30,6 +33,7 @@ struct RoutineListView: View {
                 Text("No routines yet. Create one in Burly on your iPhone.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
                     .accessibilityIdentifier("routineList.emptyHint")
             }
 

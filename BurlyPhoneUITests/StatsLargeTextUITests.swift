@@ -12,7 +12,9 @@ import XCTest
 /// controls stay inside the screen, and the muscle-split legend rows sit
 /// below the donut without overlapping each other. Whether the axis
 /// labels themselves read cleanly is judged from the screenshots each test
-/// keeps (named `StatsLargeText-*` and `StatsDefaultText-*`).
+/// keeps (named `StatsLargeText-*` and `StatsDefaultText-*`). The weekly
+/// charts' large-text week line is ordinary text, so it is checked
+/// directly.
 final class StatsLargeTextUITests: XCTestCase {
 
     // Repeated from PhoneDemoSeed: the UI-test bundle cannot import the app.
@@ -61,8 +63,9 @@ final class StatsLargeTextUITests: XCTestCase {
         attachScreenshot(from: app, name: "StatsLargeText-progression")
     }
 
-    /// #37, volume: at 8, 26 and 52 weeks the chart fits on screen whole
-    /// and the range control stays inside the screen.
+    /// #37, volume: at 8, 26 and 52 weeks the chart fits on screen whole,
+    /// the range control stays inside the screen, and the line under the
+    /// chart names the weeks the axis no longer labels.
     @MainActor
     func testLargestTextWeeklyVolumeFitsAtEveryRange() throws {
         let app = launchStats(contentSize: .accessibilityExtraExtraExtraLarge)
@@ -81,6 +84,7 @@ final class StatsLargeTextUITests: XCTestCase {
             scrollFullyIntoView(chart, in: app)
             XCTAssertGreaterThan(chart.frame.height, 280, "Volume (\(range)) must grow with text (200 pt at the default size)")
             assertWithinScreenWidth(chart, in: app)
+            assertWeekRangeEndsThisWeek(anyElement(app, identifier: "statsTab.volume.weekRange"), in: app)
             attachScreenshot(from: app, name: "StatsLargeText-volume-\(range)")
         }
     }
@@ -118,7 +122,8 @@ final class StatsLargeTextUITests: XCTestCase {
         attachScreenshot(from: app, name: "StatsLargeText-muscleSplit-note")
     }
 
-    /// #37, consistency: the chart fits on screen whole with its dots.
+    /// #37, consistency: the chart fits on screen whole with its dots, and
+    /// the line under it names its weeks.
     @MainActor
     func testLargestTextConsistencyChartFits() throws {
         let app = launchStats(contentSize: .accessibilityExtraExtraExtraLarge)
@@ -128,6 +133,7 @@ final class StatsLargeTextUITests: XCTestCase {
         scrollFullyIntoView(chart, in: app)
         XCTAssertGreaterThan(chart.frame.height, 270, "Consistency must grow with text (190 pt at the default size)")
         assertWithinScreenWidth(chart, in: app)
+        assertWeekRangeEndsThisWeek(anyElement(app, identifier: "statsTab.consistency.weekRange"), in: app)
         attachScreenshot(from: app, name: "StatsLargeText-consistency")
 
         let dots = anyElement(app, identifier: "statsTab.consistency.calendarDots")
@@ -145,7 +151,9 @@ final class StatsLargeTextUITests: XCTestCase {
     /// default size" evidence for the large-text changes.
     @MainActor
     func testDefaultTextShowsUnattributedShareAndKeepsChartSizes() throws {
-        let app = launchStats(contentSize: nil)
+        // Pinned to the system default: the 220/200/190 pt heights hold
+        // only there, because the axis allowance scales with text.
+        let app = launchStats(contentSize: .large)
 
         let chart = anyElement(app, identifier: "statsTab.progression.chart")
         XCTAssertTrue(chart.waitForExistence(timeout: 15))
@@ -161,6 +169,10 @@ final class StatsLargeTextUITests: XCTestCase {
             let volume = anyElement(app, identifier: "statsTab.volume.chart")
             scrollFullyIntoView(volume, in: app)
             XCTAssertEqual(volume.frame.height, 200, accuracy: 1, "The default-size volume chart keeps its height")
+            XCTAssertFalse(
+                anyElement(app, identifier: "statsTab.volume.weekRange").exists,
+                "At the default size the axis labels its own weeks"
+            )
             attachScreenshot(from: app, name: "StatsDefaultText-volume-\(range)")
         }
 
@@ -185,15 +197,12 @@ final class StatsLargeTextUITests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Populated scenario, welcome skipped, Stats open. `nil` leaves the
-    /// simulator's own text size alone.
-    private func launchStats(contentSize: UIContentSizeCategory?) -> XCUIApplication {
+    /// Populated scenario, welcome skipped, Stats open, at `contentSize`
+    /// whatever the simulator's own text size is.
+    private func launchStats(contentSize: UIContentSizeCategory) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = Self.scenarioPopulated
-        app.launchArguments += ["-burly-skip-welcome"]
-        if let contentSize {
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize.rawValue]
-        }
+        app.launchArguments += ["-burly-skip-welcome", "-UIPreferredContentSizeCategoryName", contentSize.rawValue]
         app.launch()
         app.tabBars.buttons["Stats"].tap()
         XCTAssertTrue(app.navigationBars["Stats"].waitForExistence(timeout: 10), "Stats needs its own navigation host")
@@ -215,6 +224,35 @@ final class StatsLargeTextUITests: XCTestCase {
         guard let value = row.value as? String,
               let match = value.firstMatch(of: /^(\d+)%$/) else { return nil }
         return Int(match.1)
+    }
+
+    /// The large-text week line under a weekly chart is on screen and
+    /// ends at this week, whether or not this week has a workout yet (an
+    /// empty end week is where the axis's own last date sat under the
+    /// previous week's bar). Its accessibility label spells the months out.
+    private func assertWeekRangeEndsThisWeek(
+        _ weekLine: XCUIElement,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line sourceLine: UInt = #line
+    ) {
+        XCTAssertTrue(weekLine.waitForExistence(timeout: 5), "Expected the week line under the chart", file: file, line: sourceLine)
+        scrollFullyIntoView(weekLine, in: app, file: file, line: sourceLine)
+        assertWithinScreenWidth(weekLine, in: app, file: file, line: sourceLine)
+        // Stats loaded a little earlier, so a run that crosses into a new
+        // week may still show the week before; either is this week.
+        let now = Date()
+        let lastWeeks: [String] = [now.addingTimeInterval(-15 * 60), now].map { (date: Date) -> String in
+            let weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+            return weekStart.formatted(.dateTime.month(.wide).day())
+        }
+        XCTAssertTrue(weekLine.label.hasPrefix("Weeks of "), "Unexpected week line: \(weekLine.label)", file: file, line: sourceLine)
+        XCTAssertTrue(
+            lastWeeks.contains { weekLine.label.contains(" to " + $0) },
+            "The week line must end at this week (\(lastWeeks)), got: \(weekLine.label)",
+            file: file,
+            line: sourceLine
+        )
     }
 
     private func waitUntilSelected(_ element: XCUIElement) -> Bool {

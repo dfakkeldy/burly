@@ -153,9 +153,7 @@ public enum HevyCSVImporter {
 
         let tokenizedRows = CSVTokenizer.rows(in: csv)
         guard let first = tokenizedRows.first, case .fields(let headerFields) = first else {
-            throw HevyImportError.unrecognizedHeader(
-                missingColumns: HevyCSVSchema.requiredColumns + [HevyCSVSchema.weightColumnRequirement]
-            )
+            throw HevyImportError.unrecognizedHeader(missingColumns: HevyCSVHeader(fields: []).missingRequiredColumns)
         }
 
         let header = HevyCSVHeader(fields: headerFields)

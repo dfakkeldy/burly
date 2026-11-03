@@ -30,6 +30,9 @@ final class HevyImportModel {
         case finished(plan: HevyImportPlan, outcome: HevyImportOutcome)
         /// Spec §8: "only an unrecognizable header aborts."
         case unrecognizedHeader(missingColumns: [String])
+        /// The header names more than one weight column, so no weight can
+        /// be trusted. Also a header abort: the file read fine.
+        case ambiguousWeightColumns
         case unreadable(String)
         /// The file parsed, but the store read behind the plan threw. Kept
         /// apart from `.unreadable` (m7-02 review): the file is fine, and
@@ -117,6 +120,9 @@ final class HevyImportModel {
             }.value
         } catch HevyImportError.unrecognizedHeader(let missingColumns) {
             phase = .unrecognizedHeader(missingColumns: missingColumns)
+            return
+        } catch HevyImportError.ambiguousWeightUnit {
+            phase = .ambiguousWeightColumns
             return
         } catch {
             phase = .unreadable(error.localizedDescription)

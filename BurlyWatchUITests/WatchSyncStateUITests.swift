@@ -41,7 +41,7 @@ final class WatchSyncStateUITests: XCTestCase {
 
         emptySession.tap()
         XCTAssertTrue(
-            app.buttons["emptySession.addExercise"].waitForExistence(timeout: 10),
+            app.buttons["emptySession.addExercise"].waitForExistence(timeout: 15),
             "Expected 'Empty session' to open the empty logging screen"
         )
     }

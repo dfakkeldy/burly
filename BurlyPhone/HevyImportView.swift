@@ -99,6 +99,16 @@ struct HevyImportView: View {
                 identifier: "hevyImport.headerError",
                 onChooseAnother: chooseFile
             )
+        case .ambiguousWeightColumns:
+            // The same header-problem screen: the file was read, and only
+            // its header stops the import.
+            HevyImportProblemView(
+                systemImage: "doc.questionmark",
+                title: "This file has more than one weight column",
+                message: Self.ambiguousWeightColumnsMessage,
+                identifier: "hevyImport.headerError",
+                onChooseAnother: chooseFile
+            )
         case .unreadable(let message):
             HevyImportProblemView(
                 systemImage: "exclamationmark.triangle",
@@ -137,6 +147,13 @@ struct HevyImportView: View {
         return "Burly reads the workout CSV that Hevy exports. This file is missing the \(list) \(noun), "
             + "so nothing was imported. Export your workouts from Hevy again and choose that file."
     }
+
+    /// Hevy writes one weight column, in the account's unit, so a file with
+    /// two (both units, or one repeated) has been edited or merged.
+    private static let ambiguousWeightColumnsMessage =
+        "Burly can't tell which of them holds the real weights, so nothing was imported. "
+        + "A Hevy export has just one, weight_kg or weight_lbs. "
+        + "Export your workouts from Hevy again, without editing the file, and choose that file."
 
     /// The picker, or — in DEBUG builds launched by a UI test — the bundled
     /// synthetic export (the Files picker is not drivable by XCUITest).
@@ -451,7 +468,7 @@ private struct HevyImportDropReport: View {
     var body: some View {
         Section {
             CountRow(
-                title: "Timed or distance rows", systemImage: "figure.run",
+                title: "Timed or distance sets", systemImage: "timer",
                 count: summary.cardioRowsSkipped, identifier: "\(identifierPrefix).drop.cardio",
                 detail: "Cardio, planks, hangs and carries. Burly logs sets by weight and reps, and Apple Workout tracks cardio."
             )
