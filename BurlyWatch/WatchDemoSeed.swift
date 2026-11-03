@@ -13,6 +13,7 @@
 import Foundation
 import BurlyCore
 import BurlyPersistence
+import BurlySync
 
 #if DEBUG
 @MainActor
@@ -92,6 +93,11 @@ enum WatchDemoSeed {
         /// A guaranteed-empty, isolated store -- the §5 fresh-install case,
         /// independent of whatever the on-device default store holds.
         case empty
+        /// A real applied snapshot carrying the shipped catalog and no
+        /// routines: a phone whose user has not built one yet. §5's
+        /// snapshot, not a routine, ends "waiting for iPhone", so the home
+        /// shows the list's hint and "Empty session".
+        case syncedNoRoutines
         /// Deliberately fails during construction (m2-01 review finding
         /// 2.1). Exists so BurlyWatchUITests can drive the fail-closed path
         /// end to end: a recognized scenario whose seed cannot be built
@@ -221,6 +227,8 @@ enum WatchDemoSeed {
         case .activeLegDay:
             try seedRoutinesIfNeeded(into: store)
             try seedActiveLegDayIfNeeded(into: store)
+        case .syncedNoRoutines:
+            try seedSyncedCatalog(into: store)
         case .empty, .brokenSeed:
             break
         }
@@ -324,6 +332,20 @@ enum WatchDemoSeed {
         storeURL
             .deletingPathExtension()
             .appendingPathExtension("activeConflictSeeded")
+    }
+
+    /// Through the watch's own snapshot apply, so the sync journal records
+    /// it exactly as a phone push would. Idempotent: a reopened file store
+    /// already holds version 1, which the apply refuses as stale.
+    private static func seedSyncedCatalog(into store: SwiftDataStore) throws {
+        try SeedLoader.applyBundled(to: store)
+        try store.replaceWatchWorkingSet(BurlySnapshotPayloadDTO(
+            version: 1,
+            exercises: try store.exercises(includingArchived: true),
+            routines: [],
+            displayUnit: .kilograms,
+            restDefault: RestDuration.globalDefault
+        ))
     }
 
     private static func seedRoutines(into store: SwiftDataStore) throws {

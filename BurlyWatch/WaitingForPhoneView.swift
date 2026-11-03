@@ -3,12 +3,20 @@
 // 'waiting for iPhone' state; arrival of snapshot + digest unlocks the
 // routine list." This is what an empty watch store shows until the phone's
 // first snapshot arrives. If the phone sent a snapshot from a newer Burly
-// (§5: held, never partly read), it says to update instead of waiting.
+// (§5: held, never partly read), it says to update instead of waiting,
+// including after a relaunch (`WatchSyncHost` keeps the held version).
 
 import SwiftUI
+import BurlyWatchSyncRuntime
 
 struct WaitingForPhoneView: View {
     var needsAppUpdate = false
+    /// Written by `WatchSyncHost`; 0 when nothing is held.
+    @AppStorage(WatchSyncHost.heldSchemaVersionDefaultsKey) private var heldSchemaVersion = 0
+
+    private var showsUpdate: Bool {
+        needsAppUpdate || WatchSyncHost.needsAppUpdate(heldSchemaVersion: heldSchemaVersion)
+    }
 
     var body: some View {
         // Scroll-capable so large Dynamic Type can't clip the instructions
@@ -29,12 +37,13 @@ struct WaitingForPhoneView: View {
                     // contract here, so BurlyWatchUITests keeps both
                     // (m2-01 review finding 6.2).
                     .accessibilityIdentifier("waitingForPhoneView.headline")
-                Text(needsAppUpdate
+                Text(showsUpdate
                     ? "Your iPhone has a newer version of Burly. Update Burly on Apple Watch to sync your routines."
                     : "Open Burly on your iPhone to sync your routines.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("waitingForPhoneView.detail")
             }
             .padding()
             .frame(maxWidth: .infinity)

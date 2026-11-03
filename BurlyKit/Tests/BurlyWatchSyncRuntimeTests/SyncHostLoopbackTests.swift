@@ -87,6 +87,7 @@ struct SyncHostLoopbackTests {
     @Test("a snapshot from a newer schema is held and surfaced, and changes nothing")
     func newerSchemaIsHeld() async throws {
         let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
         try await rig.activateBoth()
         let future = Data(#"{"schemaVersion":99,"kind":"snapshot","payload":{}}"#.utf8)
 
@@ -102,6 +103,43 @@ struct SyncHostLoopbackTests {
 
         #expect(rig.watchHost.heldSchemaVersion == 99)
         #expect(try rig.watch.watchSyncState().lastAppliedSnapshotVersion == nil)
+    }
+
+    @Test("a held schema is still surfaced after a relaunch, and a readable snapshot clears it")
+    func heldSchemaSurvivesRelaunchUntilASnapshotApplies() async throws {
+        let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
+        try await rig.activateBoth()
+        rig.watchSession.delegate?.transportDidReceive(
+            channel: .digestApplicationContext,
+            data: Data(#"{"schemaVersion":99,"kind":"digest","payload":{}}"#.utf8),
+            metadata: WCSessionTransferMetadata(kind: BurlySyncPayloadKind.digest.rawValue)
+        )
+        await rig.watchHost.flushEvents()
+        #expect(rig.watchDefaults.integer(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == 99)
+        #expect(WatchSyncHost.needsAppUpdate(heldSchemaVersion: 99))
+
+        // The next launch has heard nothing from the phone yet.
+        let relaunched = try WatchSyncHost(store: rig.watch, session: LoopbackSession(), defaults: rig.watchDefaults)
+        #expect(relaunched.heldSchemaVersion == 99)
+
+        // A snapshot this build reads means the phone speaks its schema.
+        await rig.deliverPhoneToWatch()
+        #expect(rig.watchHost.heldSchemaVersion == nil)
+        #expect(rig.watchDefaults.object(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == nil)
+    }
+
+    @Test("a held schema this build can read is dropped at launch: the watch app was updated")
+    func heldSchemaThisBuildReadsIsDroppedAtLaunch() throws {
+        let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
+        rig.watchDefaults.set(BurlySync.currentSchemaVersion, forKey: WatchSyncHost.heldSchemaVersionDefaultsKey)
+        #expect(!WatchSyncHost.needsAppUpdate(heldSchemaVersion: BurlySync.currentSchemaVersion))
+
+        let relaunched = try WatchSyncHost(store: rig.watch, session: LoopbackSession(), defaults: rig.watchDefaults)
+
+        #expect(relaunched.heldSchemaVersion == nil)
+        #expect(rig.watchDefaults.object(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == nil)
     }
 
     @Test("a snapshot transfer that cannot start clears the phone's outstanding slot")
@@ -201,6 +239,10 @@ private struct Rig {
     let watchSession = LoopbackSession()
     let phoneHost: PhoneSyncHost
     let watchHost: WatchSyncHost
+    /// The watch host's own defaults suite, so a held schema never leaks
+    /// between tests or into the test runner's standard defaults.
+    let watchDefaults: UserDefaults
+    private let watchDefaultsSuite = "burly.tests.watchSyncHost.\(UUID().uuidString)"
 
     /// `seedWatch` runs before the watch host exists: what it stores is
     /// what an earlier launch left behind.
@@ -222,7 +264,12 @@ private struct Rig {
                 digestPublishDebounce: .milliseconds(1)
             )
         )
-        watchHost = try WatchSyncHost(store: watch, session: watchSession)
+        watchDefaults = UserDefaults(suiteName: watchDefaultsSuite)!
+        watchHost = try WatchSyncHost(store: watch, session: watchSession, defaults: watchDefaults)
+    }
+
+    func removeWatchDefaults() {
+        watchDefaults.removePersistentDomain(forName: watchDefaultsSuite)
     }
 
     func activateBoth() async throws {
