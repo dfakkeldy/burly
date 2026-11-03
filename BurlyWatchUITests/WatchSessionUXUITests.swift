@@ -101,7 +101,7 @@ final class WatchSessionUXUITests: XCTestCase {
         anyElement(app, identifier: "ellipsisMenu").tap()
         let endWorkout = app.buttons["sessionActions.endWorkout"]
         XCTAssertTrue(scrollUntilExists(app, endWorkout), "Expected to be able to scroll to 'End workout'")
-        endWorkout.tap()
+        tapRow(endWorkout, in: app)
         let finishButton = app.buttons["sessionSummary.finishButton"]
         XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
         finishButton.tap()
@@ -132,6 +132,31 @@ final class WatchSessionUXUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: end)
         }
         return element.exists
+    }
+
+    /// Taps a list row on the part of it below the sheet's navigation bar:
+    /// a row half under the bar reads as hittable, but a tap at its centre
+    /// lands on the bar and closes the sheet (`SessionActionsUITests.tapRow`).
+    private func tapRow(_ element: XCUIElement, in app: XCUIApplication, line: UInt = #line) {
+        let barBottom = app.navigationBars.allElementsBoundByIndex.map { $0.frame.maxY }.max() ?? 62
+        let screen = screenBounds(app)
+        for _ in 0..<4 {
+            guard element.exists else { break }
+            let frame = element.frame
+            let top = max(frame.minY, barBottom)
+            let bottom = min(frame.maxY, screen.maxY)
+            if bottom - top >= 16 {
+                let dy = ((top + bottom) / 2 - frame.minY) / frame.height
+                element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy)).tap()
+                return
+            }
+            let towardMiddle: CGFloat = frame.midY < screen.midY ? 0.15 : -0.15
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5 + towardMiddle))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        XCTFail("Could not tap \(element) below the navigation bar", line: line)
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {

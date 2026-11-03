@@ -24,14 +24,14 @@ final class SessionActionsUITests: XCTestCase {
         let addSet = app.buttons["sessionActions.addSet"]
         XCTAssertTrue(scrollUntilExists(app, addSet))
         XCTAssertTrue(addSet.isEnabled, "A current exercise should allow adding a set")
-        addSet.tap()
+        tapRow(addSet, in: app)
         XCTAssertTrue(waitFor { setCounter.exists && setCounter.label == "Set 1 of 4" })
 
         openActions(in: app)
         let removeEmptySet = app.buttons["sessionActions.removeEmptySet"]
         XCTAssertTrue(scrollUntilExists(app, removeEmptySet))
         XCTAssertTrue(removeEmptySet.isEnabled, "An unlogged fourth slot should be removable")
-        removeEmptySet.tap()
+        tapRow(removeEmptySet, in: app)
         XCTAssertTrue(waitFor { setCounter.exists && setCounter.label == "Set 1 of 3" })
 
         let logSet = app.buttons["logSetButton"]
@@ -59,7 +59,7 @@ final class SessionActionsUITests: XCTestCase {
         let skip = app.buttons["sessionActions.skipExercise"]
         XCTAssertTrue(scrollUntilExists(app, skip))
         XCTAssertTrue(skip.isEnabled)
-        skip.tap()
+        tapRow(skip, in: app)
 
         let emptySessionAdd = app.buttons["emptySession.addExercise"]
         XCTAssertTrue(
@@ -106,7 +106,7 @@ final class SessionActionsUITests: XCTestCase {
         openActions(in: app)
         let moveUp = app.buttons["sessionActions.moveUp"]
         XCTAssertTrue(scrollUntilExists(app, moveUp))
-        moveUp.tap()
+        tapRow(moveUp, in: app)
         XCTAssertTrue(
             waitFor { exerciseName.exists && (exerciseName.value as? String) == "Exercise 2 of 3" },
             "Expected Barbell Curl on the middle page, got \(String(describing: exerciseName.value))"
@@ -116,7 +116,7 @@ final class SessionActionsUITests: XCTestCase {
         openActions(in: app)
         let skip = app.buttons["sessionActions.skipExercise"]
         XCTAssertTrue(scrollUntilExists(app, skip))
-        skip.tap()
+        tapRow(skip, in: app)
 
         XCTAssertTrue(
             waitFor { exerciseName.exists && exerciseName.label == "Barbell Bench Press" },
@@ -143,7 +143,7 @@ final class SessionActionsUITests: XCTestCase {
         let moveUp = app.buttons["sessionActions.moveUp"]
         XCTAssertTrue(scrollUntilExists(app, moveUp))
         XCTAssertTrue(moveUp.isEnabled)
-        moveUp.tap()
+        tapRow(moveUp, in: app)
 
         XCTAssertTrue(
             waitFor { exerciseName.exists && (exerciseName.value as? String) == "Exercise 1 of 2" },
@@ -155,7 +155,7 @@ final class SessionActionsUITests: XCTestCase {
         let moveDown = app.buttons["sessionActions.moveDown"]
         XCTAssertTrue(scrollUntilExists(app, moveDown))
         XCTAssertTrue(moveDown.isEnabled)
-        moveDown.tap()
+        tapRow(moveDown, in: app)
         XCTAssertTrue(
             waitFor { exerciseName.exists && (exerciseName.value as? String) == "Exercise 2 of 2" },
             "Move down must return the exercise to the second page, got \(String(describing: exerciseName.value))"
@@ -243,7 +243,7 @@ final class SessionActionsUITests: XCTestCase {
         )
         for _ in 0..<40 {
             if exercise.exists && exercise.isHittable {
-                exercise.tap()
+                tapRow(exercise, in: app, file: file, line: line)
                 return
             }
             dragUpOneRow(in: app)
@@ -253,51 +253,54 @@ final class SessionActionsUITests: XCTestCase {
 
     /// Full-screen watch swipes jump from rows 1-4 to rows 6-9, so a lazy
     /// row at position 5 is never realized. Move roughly one row at a time.
-    ///
-    /// Then make sure the row sits below the sheet's navigation bar before
-    /// anyone taps it. One drag can leave a row realized but tucked under
-    /// the bar (the Skip row came to rest at y 25-81 under a 62 pt bar):
-    /// XCUITest still calls it hittable, but a tap at its centre lands on
-    /// the bar, which closes the sheet without running the action. That
-    /// made a skip look like a pager that never redrew.
     private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 20) -> Bool {
         for _ in 0..<maxAttempts {
             if element.exists {
                 Thread.sleep(forTimeInterval: 0.4)
-                return revealBelowNavigationBar(app, element)
+                return true
             }
             dragUpOneRow(in: app)
         }
-        return element.exists && revealBelowNavigationBar(app, element)
+        return element.exists
     }
 
-    private func revealBelowNavigationBar(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
-        let barBottom = app.navigationBars.allElementsBoundByIndex
-            .map { $0.frame.maxY }
-            .max() ?? 62
+    /// Taps an action row on the part of it that shows below the sheet's
+    /// navigation bar. A drag can leave a row realized but half under the
+    /// bar (the Skip row came to rest at y 25-81 under a 62 pt bar):
+    /// XCUITest still calls it hittable, but `tap()` at its centre lands on
+    /// the bar, which closes the sheet without running the action. That
+    /// made a skip look like a pager that never redrew.
+    private func tapRow(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let barBottom = app.navigationBars.allElementsBoundByIndex.map { $0.frame.maxY }.max() ?? 62
         let screen = app.windows.firstMatch.exists ? app.windows.firstMatch.frame : app.frame
-        for _ in 0..<6 {
+        for _ in 0..<4 {
+            guard element.exists else { break }
             let frame = element.frame
-            if frame.minY >= barBottom, frame.maxY <= screen.maxY { return true }
-            if frame.minY < barBottom {
-                dragDownHalfRow(in: app)
-            } else {
-                dragUpOneRow(in: app)
+            let top = max(frame.minY, barBottom)
+            let bottom = min(frame.maxY, screen.maxY)
+            if bottom - top >= 16 {
+                let dy = ((top + bottom) / 2 - frame.minY) / frame.height
+                element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy)).tap()
+                return
             }
+            // Barely showing: nudge it toward the middle, slowly and with a
+            // hold at the end so the list does not fling past it.
+            let towardMiddle: CGFloat = frame.midY < screen.midY ? 0.15 : -0.15
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5 + towardMiddle))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
             Thread.sleep(forTimeInterval: 0.4)
         }
-        let frame = element.frame
-        return element.exists && frame.minY >= barBottom && frame.maxY <= screen.maxY
+        XCTFail("Could not tap \(element) below the navigation bar", file: file, line: line)
     }
 
     private func dragUpOneRow(in app: XCUIApplication) {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
-        start.press(forDuration: 0.05, thenDragTo: end)
-    }
-
-    private func dragDownHalfRow(in app: XCUIApplication) {
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
