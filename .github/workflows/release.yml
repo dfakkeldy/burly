@@ -1,45 +1,61 @@
 name: Release
 
-# TAG-TRIGGERED ONLY. This job archives, signs, and uploads to App
-# Store Connect using GH Actions secrets (ASC_KEY_ID / ASC_ISSUER_ID /
-# ASC_PRIVATE_KEY). It must never run on pull_request -- a fork PR must
-# never be able to see or exfiltrate these secrets. The tag-only
-# trigger below already excludes pull_request, and the explicit
-# `if: github.event_name == 'push'` guard on the job is belt-and-braces
-# in case this workflow is ever copy/pasted into a file with a broader
-# `on:` block.
+# TAG-TRIGGERED UPLOAD, MANUAL DRY RUN. This job archives and signs with
+# the App Store Connect API key held in GitHub Actions secrets
+# (ASC_KEY_ID / ASC_ISSUER_ID / ASC_PRIVATE_KEY).
+#
+#   - push of a burly-m*, burly-rc* or v* tag: archive, export, UPLOAD to
+#     App Store Connect (TestFlight).
+#   - workflow_dispatch: DRY RUN. Archive and export an App Store .ipa
+#     with destination "export", then ask App Store Connect to validate
+#     it. It proves the key's role and the cloud distribution signing,
+#     and it runs Apple's upload checks (purpose strings, icons,
+#     entitlements) that a plain export never reaches. It NEVER uploads.
+#     (GitHub only offers the manual run once this file is on the
+#     default branch.)
+#
+# It must never run on pull_request: a fork PR must never be able to see
+# or exfiltrate these secrets. The `on:` block below already excludes
+# pull_request, and the job-level `if:` allows exactly two cases (a tag
+# push, or a manual dispatch) in case this file is ever copy/pasted next
+# to a broader `on:` block. The upload step has its own, narrower `if:`
+# (a push of a tag), so a dispatch cannot reach it even by mistake.
 on:
   push:
     tags:
       - 'burly-m*'
       - 'burly-rc*'
       - 'v*'
+  workflow_dispatch:
 
 concurrency:
-  # Scoped to the ref (the tag) rather than the workflow, so pushing a
-  # second tag doesn't cancel an in-flight upload for a different tag.
-  # A duplicate push of the SAME tag (rare -- tags are meant to be
-  # immutable) is allowed to cancel-in-progress. App Store Connect does
-  # NOT de-dupe by build number -- it requires a unique
-  # version+build pair and rejects a repeat. Safety against a re-run
-  # colliding with a prior successful upload comes from the build
-  # number including github.run_attempt (see the Resolve step below),
-  # not from any ASC de-dupe behavior.
+  # Scoped to the ref (the tag, or the branch for a dry run) rather than
+  # the workflow, so pushing a second tag doesn't cancel an in-flight
+  # upload for a different tag, and nothing cancels an upload that has
+  # already started (cancel-in-progress is false). App Store Connect does
+  # NOT de-dupe by build number -- it requires a unique version+build
+  # pair and rejects a repeat. Safety against a re-run colliding with a
+  # prior successful upload comes from the build number including
+  # github.run_attempt (see the Resolve step below), not from any ASC
+  # de-dupe behavior.
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   testflight-upload:
-    name: Archive & upload to TestFlight
-    # Guards against this job ever running for a plain branch push if
-    # `on:` above is broadened later -- only tag pushes should reach
-    # this job. See the header comment for why pull_request must also
-    # never reach it.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    name: Archive & upload to TestFlight (dry run on dispatch)
+    # Exactly: a push of a tag, or a manual dispatch. pull_request can
+    # never reach this job.
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+      || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      # True only for a tag push. Every step that uploads checks this.
+      IS_TAG_PUSH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -78,6 +94,8 @@ jobs:
       #     v<X.Y.Z>          -> X.Y.Z       (the release train's actual
       #                                       App Store submission, taken
       #                                       literally)
+      #   A dry run (workflow_dispatch) has no tag: it keeps the project's
+      #   own MARKETING_VERSION and only overrides the build number.
       #   CURRENT_PROJECT_VERSION (the build number) is
       #   `github.run_number`.`github.run_attempt` -- run_number is
       #   monotonically increasing per workflow *identity* (not across the
@@ -98,8 +116,21 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/}"
           BUILD_NUMBER="${{ github.run_number }}.${{ github.run_attempt }}"
+
+          if [[ "$IS_TAG_PUSH" != "true" ]]; then
+            # Dry run: no tag, keep the project's marketing version.
+            {
+              echo "label=dry-run"
+              echo "tag="
+              echo "marketing_version="
+              echo "build_number=$BUILD_NUMBER"
+            } >> "$GITHUB_OUTPUT"
+            echo "Dry run (no upload): build number $BUILD_NUMBER, marketing version left as in the project"
+            exit 0
+          fi
+
+          TAG="${GITHUB_REF#refs/tags/}"
 
           # Milestone/RC numbers use the `0|[1-9][0-9]*` pattern to reject
           # leading zeros (a bare "0" is still allowed). Without this,
@@ -124,6 +155,7 @@ jobs:
           fi
 
           {
+            echo "label=$TAG"
             echo "tag=$TAG"
             echo "marketing_version=$MARKETING_VERSION"
             echo "build_number=$BUILD_NUMBER"
@@ -138,8 +170,9 @@ jobs:
       # extracts it to a file/artifact/job-summary so the dispatcher's
       # post-upload step (which sets TestFlight "What to Test" via
       # asc-mcp once the build finishes processing) doesn't have to
-      # re-derive it later.
+      # re-derive it later. A dry run has no tag, so it skips this.
       - name: Extract what's-new from tag annotation
+        if: env.IS_TAG_PUSH == 'true'
         id: whats-new
         env:
           TAG: ${{ steps.version.outputs.tag }}
@@ -196,8 +229,17 @@ jobs:
       # dependency) BurlyWatch targets, which both use
       # CODE_SIGN_STYLE = Automatic in the project.
       - name: Archive BurlyPhone
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          MARKETING_VERSION_OVERRIDE: ${{ steps.version.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
         run: |
           set -euo pipefail
+          overrides=("CURRENT_PROJECT_VERSION=$BUILD_NUMBER")
+          if [[ -n "$MARKETING_VERSION_OVERRIDE" ]]; then
+            overrides+=("MARKETING_VERSION=$MARKETING_VERSION_OVERRIDE")
+          fi
           xcodebuild archive \
             -project Burly.xcodeproj \
             -scheme BurlyPhone \
@@ -206,24 +248,25 @@ jobs:
             -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
-            MARKETING_VERSION="${{ steps.version.outputs.marketing_version }}" \
-            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_number }}" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            "${overrides[@]}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log"
 
-      # method "app-store-connect" + destination "upload" makes
-      # -exportArchive do the export AND the upload in one step -- this
-      # is the first-party replacement for the old `altool --upload-app`
-      # / fastlane pilot/deliver flow. Confirmed present in the Xcode
-      # 26.6 toolchain this workflow pins (xcrun --find altool and
-      # notarytool both resolve under the same Xcode 26.6 install used
-      # for local verification; -exportArchive's destination=upload key
-      # is part of xcodebuild itself, not a separate binary).
+      # Two export-options files, so that "can this run upload?" is
+      # decided by which file a step reads, and the upload step is the
+      # only one that reads the upload file.
+      #   export.plist  -> destination "export": writes an .ipa to disk.
+      #   upload.plist  -> destination "upload": -exportArchive exports AND
+      #                    uploads in one step (the first-party replacement
+      #                    for the old `altool --upload-app` / fastlane
+      #                    pilot/deliver flow; the key is part of xcodebuild
+      #                    itself, not a separate binary).
       - name: Write export options
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/ExportOptions.plist" <<'PLIST'
+          write_plist() {
+            cat > "$RUNNER_TEMP/$1.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -231,7 +274,7 @@ jobs:
               <key>method</key>
               <string>app-store-connect</string>
               <key>destination</key>
-              <string>upload</string>
+              <string>$2</string>
               <key>signingStyle</key>
               <string>automatic</string>
               <key>uploadSymbols</key>
@@ -239,31 +282,140 @@ jobs:
           </dict>
           </plist>
           PLIST
+          }
+          write_plist export export
+          if [[ "$IS_TAG_PUSH" == "true" ]]; then
+            write_plist upload upload
+          fi
 
-      - name: Export & upload to App Store Connect
+      # DRY RUN ONLY. destination "export" signs for distribution (which
+      # is what needs the Admin-role key and cloud-managed distribution
+      # certificate) and writes an .ipa, but contacts no upload service.
+      - name: Export App Store .ipa (dry run, no upload)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -euo pipefail
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
-            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee "$RUNNER_TEMP/export.log"
+          ls -l "$RUNNER_TEMP/export"
+          test -n "$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)"
+          echo "Dry run: exported an App Store .ipa; nothing was uploaded." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # DRY RUN ONLY. Sends the exported .ipa to App Store Connect for
+      # validation: the server-side checks an upload runs before Apple
+      # accepts it, but no build is created. The export above never reaches
+      # those checks, so without this step a missing purpose string
+      # (ITMS-90683) surfaces only on a tag push; Free Lunch's first
+      # upload was refused that way. Apple calls this validation limited,
+      # so it narrows the gap rather than guaranteeing an upload will pass.
+      #
+      # altool finds an API key only as AuthKey_<key ID>.p8 in
+      # $API_PRIVATE_KEYS_DIR, so the step makes a correctly named copy
+      # (removed by its trap, and by the cleanup step's rm -rf if the step
+      # is killed). Classic flag spelling (-f, -t, --apiKey, --apiIssuer),
+      # as fastlane uses with Xcode 26's altool; no --verbose, which can
+      # echo identifiers into this public log. Xcode 26's altool has exited
+      # 0 on server-side errors, so the step fails on error text as well as
+      # on the exit code, and passes only when altool reports success.
+      - name: Validate .ipa with App Store Connect (dry run, no upload)
+        if: github.event_name == 'workflow_dispatch'
+        timeout-minutes: 15
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYS="$RUNNER_TEMP/asc/private_keys"
+          mkdir -p "$KEYS"
+          trap 'rm -rf "$KEYS"' EXIT
+          cp "$RUNNER_TEMP/asc/asc.p8" "$KEYS/AuthKey_${ASC_KEY_ID}.p8"
+
+          shopt -s nullglob
+          IPAS=("$RUNNER_TEMP"/export/*.ipa)
+          if (( ${#IPAS[@]} != 1 )); then
+            echo "::error::expected exactly one .ipa in \$RUNNER_TEMP/export, found ${#IPAS[@]}"
+            exit 1
+          fi
+
+          LOG="$RUNNER_TEMP/validate.log"
+          scrub() { perl -pe 'for my $v (@ENV{qw(ASC_KEY_ID ASC_ISSUER_ID)}) { s/\Q$v\E/***/g if length($v // "") }'; }
+          # Which altool ran, for reading the log later.
+          { xcrun --find altool; xcrun altool --version || true; } 2>&1 | scrub
+
+          set +e
+          API_PRIVATE_KEYS_DIR="$KEYS" xcrun altool --validate-app \
+            -f "${IPAS[0]}" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" \
+            2>&1 | scrub | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          set -e
+
+          # Failure text in the forms altool and Transporter print: a log-level
+          # "ERROR:", "*** Error", "ERROR ITMS-<code>", an NSError dump, the
+          # "VERIFY FAILED" banner, "Failed to validate package", and 90683 as
+          # a whole number (not inside a hex delivery ID). 90683 fails the step
+          # even on a WARNING line, on purpose: App Store Connect refused Free
+          # Lunch's first upload outright with it, and this app embeds a Watch
+          # app the same way. Other bare ITMS codes are not matched because
+          # warnings carry them too.
+          ERR='(^|[^[:alnum:]_])error:|\*\*\* ?error|(^|[^[:alnum:]_])error[[:space:]]+itms-[0-9]+|error domain=|(validation|verif(y|ication)|upload) failed|failed to validate|(^|[^0-9a-fx])90683([^0-9a-f]|$)'
+          WARN='(^|[^[:alnum:]_])warn(ing)?:|\*\*\* ?warning|(^|[^[:alnum:]_])warning[[:space:]]+itms-[0-9]+'
+          if (( rc != 0 )) || grep -Eiq "$ERR" "$LOG"; then
+            echo "::error::App Store Connect validation failed (altool exit $rc); see validate.log"
+            exit 1
+          fi
+          { grep -Ei "$WARN" "$LOG" || true; } | head -n 10 | sed 's/^/::warning::/'
+          # Pass only on positive evidence: Xcode 26.6 prints "VERIFY
+          # SUCCEEDED with no errors" and "No errors validating archive".
+          # If a later Xcode words it differently, this fails loudly rather
+          # than reporting an unconfirmed validation as a pass.
+          if ! grep -Eiq 'verify succeeded|no errors validating|validat[a-z]* succe|succe[a-z]* validat' "$LOG"; then
+            echo "::error::altool printed no recognised success line; read validate.log"
+            exit 1
+          fi
+          echo "Dry run: App Store Connect validated the .ipa; nothing was uploaded." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # THE ONLY UPLOAD. Reachable only from a push of a tag.
+      - name: Export & upload to App Store Connect
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Burly.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/upload.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/asc.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             2>&1 | tee "$RUNNER_TEMP/export.log"
 
       # Belt-and-braces: runs even if archive/export failed above, and
       # even though $RUNNER_TEMP itself is wiped at the end of the job
       # regardless. The key must not survive to the next step's cache
       # or to a debugging shell an operator might attach later in the
-      # same job.
+      # same job. Removes the whole directory, so the key copy the
+      # validate step makes for altool goes too if that step was killed.
       - name: Remove ASC private key
         if: always()
-        run: rm -f "$RUNNER_TEMP/asc/asc.p8"
+        run: rm -rf "$RUNNER_TEMP/asc"
 
-      # Log tail only, and only the two xcodebuild logs -- never the
-      # exportOptions plist (no secrets in it) or anything under
+      # Log tail only, and only the xcodebuild and altool logs -- never
+      # the export-options plists (no secrets in them) or anything under
       # $RUNNER_TEMP/asc. The real key material (the .p8 file contents)
       # is never printed by any step above -- only referenced by path.
       #
@@ -284,7 +436,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/log-tail"
-          for f in archive export; do
+          for f in archive export validate; do
             if [[ -f "$RUNNER_TEMP/$f.log" ]]; then
               tail -n 500 "$RUNNER_TEMP/$f.log" \
                 | perl -pe 'for my $v (@ENV{qw(ASC_KEY_ID ASC_ISSUER_ID)}) { s/\Q$v\E/***/g if length($v // "") }' \
@@ -296,7 +448,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: release-build-log-${{ steps.version.outputs.tag }}-${{ github.run_number }}
+          name: release-build-log-${{ steps.version.outputs.label || 'unresolved' }}-${{ github.run_number }}
           path: |
             ${{ runner.temp }}/log-tail/*.tail.log
             ${{ runner.temp }}/whats-new.txt
