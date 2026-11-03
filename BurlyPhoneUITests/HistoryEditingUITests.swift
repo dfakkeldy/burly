@@ -63,11 +63,15 @@ final class HistoryEditingUITests: XCTestCase {
             anyElement(app, identifier: "historyTab.sessionRow.\(Self.loggedSessionID)").waitForNonExistence(timeout: 10),
             "The deleted session must leave History"
         )
-        let notice = anyElement(app, identifier: "historyTab.notice.message")
+        let notice = anyElement(app, identifier: "historyTab.notice.message.\(Self.loggedSessionID)")
         XCTAssertTrue(notice.waitForExistence(timeout: 10), "A Health copy that was not removed must be reported")
         XCTAssertTrue(notice.label.contains("Health app"), "The report must say how to remove it by hand: \(notice.label)")
+        XCTAssertTrue(
+            anyElement(app, identifier: "historyTab.notice.title.\(Self.loggedSessionID)").label.contains("Leg Day"),
+            "The report must name the workout it is about"
+        )
         attachScreenshot(from: app, name: "BurlyPhone-deleteHealthNotice")
-        anyElement(app, identifier: "historyTab.notice.dismiss").tap()
+        anyElement(app, identifier: "historyTab.notice.dismiss.\(Self.loggedSessionID)").tap()
         XCTAssertTrue(notice.waitForNonExistence(timeout: 5))
     }
 
@@ -84,6 +88,10 @@ final class HistoryEditingUITests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(identifier: "historyTab.confirmDeleteSession").firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(staticText(containing: "Apple Health", in: app).exists)
         dismissDialog(in: app)
+        XCTAssertTrue(
+            app.buttons.matching(identifier: "historyTab.confirmDeleteSession").firstMatch.waitForNonExistence(timeout: 5),
+            "The confirmation must close without deleting"
+        )
         XCTAssertTrue(linkedRow.waitForExistence(timeout: 5), "Cancelling must keep the session")
 
         swipeToDelete(linkedRow, sessionID: Self.loggedSessionID, in: app)
@@ -92,7 +100,7 @@ final class HistoryEditingUITests: XCTestCase {
         confirm.tap()
         XCTAssertTrue(linkedRow.waitForNonExistence(timeout: 10), "The confirmed delete must remove the row")
         XCTAssertFalse(
-            anyElement(app, identifier: "historyTab.notice.message").waitForExistence(timeout: 3),
+            firstElement(app, identifierPrefix: "historyTab.notice.message.").waitForExistence(timeout: 3),
             "A removed Health copy needs no second message"
         )
 
@@ -109,7 +117,7 @@ final class HistoryEditingUITests: XCTestCase {
         XCTAssertTrue(
             anyElement(app, identifier: "historyTab.sessionRow.\(unlinkedID)").waitForNonExistence(timeout: 10)
         )
-        XCTAssertFalse(anyElement(app, identifier: "historyTab.notice.message").waitForExistence(timeout: 2))
+        XCTAssertFalse(firstElement(app, identifierPrefix: "historyTab.notice.message.").waitForExistence(timeout: 2))
     }
 
     // MARK: - Detail edits
@@ -187,6 +195,7 @@ final class HistoryEditingUITests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Removing an exercise must ask first")
         XCTAssertTrue(staticText(containing: "2 sets", in: app).exists, "The confirmation must say how many sets go with it")
         dismissDialog(in: app)
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 5), "The confirmation must close without removing")
         assertRevision(1, in: app)
         XCTAssertTrue(app.staticTexts["historyDetail.exercise.\(Self.benchPressExerciseID)"].exists, "Cancel must keep the exercise")
 
@@ -348,22 +357,37 @@ final class HistoryEditingUITests: XCTestCase {
 
     /// Reveals the row's trailing swipe action and taps Delete.
     private func swipeToDelete(_ row: XCUIElement, sessionID: String, in app: XCUIApplication) {
-        row.swipeLeft()
-        let byIdentifier = app.buttons["historyTab.deleteSession.\(sessionID)"]
-        let delete = byIdentifier.waitForExistence(timeout: 3) ? byIdentifier : app.buttons["Delete"].firstMatch
-        XCTAssertTrue(delete.waitForExistence(timeout: 3), "Expected the row's Delete swipe action")
+        let delete = app.buttons["historyTab.deleteSession.\(sessionID)"]
+        // A second swipe covers one that landed while a dismissal was still
+        // animating.
+        for _ in 0..<2 where !delete.exists {
+            row.swipeLeft()
+            _ = delete.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(delete.exists, "Expected the row's Delete swipe action")
         delete.tap()
     }
 
-    /// Cancels a confirmation dialog: its Cancel button when the system
-    /// draws one, otherwise a tap outside (iOS 26 can anchor the dialog as
-    /// a popover with no Cancel row).
+    /// Cancels a confirmation dialog. iOS 26 on iPhone draws it as a
+    /// popover with no Cancel row, over a full-screen "PopoverDismissRegion";
+    /// a tap on that region outside the popover's own frame closes it. An
+    /// older action sheet's Cancel button is used when there is one.
     private func dismissDialog(in app: XCUIApplication) {
-        let cancel = app.buttons["Cancel"]
-        if cancel.waitForExistence(timeout: 2) {
-            cancel.tap()
+        let region = app.otherElements["PopoverDismissRegion"]
+        if region.waitForExistence(timeout: 2) {
+            let popover = app.popovers.firstMatch.frame
+            let screen = app.frame
+            // Whichever side of the popover has more room.
+            let y = popover.minY - screen.minY > screen.maxY - popover.maxY
+                ? (popover.minY + screen.minY) / 2
+                : (popover.maxY + screen.maxY) / 2
+            app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: screen.midX, dy: y))
+                .tap()
         } else {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+            let cancel = app.buttons["Cancel"]
+            XCTAssertTrue(cancel.waitForExistence(timeout: 2), "Expected a way to cancel the dialog")
+            cancel.tap()
         }
     }
 

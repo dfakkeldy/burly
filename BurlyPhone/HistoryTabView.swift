@@ -69,8 +69,8 @@ struct HistoryTabView: View {
                 VStack(spacing: 0) {
                     // Deleting the last workout lands here, and its Health
                     // report must still be seen.
-                    if let notice = viewModel.historyNotice {
-                        HistoryNoticeRow(notice: notice) { viewModel.dismissHistoryNotice() }
+                    ForEach(viewModel.historyNotices) { notice in
+                        HistoryNoticeRow(notice: notice) { viewModel.dismissHistoryNotice(id: notice.id) }
                             .padding()
                     }
                     EmptyStateView(
@@ -94,9 +94,11 @@ struct HistoryTabView: View {
                     // raised the moment a dialog closes or a pop animates is
                     // a presentation that can be dropped, and this one tells
                     // the user about a copy they still have to remove.
-                    if let notice = viewModel.historyNotice {
+                    if !viewModel.historyNotices.isEmpty {
                         Section {
-                            HistoryNoticeRow(notice: notice) { viewModel.dismissHistoryNotice() }
+                            ForEach(viewModel.historyNotices) { notice in
+                                HistoryNoticeRow(notice: notice) { viewModel.dismissHistoryNotice(id: notice.id) }
+                            }
                         }
                     }
                     if let placeholder = viewModel.namingQueue.first {
@@ -171,15 +173,15 @@ private struct HistoryNoticeRow: View {
         VStack(alignment: .leading, spacing: 6) {
             Label(notice.title, systemImage: "heart.text.square")
                 .font(.headline)
-                .accessibilityIdentifier("historyTab.notice.title")
+                .accessibilityIdentifier("historyTab.notice.title.\(notice.id.uuidString)")
             Text(notice.message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("historyTab.notice.message")
+                .accessibilityIdentifier("historyTab.notice.message.\(notice.id.uuidString)")
             Button("Dismiss", action: onDismiss)
                 .buttonStyle(.borderless)
-                .accessibilityIdentifier("historyTab.notice.dismiss")
+                .accessibilityIdentifier("historyTab.notice.dismiss.\(notice.id.uuidString)")
         }
         .padding(.vertical, 4)
     }

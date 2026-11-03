@@ -56,10 +56,11 @@ final class PhoneHomeViewModel {
     // Archived metadata still names past work; pickers filter it out.
     private(set) var historyExercises: [ExerciseData] = []
     private(set) var namingQueue: [ExerciseData] = []
-    /// Set when a history delete's Health half did not clearly succeed
-    /// (see HistoryWorkoutHealthCleanup.swift); History shows it at the top
-    /// of the list until the user dismisses it or another delete replaces it.
-    private(set) var historyNotice: HistoryNotice?
+    /// One per history delete whose Health half did not clearly succeed
+    /// (see HistoryWorkoutHealthCleanup.swift), newest first. History shows
+    /// each at the top of the list until the user dismisses it; a later
+    /// delete adds its own and never clears another's.
+    private(set) var historyNotices: [HistoryNotice] = []
 
     // Stats domain. Unlike the shell's count-only snapshot above, this is
     // loaded only when Stats appears and uses the §7 bounded query surfaces.
@@ -413,7 +414,8 @@ final class PhoneHomeViewModel {
     /// copy from bringing it back — after which History, the shell count and
     /// Stats reload and the digest refreshes. The Health half runs after,
     /// never blocking or undoing the first: when it does not clearly
-    /// succeed, `historyNotice` says so and how to finish the job by hand.
+    /// succeed, `historyNotices` gains one that says so and how to finish
+    /// the job by hand.
     func deleteHistorySession(_ session: SessionData) throws {
         let linkedWorkoutID = try store.deleteLoggedSession(id: session.id)
         sync?.historyDidChange()
@@ -426,15 +428,16 @@ final class PhoneHomeViewModel {
         // never asks for HealthKit access.
         guard linkedWorkoutID != nil else { return }
         let healthWorkouts = healthWorkouts
-        let sessionID = session.id
         Task { [weak self] in
-            let outcome = await healthWorkouts.removeWorkouts(linkedTo: sessionID)
-            self?.historyNotice = HistoryNotice(afterRemoving: outcome)
+            let outcome = await healthWorkouts.removeWorkouts(linkedTo: session.id)
+            guard let self, let notice = HistoryNotice(afterRemoving: outcome, from: session) else { return }
+            historyNotices.removeAll { $0.id == notice.id }
+            historyNotices.insert(notice, at: 0)
         }
     }
 
-    func dismissHistoryNotice() {
-        historyNotice = nil
+    func dismissHistoryNotice(id: UUID) {
+        historyNotices.removeAll { $0.id == id }
     }
 
     /// Names a watch placeholder and collects its muscle tags in the same

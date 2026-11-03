@@ -37,6 +37,11 @@ workout. If you allow it:
 - Burly **reads** heart rate and active energy from your watch's sensors
   during a workout, to record them with that workout.
 
+When you delete a workout in Burly on iPhone and Burly saved it to Health,
+Burly also asks Health to delete that workout. The first time, iPhone may
+ask whether Burly can change workouts in Health. If Burly can't delete it, Burly
+tells you, and you can delete it in the Health app.
+
 Health data is used only for these purposes. It is never used for
 advertising or marketing, never sold, and never shared with anyone. If you
 decline, Burly still logs and saves your workouts; nothing else changes. You
@@ -46,7 +51,8 @@ Apps, then Burly.
 ## Deleting your data
 
 Deleting Burly from a device deletes its storage on that device. Workouts
-Burly saved to Apple Health stay in Health until you delete them there.
+Burly saved to Apple Health stay in Health until you delete them there, or
+until you delete them in Burly on iPhone (see Apple Health above).
 
 ## Changes and contact
 

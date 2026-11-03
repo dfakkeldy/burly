@@ -422,7 +422,11 @@ public final class SwiftDataStore: BurlyStore {
             throw BurlyStoreError.notFound(id)
         }
         let workoutID = session.healthKitWorkoutID
-        if let journal = try journalModel(sessionID: id) {
+        // Every read before the first staged change, so a failed fetch can
+        // leave nothing pending for a later unrelated save to commit.
+        let journal = try journalModel(sessionID: id)
+        let hasTombstone = try tombstoneModel(sessionID: id) != nil
+        if let journal {
             // Same reason as `deleteSession`: the journal names its session
             // by plain UUID, so the cascade cannot reach it.
             context.delete(journal)
@@ -430,7 +434,7 @@ public final class SwiftDataStore: BurlyStore {
         // Staged beside the delete so the two land in one save: a crash can
         // leave the session stored or deleted-and-tombstoned, never deleted
         // with nothing to stop a §5 re-delivery from recreating it.
-        if try tombstoneModel(sessionID: id) == nil {
+        if !hasTombstone {
             context.insert(SessionTombstone(sessionID: id, deletedAt: clock.now))
         }
         context.delete(session)

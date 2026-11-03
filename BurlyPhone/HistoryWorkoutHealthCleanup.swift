@@ -31,6 +31,7 @@
 // remover instead.
 
 import Foundation
+import BurlyCore
 import BurlyHealth
 import HealthKit
 
@@ -134,12 +135,16 @@ private final class RemovalRace {
 
 /// What History tells the user after a delete whose Health half did not
 /// clearly succeed. `nil` when it did: the confirmation already said Burly
-/// would ask Health, and success needs no second message.
-struct HistoryNotice: Equatable {
+/// would ask Health, and success needs no second message. One per deleted
+/// session, named in the title, so two deletes in a row each keep their
+/// own report.
+struct HistoryNotice: Equatable, Identifiable {
+    /// The deleted session's id.
+    let id: UUID
     let title: String
     let message: String
 
-    init?(afterRemoving outcome: HealthWorkoutRemoval) {
+    init?(afterRemoving outcome: HealthWorkoutRemoval, from session: SessionData) {
         let removeItYourself = "To remove it, open the Health app and delete it from your workouts."
         let reason: String
         switch outcome {
@@ -156,7 +161,9 @@ struct HistoryNotice: Equatable {
         case .timedOut:
             reason = "Apple Health didn't answer, so Burly couldn't confirm its copy of this workout was removed."
         }
-        title = "Deleted from Burly"
+        id = session.id
+        let workout = "\(session.routineName ?? "Workout"), \(session.startedAt.formatted(date: .abbreviated, time: .omitted))"
+        title = "Deleted from Burly: \(workout)"
         message = "\(reason) \(removeItYourself)"
     }
 }

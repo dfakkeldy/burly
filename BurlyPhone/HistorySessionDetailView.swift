@@ -471,7 +471,13 @@ struct NamingQueueView: View {
                 .accessibilityIdentifier("namingQueue.saveName")
             }
         }
-        .searchable(text: $searchText, prompt: "Search exercises to merge into")
+        // Always shown: on a pushed screen the default placement hides the
+        // field until the list is pulled down, and the merge list is long.
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search exercises to merge into"
+        )
         .confirmationDialog(
             "Merge into \(mergeCandidate?.name ?? "exercise")?",
             isPresented: Binding(get: { mergeCandidate != nil }, set: { if !$0 { mergeCandidate = nil } }),
