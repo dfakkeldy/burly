@@ -74,7 +74,30 @@ set -e
 # not matched because warnings carry them too.
 ERR='(^|[^[:alnum:]_])error:|\*\*\* ?error|(^|[^[:alnum:]_])error[[:space:]]+itms-[0-9]+|error domain=|(validation|verif(y|ication)|upload) failed|failed to validate|(^|[^[:alnum:]_])90683([^[:alnum:]_]|$)'
 WARN='(^|[^[:alnum:]_])warn(ing)?:|\*\*\* ?warning|(^|[^[:alnum:]_])warning[[:space:]]+itms-[0-9]+'
-if (( rc != 0 )) || grep -Eiq "$ERR" "$LOG"; then
+# altool logs each server-side HTTP 5xx it retries as an "ERROR:" line
+# ("... received status code 500; internal server error"), then carries on.
+# On 2026-11-03 every dry run printed several and still ended "VERIFY
+# SUCCEEDED with no errors". Those lines, and only those, are retry notices
+# rather than verdicts: they count as warnings when altool also printed its
+# success line below, and still fail the step when it did not. 90683 and
+# every other error line fail regardless.
+RETRY='received status code 5[0-9][0-9]'
+VERDICT_CODE='itms-[0-9]+|90683'
+if [[ "$MODE" == validate ]]; then
+  SUCCESS='verify succeeded|no errors validating'
+else
+  SUCCESS='upload succeeded|no errors uploading'
+fi
+error_lines="$(grep -Ei "$ERR" "$LOG" || true)"
+# A retry notice is a 5xx line with no ITMS code on it.
+retries="$(printf '%s\n' "$error_lines" | grep -Ei "$RETRY" | grep -Eiv "$VERDICT_CODE" || true)"
+errors="$(printf '%s\n' "$error_lines" | grep -Eiv "$RETRY" || true)"
+errors+="$(printf '%s\n' "$error_lines" | grep -Ei "$RETRY" | grep -Ei "$VERDICT_CODE" || true)"
+if [[ -n "$retries" ]] && ! grep -Eiq "$SUCCESS" "$LOG"; then
+  errors+="$retries"
+fi
+errors="$(printf '%s' "$errors" | sed '/^[[:space:]]*$/d')"
+if (( rc != 0 )) || [[ -n "$errors" ]]; then
   if [[ "$MODE" == upload ]]; then
     # A transient server error line can sit next to a success banner (seen
     # on a validation, 2026-11-03), so the build may have arrived anyway.
@@ -82,18 +105,13 @@ if (( rc != 0 )) || grep -Eiq "$ERR" "$LOG"; then
   fi
   fail "App Store Connect $DOING failed (altool exit $rc); see $(basename "$LOG")"
 fi
-{ grep -Ei "$WARN" "$LOG" || true; } | head -n 10 | sed 's/^/::warning::/'
+{ grep -Ei "$WARN" "$LOG" || true; printf '%s\n' "$retries"; } | sed '/^$/d' | head -n 10 | sed 's/^/::warning::/'
 
 # Pass only on positive evidence. Xcode 26.6 prints "VERIFY SUCCEEDED with
 # no errors" and "No errors validating archive" for a validation (seen in
 # this lane's first dry run), and the matching UPLOAD / uploading lines for
-# an upload. Looser wording such as "not successfully validated" must not
-# pass; if a later Xcode words it differently, this fails loudly rather than
-# reporting an unconfirmed result as a pass.
-if [[ "$MODE" == validate ]]; then
-  SUCCESS='verify succeeded|no errors validating'
-else
-  SUCCESS='upload succeeded|no errors uploading'
-fi
+# an upload (SUCCESS above). Looser wording such as "not successfully
+# validated" must not pass; if a later Xcode words it differently, this
+# fails loudly rather than reporting an unconfirmed result as a pass.
 grep -Eiq "$SUCCESS" "$LOG" || fail "altool printed no recognised success line; read $(basename "$LOG")"
 echo "App Store Connect $DOING succeeded for $(basename "${IPAS[0]}")"
