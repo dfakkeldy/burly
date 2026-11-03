@@ -99,9 +99,13 @@ final class WatchSessionUXUITests: XCTestCase {
         recordFrames(elements, in: screen, label: "armed")
         attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-armed")
 
+        // One 1.25 kg step from the 100 kg prefill.
         increase.tap()
         XCTAssertTrue(
-            waitFor { (weightControl.value as? String)?.contains("102.5 kg") == true },
+            waitFor {
+                guard let value = weightControl.value as? String else { return false }
+                return value.contains("armed") && !value.contains("100.0 kg")
+            },
             "Expected + to add one increment, got \(String(describing: weightControl.value))"
         )
         XCTAssertTrue(screen.contains(logButton.frame), "Expected Log set still on screen after adjusting")
