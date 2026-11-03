@@ -59,8 +59,14 @@ API_PRIVATE_KEYS_DIR="$KEYS" xcrun altool "$ACTION" \
   -f "${IPAS[0]}" -t ios \
   --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" \
   2>&1 | scrub | tee "$LOG"
-rc=${PIPESTATUS[0]}
+statuses=("${PIPESTATUS[@]}")
 set -e
+rc=${statuses[0]}
+# The scrub and tee stages must succeed too: a log cut short could hide an
+# error that came after a success line.
+if (( statuses[1] != 0 || statuses[2] != 0 )); then
+  fail "logging the altool output failed (scrub exit ${statuses[1]}, tee exit ${statuses[2]})"
+fi
 
 # Xcode 26's altool has exited 0 on server-side errors, so this fails on
 # error text as well as on the exit code. Failure text in the forms altool
@@ -86,7 +92,8 @@ WARN='(^|[^[:alnum:]_])warn(ing)?:|\*\*\* ?warning|(^|[^[:alnum:]_])warning[[:sp
 # internal server error. (MCTJQGUYKIMWUZMYMG2ZA6WKLQ) (500)". Anything that
 # merely mentions a 5xx (an "UPLOAD FAILED ... status code 500" banner, say)
 # is not a retry notice and still fails.
-RETRY='ERROR: \[[A-Za-z0-9._]+\] [^:]+: received status code 5[0-9]{2}; [A-Za-z ]+\. \([A-Z0-9]+\) \(5[0-9]{2}\)[[:space:]]*$'
+# Anchored at both ends; the only prefix allowed is altool's own timestamp.
+RETRY='^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:.]+ )?ERROR: \[[A-Za-z0-9._]+\] [^:]+: received status code 5[0-9]{2}; [A-Za-z ]+\. \([A-Z0-9]+\) \(5[0-9]{2}\)[[:space:]]*$'
 VERDICT_CODE='itms-[0-9]+|90683|fail'
 if [[ "$MODE" == validate ]]; then
   SUCCESS='verify succeeded|no errors validating'
