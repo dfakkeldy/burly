@@ -217,8 +217,9 @@ private final class NoLiveWorkoutFactory: WorkoutSessionCreating {
 /// test can look at a Finish while it waits on HealthKit. No real
 /// HealthKit and no authorization sheet.
 private final class SlowHealthStore: WorkoutHealthStore {
-    /// Each call, under the recorder's 10 s bound: about 10 s per Finish.
-    private static let delay: Duration = .seconds(5)
+    /// Each call, just under the recorder's 10 s bound: about 18 s per
+    /// Finish, so a slow test runner still reads the waiting screen.
+    private static let delay: Duration = .seconds(9)
 
     var authorizationStatus: WorkoutAuthorizationStatus { .authorized }
 

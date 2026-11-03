@@ -239,8 +239,16 @@ final class SessionConflictUITests: XCTestCase {
     /// Finish waits on HealthKit before the store save (up to about 20 s on
     /// a watch). A Discard in that window was undone by the save that
     /// followed, and backing out let the Finish start a session from a
-    /// screen no longer on show. `slowFinish` is a fake Health whose save
-    /// takes several seconds.
+    /// screen no longer on show. `slowFinish` is a fake Health whose Finish
+    /// takes about 18 s.
+    ///
+    /// Every check of the waiting screen comes from one accessibility
+    /// snapshot, taken after the back-chevron tap: element-by-element reads
+    /// can each take seconds on a hosted runner, and a read after the
+    /// Finish completed would find the buttons gone. The snapshot still
+    /// showing the progress row proves the tap and the checks ran inside
+    /// the wait. On the main actor because it reads that snapshot.
+    @MainActor
     func testConflictFinishWaitingOnHealthAllowsNoDiscardOrBack() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
@@ -263,11 +271,7 @@ final class SessionConflictUITests: XCTestCase {
         finishButton.tap()
 
         let saving = app.descendants(matching: .any).matching(identifier: "sessionConflict.saving").firstMatch
-        XCTAssertTrue(saving.waitForExistence(timeout: 3), "Expected progress while Finish waits on HealthKit")
-        XCTAssertFalse(discardButton.isEnabled, "Discard must be disabled while Finish waits on HealthKit")
-        XCTAssertFalse(finishButton.isEnabled, "Finish must not run twice")
-        XCTAssertEqual(finishButton.label, "Saving…", "The button still in view must say the Finish is saving")
-        attachScreenshot(from: app, name: "BurlyWatch-sessionConflictView-finishing")
+        XCTAssertTrue(saving.waitForExistence(timeout: 5), "Expected progress while Finish waits on HealthKit")
 
         // Where the back chevron sits: with it hidden, nothing happens.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.14)).tap()
@@ -276,9 +280,21 @@ final class SessionConflictUITests: XCTestCase {
             "Leaving mid-finish must not be possible"
         )
 
+        let waiting = try app.snapshot()
+        XCTAssertNotNil(
+            find(in: waiting) { $0.identifier == "sessionConflict.saving" },
+            "Expected the Finish still waiting on HealthKit when the screen was read"
+        )
+        let finishing = try XCTUnwrap(find(in: waiting) { $0.identifier == "sessionConflict.finishButton" })
+        let discarding = try XCTUnwrap(find(in: waiting) { $0.identifier == "sessionConflict.discardButton" })
+        XCTAssertFalse(discarding.isEnabled, "Discard must be disabled while Finish waits on HealthKit")
+        XCTAssertFalse(finishing.isEnabled, "Finish must not run twice")
+        XCTAssertEqual(finishing.label, "Saving…", "The button still in view must say the Finish is saving")
+        attachScreenshot(from: app, name: "BurlyWatch-sessionConflictView-finishing")
+
         let exerciseName = app.staticTexts["exercisePage.name"]
         XCTAssertTrue(
-            exerciseName.waitForExistence(timeout: 30),
+            exerciseName.waitForExistence(timeout: 45),
             "Expected the Finish to complete and the requested Start to proceed"
         )
         XCTAssertEqual(exerciseName.label, "Back Squat")
@@ -286,7 +302,9 @@ final class SessionConflictUITests: XCTestCase {
 
     /// The same wait on the summary's Finish (Resume declined, or End
     /// workout from the logging screen or the another-workout prompt):
-    /// Keep going and Discard stay disabled, with progress shown.
+    /// Keep going and Discard stay disabled, with progress shown. Read from
+    /// one snapshot, as the conflict test above.
+    @MainActor
     func testSummaryFinishWaitingOnHealthAllowsNoKeepGoingOrDiscard() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "activeConflict"
@@ -300,20 +318,26 @@ final class SessionConflictUITests: XCTestCase {
         let summaryHeading = app.staticTexts["sessionSummary.heading"]
         XCTAssertTrue(summaryHeading.waitForExistence(timeout: 10))
         let finishButton = app.buttons["sessionSummary.finishButton"]
-        let keepGoing = app.buttons["sessionSummary.keepGoingButton"]
-        let discard = app.buttons["sessionSummary.discardButton"]
         XCTAssertTrue(finishButton.waitForExistence(timeout: 5))
         finishButton.tap()
 
         let saving = app.descendants(matching: .any).matching(identifier: "sessionSummary.saving").firstMatch
-        XCTAssertTrue(saving.waitForExistence(timeout: 3), "Expected progress while Finish waits on HealthKit")
+        XCTAssertTrue(saving.waitForExistence(timeout: 5), "Expected progress while Finish waits on HealthKit")
+        let waiting = try app.snapshot()
+        XCTAssertNotNil(
+            find(in: waiting) { $0.identifier == "sessionSummary.saving" },
+            "Expected the Finish still waiting on HealthKit when the screen was read"
+        )
+        let finishing = try XCTUnwrap(find(in: waiting) { $0.identifier == "sessionSummary.finishButton" })
+        let keepGoing = try XCTUnwrap(find(in: waiting) { $0.identifier == "sessionSummary.keepGoingButton" })
+        let discard = try XCTUnwrap(find(in: waiting) { $0.identifier == "sessionSummary.discardButton" })
         XCTAssertFalse(keepGoing.isEnabled, "Keep going must be disabled while Finish waits on HealthKit")
         XCTAssertFalse(discard.isEnabled, "Discard must be disabled while Finish waits on HealthKit")
-        XCTAssertEqual(finishButton.label, "Saving…", "The button still in view must say the Finish is saving")
+        XCTAssertEqual(finishing.label, "Saving…", "The button still in view must say the Finish is saving")
         attachScreenshot(from: app, name: "BurlyWatch-summary-finishing")
 
         XCTAssertTrue(
-            waitFor(timeout: 30) { summaryHeading.exists && summaryHeading.label == "Workout saved" },
+            waitFor(timeout: 45) { summaryHeading.exists && summaryHeading.label == "Workout saved" },
             "Expected the Finish to complete"
         )
     }
@@ -369,6 +393,19 @@ final class SessionConflictUITests: XCTestCase {
             app.staticTexts["resumeSession.heading"].exists,
             "A resolved fixture must never be recreated just because the relaunch's environment still names the same scenario"
         )
+    }
+
+    /// Depth-first search of one accessibility snapshot.
+    @MainActor
+    private func find(
+        in snapshot: any XCUIElementSnapshot,
+        where match: (any XCUIElementSnapshot) -> Bool
+    ) -> (any XCUIElementSnapshot)? {
+        if match(snapshot) { return snapshot }
+        for child in snapshot.children {
+            if let found = find(in: child, where: match) { return found }
+        }
+        return nil
     }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
