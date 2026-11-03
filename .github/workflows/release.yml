@@ -364,12 +364,13 @@ jobs:
           # Failure text in the forms altool and Transporter print: a log-level
           # "ERROR:", "*** Error", "ERROR ITMS-<code>", an NSError dump, the
           # "VERIFY FAILED" banner, "Failed to validate package", and 90683 as
-          # a whole number (not inside a hex delivery ID). 90683 fails the step
-          # even on a WARNING line, on purpose: App Store Connect refused Free
-          # Lunch's first upload outright with it, and this app embeds a Watch
-          # app the same way. Other bare ITMS codes are not matched because
-          # warnings carry them too.
-          ERR='(^|[^[:alnum:]_])error:|\*\*\* ?error|(^|[^[:alnum:]_])error[[:space:]]+itms-[0-9]+|error domain=|(validation|verif(y|ication)|upload) failed|failed to validate|(^|[^0-9a-fx])90683([^0-9a-f]|$)'
+          # a whole number (no letter, digit or underscore either side, so
+          # not inside a hex delivery ID, "0x90683" or "ticket90683"). 90683
+          # fails the step even on a WARNING line, on purpose: App Store
+          # Connect refused Free Lunch's first upload outright with it, and
+          # this app embeds a Watch app the same way. Other bare ITMS codes
+          # are not matched because warnings carry them too.
+          ERR='(^|[^[:alnum:]_])error:|\*\*\* ?error|(^|[^[:alnum:]_])error[[:space:]]+itms-[0-9]+|error domain=|(validation|verif(y|ication)|upload) failed|failed to validate|(^|[^[:alnum:]_])90683([^[:alnum:]_]|$)'
           WARN='(^|[^[:alnum:]_])warn(ing)?:|\*\*\* ?warning|(^|[^[:alnum:]_])warning[[:space:]]+itms-[0-9]+'
           if (( rc != 0 )) || grep -Eiq "$ERR" "$LOG"; then
             echo "::error::App Store Connect validation failed (altool exit $rc); see validate.log"
@@ -377,10 +378,13 @@ jobs:
           fi
           { grep -Ei "$WARN" "$LOG" || true; } | head -n 10 | sed 's/^/::warning::/'
           # Pass only on positive evidence: Xcode 26.6 prints "VERIFY
-          # SUCCEEDED with no errors" and "No errors validating archive".
-          # If a later Xcode words it differently, this fails loudly rather
-          # than reporting an unconfirmed validation as a pass.
-          if ! grep -Eiq 'verify succeeded|no errors validating|validat[a-z]* succe|succe[a-z]* validat' "$LOG"; then
+          # SUCCEEDED with no errors" and "No errors validating archive"
+          # (seen in this lane's first dry run). Only those two phrasings
+          # count; looser wording such as "not successfully validated"
+          # must not pass. If a later Xcode words it differently, this
+          # fails loudly rather than reporting an unconfirmed validation
+          # as a pass.
+          if ! grep -Eiq 'verify succeeded|no errors validating' "$LOG"; then
             echo "::error::altool printed no recognised success line; read validate.log"
             exit 1
           fi
