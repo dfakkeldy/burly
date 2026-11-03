@@ -32,6 +32,9 @@ struct StatsTabView: View {
     /// original 220/200/190 pt, and it grows with text: only the labels get
     /// bigger, so only their share of the frame scales.
     @ScaledMetric(relativeTo: .caption) private var axisLabelAllowance: CGFloat = 60
+    /// Clearance under the large-text unit line: the top value label is
+    /// centred on the plot's top edge, so half of it rises above the chart.
+    @ScaledMetric(relativeTo: .caption2) private var unitLineClearance: CGFloat = 8
 
     var body: some View {
         NavigationStack {
@@ -134,7 +137,7 @@ struct StatsTabView: View {
                     .statsYAxisLabel(unit.symbol, isAccessibilitySize: isAccessibilitySize)
                     .chartXAxis {
                         if isAccessibilitySize {
-                            endpointDateMarks(axisDates)
+                            endpointDateMarks(axisDates, weekBars: false)
                         } else {
                             AxisMarks()
                         }
@@ -281,7 +284,7 @@ struct StatsTabView: View {
                 .statsYAxisLabel(volumeUnitLabel, isAccessibilitySize: isAccessibilitySize)
                 .chartXAxis {
                     if isAccessibilitySize {
-                        endpointDateMarks(axisDates)
+                        endpointDateMarks(axisDates, weekBars: true)
                     } else {
                         AxisMarks(values: .stride(by: .weekOfYear, count: max(1, volumeRange.weekCount / 4)))
                     }
@@ -345,14 +348,14 @@ struct StatsTabView: View {
                 .accessibilityIdentifier("statsTab.muscleSplit.chart")
                 .accessibilityLabel("Muscle split chart")
 
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(slices) { slice in
-                        MuscleSplitLegendRow(slice: slice)
-                    }
+                // Every row takes the same shape: name and percentage on one
+                // line when all of them fit, stacked for all when any
+                // doesn't, so the percentages stay in one readable column.
+                ViewThatFits(in: .horizontal) {
+                    muscleSplitLegend(slices, stacked: false)
+                    muscleSplitLegend(slices, stacked: true)
                 }
                 .font(.footnote)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("statsTab.muscleSplit.legend")
 
                 Text(attributionNote(stats.muscleSplit))
                     .font(.footnote)
@@ -360,6 +363,16 @@ struct StatsTabView: View {
                     .accessibilityIdentifier("statsTab.muscleSplit.attributionNote")
             }
         }
+    }
+
+    private func muscleSplitLegend(_ slices: [PhoneStatsMuscleSlice], stacked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(slices) { slice in
+                MuscleSplitLegendRow(slice: slice, stacked: stacked)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("statsTab.muscleSplit.legend")
     }
 
     private func attributionNote(_ summary: MuscleSplitSummary) -> String {
@@ -400,7 +413,7 @@ struct StatsTabView: View {
                 .statsYAxisLabel("sessions", isAccessibilitySize: isAccessibilitySize)
                 .chartXAxis {
                     if isAccessibilitySize {
-                        endpointDateMarks(axisDates)
+                        endpointDateMarks(axisDates, weekBars: true)
                     } else {
                         AxisMarks()
                     }
@@ -465,6 +478,7 @@ struct StatsTabView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.bottom, unitLineClearance)
                 .accessibilityHidden(true)
         }
     }
@@ -477,18 +491,29 @@ struct StatsTabView: View {
     }
 
     /// The large-text date axis: only the first and last dates, each
-    /// stacked month over day so it fits under the plot, anchored inward
-    /// so neither runs off the chart's edge. The year is added unless
-    /// both dates are in the current year.
-    private func endpointDateMarks(_ dates: [Date]) -> some AxisContent {
+    /// stacked month over day so it fits under the plot and anchored inward
+    /// so neither runs off the chart. The year is added unless both dates
+    /// are in the current year.
+    ///
+    /// Session points sit on their dates. A weekly bar spans its week, so
+    /// `weekBars` moves each mark to mid-week, under the middle of its bar,
+    /// while the label still names the week's first day. At the band's
+    /// start, an inward-anchored last label sat under the week before it
+    /// (on 8W, "Nov 1" under the bar for Oct 25); anchored outward it ran
+    /// into the value labels and Charts dropped it.
+    private func endpointDateMarks(_ dates: [Date], weekBars: Bool) -> some AxisContent {
         let calendar = Calendar.autoupdatingCurrent
         let showsYear = dates.contains { !calendar.isDate($0, equalTo: .now, toGranularity: .year) }
-        return AxisMarks(values: dates) { value in
-            AxisGridLine()
+        let positions = weekBars ? dates.map { midWeek(of: $0, calendar: calendar) } : dates
+        return AxisMarks(values: positions) { value in
+            if !weekBars {
+                AxisGridLine()
+            }
             AxisTick()
-            if let date = value.as(Date.self) {
-                let isFirst = dates.count > 1 && date == dates.first
-                let isLast = dates.count > 1 && date == dates.last
+            if dates.indices.contains(value.index) {
+                let date = dates[value.index]
+                let isFirst = dates.count > 1 && value.index == 0
+                let isLast = dates.count > 1 && value.index == dates.count - 1
                 AxisValueLabel(anchor: isFirst ? .topLeading : (isLast ? .topTrailing : .top)) {
                     VStack(alignment: isFirst ? .leading : (isLast ? .trailing : .center), spacing: 0) {
                         Text(date, format: .dateTime.month(.abbreviated))
@@ -501,6 +526,11 @@ struct StatsTabView: View {
                 }
             }
         }
+    }
+
+    private func midWeek(of weekStart: Date, calendar: Calendar) -> Date {
+        let weekEnd = calendar.date(byAdding: .weekOfYear, value: 1, to: weekStart) ?? weekStart
+        return weekStart.addingTimeInterval(weekEnd.timeIntervalSince(weekStart) / 2)
     }
 
     private func muscleSlices(from summary: MuscleSplitSummary) -> [PhoneStatsMuscleSlice] {
@@ -584,27 +614,31 @@ private struct PhoneStatsMuscleSlice: Identifiable {
 }
 
 /// One muscle-split legend row: swatch, group name and percentage, read by
-/// VoiceOver as one element. The percentage sits on the name's line when
-/// it fits and drops under the name when it doesn't, so a long name at a
-/// large size wraps without pushing the number off the card.
+/// VoiceOver as one element. `stacked` puts the percentage under the name
+/// instead of at the row's end, so a long name at a large size wraps
+/// without pushing the number off the card.
 private struct MuscleSplitLegendRow: View {
     let slice: PhoneStatsMuscleSlice
+    let stacked: Bool
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                swatch
-                Text(slice.name)
-                Spacer(minLength: 8)
-                Text(percent).monospacedDigit()
-            }
-            VStack(alignment: .leading, spacing: 2) {
+        Group {
+            if stacked {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        swatch
+                        Text(slice.name).fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        swatch.hidden()
+                        Text(percent).monospacedDigit()
+                    }
+                }
+            } else {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     swatch
-                    Text(slice.name).fixedSize(horizontal: false, vertical: true)
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    swatch.hidden()
+                    Text(slice.name)
+                    Spacer(minLength: 8)
                     Text(percent).monospacedDigit()
                 }
             }
@@ -697,21 +731,23 @@ private func muscleGroupTitle(_ group: MuscleGroup) -> String {
 
 /// One fixed colour per group, so a group keeps its colour from load to
 /// load and no two groups share one (Charts' automatic palette repeats
-/// after eight). Unattributed work is grey.
+/// after eight). Unattributed work is grey. Sectors follow `MuscleGroup`
+/// order, so neighbours there get contrasting colours (triceps and quads
+/// sit side by side whenever forearms has no share).
 private func muscleGroupColor(_ group: MuscleGroup) -> Color {
     switch group {
     case .chest: .blue
     case .upperBack: .green
-    case .lats: .teal
+    case .lats: .cyan
     case .shoulders: .orange
     case .biceps: .purple
     case .triceps: .pink
-    case .forearms: .brown
-    case .quads: .red
+    case .forearms: .teal
+    case .quads: .yellow
     case .hamstrings: .indigo
-    case .glutes: .yellow
+    case .glutes: .red
     case .calves: .mint
-    case .core: .cyan
+    case .core: .brown
     }
 }
 
