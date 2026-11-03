@@ -1,5 +1,38 @@
 <!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
+## 2026-11-03 — Schema V1 is frozen at TestFlight 0.9.1; V2 adds SessionTombstone
+
+TestFlight 0.9.1 (burly-rc1, 37ea85e) shipped today, so every tester's phone
+and watch now holds a store with `BurlySchemaV1`'s exact shape. #52 first
+added `SessionTombstone` to V1 in place, under the old "V1 has not shipped"
+rule. A 0.9.1 store would then match no version in `BurlyMigrationPlan`,
+SwiftData would refuse to open it, and the tester's history would be lost.
+So V1 is frozen as main had it, and the tombstone arrives in a V2, following
+the procedure in `Schema/CurrentSchema.swift`:
+
+- `Schema/BurlySchemaV2.swift` holds verbatim copies of V1's ten models,
+  never references to them; `SessionTombstone` is V2's only addition.
+  `MigrationPlanTests.v2CopiesV1Verbatim` compares the two schemas entity by
+  entity.
+- `BurlyMigrationPlan` is `[V1, V2]` with one `.lightweight` stage: a new,
+  empty table and no changed entity, so there is nothing to transform.
+  `BurlyContainer` builds V2, and the typealiases point at V2.
+- Evidence: `Fixtures/ShippedV1/` holds a phone and a watch store written by
+  the burly-rc1 BurlyKit sources (routines, sessions of each origin with
+  sets, a naming placeholder; on the watch an unacked session, an in-flight
+  one with its journal, a digest and the watch-sync journal).
+  `ShippedStoreMigrationTests` opens them through the production container,
+  checks the data, then deletes with a tombstone and cold-reopens.
+- CI's two-process split stays. The migration spike moves to a test-only
+  V3 on top of the real V2, still in its own process: its `SetRecord` has a
+  column the shipping one lacks, the shape mismatch behind the macOS 26
+  SwiftData failures that forced the split. Real V1 and V2 share entity
+  names but no shared entity differs in shape, and opening a 0.9.1 store
+  realises both exactly as a device will, so `ShippedStoreMigrationTests`
+  runs in the ordinary pass.
+
+V2 is frozen in turn once 1.0 ships; the next change is a V3.
+
 ## 2026-10-31 — The store text describes Apple Health again; acceptance compiles Release
 
 #13 put HealthKit on the watch, and #39, merged just before it, had

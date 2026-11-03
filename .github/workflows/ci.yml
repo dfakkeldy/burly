@@ -48,8 +48,9 @@ jobs:
       # The package suite runs as TWO processes, deliberately.
       #
       # The migration spike (BurlyKit/Tests/BurlyPersistenceTests/
-      # MigrationSpikeTests.swift) declares a second SwiftData schema whose
-      # entities carry the SAME NAMES as the production ones. That is how
+      # MigrationSpikeTests.swift) declares a test-only v3 SwiftData schema
+      # whose entities carry the SAME NAMES as the production ones, with a
+      # SetRecord column the production one lacks. That is how
       # SwiftData matches one schema version to the next, so the spike
       # cannot avoid it — and it is also why both shapes must never be
       # realised in one process. This runner's SwiftData build does not
@@ -60,11 +61,17 @@ jobs:
       #
       # So: production-shape tests first with the spike gated off, then the
       # spike alone in a fresh process. Both must pass.
+      #
+      # The shipping V1 and V2 (V2 adds SessionTombstone, 2026-11-03) also
+      # share entity names, but no shared entity differs in shape, and a
+      # device opening a 0.9.1 store realises both exactly that way. So the
+      # first pass is where ShippedStoreMigrationTests opens the 0.9.1
+      # fixtures through V1 -> V2.
       - name: Run Swift package tests (production schema; spike gated off)
         working-directory: BurlyKit
         run: swift test
 
-      - name: Run migration spike (own process; its v2 reuses v1 entity names)
+      - name: Run migration spike (own process; its v3 reuses the production entity names)
         working-directory: BurlyKit
         env:
           BURLY_RUN_MIGRATION_SPIKE: "1"

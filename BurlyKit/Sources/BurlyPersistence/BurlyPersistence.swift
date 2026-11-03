@@ -13,10 +13,11 @@
 //   contract). Keeping them internal, and out of every `BurlyStore`
 //   signature, is what holds the boundary. `BurlyCore`'s `…Data` value
 //   types are what callers see.
-// - `Schema/` — `BurlySchemaV1` (`VersionedSchema`), `BurlyMigrationPlan`
-//   (`SchemaMigrationPlan`, empty at v1), and `BurlyContainer`, the
-//   module-internal factory every container is built through, so v2 is an
-//   append (§1 acceptance #5).
+// - `Schema/` — `BurlySchemaV1` (frozen; shipped in TestFlight 0.9.1) and
+//   `BurlySchemaV2` (`VersionedSchema`s), `BurlyMigrationPlan`
+//   (`SchemaMigrationPlan`, V1 → V2 in one lightweight stage), and
+//   `BurlyContainer`, the module-internal factory every container is built
+//   through, so each version is an append (§1 acceptance #5).
 // - `Store/` — `BurlyStore`, the small protocol the architecture doc puts in
 //   front of this module, plus the SwiftData implementation and the
 //   model→value mapping. Swapping SwiftData out means reimplementing

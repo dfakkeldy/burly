@@ -25,19 +25,21 @@
 // with it. A tombstone is a UUID and a date, and only a deliberate user
 // delete writes one, so keeping them for good costs nothing worth saving.
 //
-// ## Registering it in V1
+// ## Why it is a V2 model
 //
-// Same reasoning as `CatalogSeedState` and `WatchSyncJournal`:
-// BurlySchemaV1 has not shipped, so adding this model to V1 is an additive
-// completion of the initial schema, not a migration of user data. It is
-// module-internal bookkeeping, not a §1 domain entity, and nothing about
-// it crosses the sync wire. Nested in `BurlySchemaV1` like every other
-// model — see Schema/CurrentSchema.swift.
+// It is the one thing BurlySchemaV2 adds. V1 shipped in TestFlight 0.9.1,
+// and a V1 store from that build has no tombstone table; editing V1 to
+// include one would leave that store matching no known version. So the
+// tombstone lives in V2 and arrives on an existing store through the
+// lightweight V1 → V2 stage in `BurlyMigrationPlan` (an added, empty
+// table). It is module-internal bookkeeping, not a §1 domain entity, and
+// nothing about it crosses the sync wire. The watch store carries the
+// table too, empty, because one schema serves both devices.
 
 import Foundation
 import SwiftData
 
-extension BurlySchemaV1 {
+extension BurlySchemaV2 {
     @Model
     final class SessionTombstone {
         /// The deleted `Session`'s id. Unique: a session is deleted once.
