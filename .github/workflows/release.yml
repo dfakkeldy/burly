@@ -235,18 +235,31 @@ jobs:
 
       # Log tail only, and only the two xcodebuild logs -- never the
       # exportOptions plist (no secrets in it) or anything under
-      # $RUNNER_TEMP/asc. GitHub Actions also masks the literal secret
-      # values anywhere they'd appear in logs, but the real key
-      # material (the .p8 file contents) is never printed by any step
-      # above -- only referenced by path.
+      # $RUNNER_TEMP/asc. The real key material (the .p8 file contents)
+      # is never printed by any step above -- only referenced by path.
+      #
+      # GitHub Actions masks secret values in the live log, but NOT in
+      # uploaded artifact files, and this repo is public. xcodebuild does
+      # print the key ID: cloud signing names the certificate it creates
+      # "Apple Development: Created via API (<key ID>)", and the archive
+      # log shows that signing identity (seen in the first dry run of
+      # Free Lunch's port of this lane). So the key ID and issuer ID are
+      # replaced with *** before upload. perl's \Q...\E matches each
+      # value literally, and an empty value is skipped rather than
+      # turned into an empty pattern.
       - name: Prepare build log tail for upload
         if: always()
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/log-tail"
           for f in archive export; do
             if [[ -f "$RUNNER_TEMP/$f.log" ]]; then
-              tail -n 500 "$RUNNER_TEMP/$f.log" > "$RUNNER_TEMP/log-tail/$f.tail.log"
+              tail -n 500 "$RUNNER_TEMP/$f.log" \
+                | perl -pe 'for my $v (@ENV{qw(ASC_KEY_ID ASC_ISSUER_ID)}) { s/\Q$v\E/***/g if length($v // "") }' \
+                > "$RUNNER_TEMP/log-tail/$f.tail.log"
             fi
           done
 
