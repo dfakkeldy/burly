@@ -350,9 +350,19 @@ for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
 done
 [[ $BAD == 0 ]] || fail "screenshot verification failed; fastlane/screenshots/en-US is unchanged"
 
+# Copy the new set in under temporary names first, so a failed copy leaves
+# the committed set untouched; only then drop the old PNGs and rename.
 mkdir -p "$STORE_DIR"
+for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
+  if ! cp "$STAGE_DIR/$shot.png" "$STORE_DIR/.$shot.png.new"; then
+    rm -f "$STORE_DIR"/.*.png.new
+    fail "could not copy into $STORE_DIR; its screenshots are unchanged"
+  fi
+done
 rm -f "$STORE_DIR"/*.png
-cp "$STAGE_DIR"/*.png "$STORE_DIR"/ || fail "could not copy into $STORE_DIR"
+for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
+  mv "$STORE_DIR/.$shot.png.new" "$STORE_DIR/$shot.png" || fail "could not move $shot.png into $STORE_DIR"
+done
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "### Store screenshots"
