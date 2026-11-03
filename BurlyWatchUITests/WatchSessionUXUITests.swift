@@ -60,6 +60,10 @@ final class WatchSessionUXUITests: XCTestCase {
     /// control, so arming does not push Log set down: it used to grow the
     /// page by a row and put Log set below the screen exactly when the
     /// lifter had just changed the weight.
+    ///
+    /// On the main actor because it reads an accessibility snapshot, which
+    /// Swift 6 does not let leave it.
+    @MainActor
     func testLogSetStaysOnScreenWhileTheWeightIsArmed() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
@@ -313,6 +317,7 @@ final class WatchSessionUXUITests: XCTestCase {
     }
 
     /// Depth-first search of one accessibility snapshot.
+    @MainActor
     private func find(
         in snapshot: any XCUIElementSnapshot,
         where match: (any XCUIElementSnapshot) -> Bool
