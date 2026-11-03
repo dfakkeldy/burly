@@ -285,6 +285,7 @@ public struct SupersededSessionMarks {
     }
 
     /// The watch app's: one string array in `defaults`.
+    @MainActor
     public static func userDefaults(
         _ defaults: UserDefaults = .standard,
         key: String = "com.burly.health.supersededSessionIDs"
