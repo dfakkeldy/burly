@@ -7,6 +7,12 @@
 // Settings display unit only at the mark/label level (spec §7 "canonical kg
 // → display unit"; §9 acceptance #2), so a unit switch re-renders without
 // re-querying the store.
+//
+// At accessibility text sizes the charts keep their data and ranges but
+// change how they label it (#30, #37, #38): date axes show only their first
+// and last dates, value axes ask for fewer ticks, units move to their own
+// line above the plot, and chart height grows by the room the labels need.
+// At the default size the charts look as they did before.
 
 import Charts
 import BurlyCore
@@ -20,6 +26,15 @@ struct StatsTabView: View {
     @State private var volumeRange: PhoneStatsVolumeRange = .eightWeeks
     @State private var selectedExerciseID: UUID?
     @AppStorage(DisplayUnitPreference.storageKey) private var unit = DisplayUnitPreference.defaultUnit
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Room for axis labels on top of each chart's plot height. It is 60 pt
+    /// at the default size, so the plot heights below add up to the charts'
+    /// original 220/200/190 pt, and it grows with text: only the labels get
+    /// bigger, so only their share of the frame scales.
+    @ScaledMetric(relativeTo: .caption) private var axisLabelAllowance: CGFloat = 60
+    /// Clearance under the large-text unit line: the top value label is
+    /// centred on the plot's top edge, so half of it rises above the chart.
+    @ScaledMetric(relativeTo: .caption2) private var unitLineClearance: CGFloat = 8
 
     var body: some View {
         NavigationStack {
@@ -45,6 +60,9 @@ struct StatsTabView: View {
                 onRetry: { reloadStats() }
             )
         case .loaded:
+            // `loadStats` sets `stats` before it reports `.loaded`, so there
+            // is no loaded-but-empty dashboard; each card owns its own
+            // empty state instead.
             if let stats = viewModel.stats {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -56,35 +74,17 @@ struct StatsTabView: View {
                     .padding()
                 }
                 .scrollBounceBehavior(.basedOnSize)
-            } else {
-                StatsChartEmptyState(
-                    title: "No stats yet",
-                    message: "Complete a workout and your stats will start appearing here.",
-                    identifier: "statsTab.emptyState.heading"
-                )
             }
         }
     }
 
+    private var isAccessibilitySize: Bool { dynamicTypeSize.isAccessibilitySize }
+
     private func progressionCard(_ stats: PhoneStatsDashboard) -> some View {
-        StatsCard(title: "Exercise progression", subtitle: "Top set and estimated 1RM") {
+        let axisDates = endpointDates(stats.progression.points.map(\.date))
+        return StatsCard(title: "Exercise progression", subtitle: "Top set and estimated 1RM") {
             if let exercise = stats.progression.exercise {
-                Picker(
-                    "Exercise",
-                    selection: Binding(
-                        get: { selectedExerciseID ?? exercise.id },
-                        set: { newID in
-                            selectedExerciseID = newID
-                            reloadStats()
-                        }
-                    )
-                ) {
-                    ForEach(stats.exercises) { candidate in
-                        Text(candidate.name).tag(candidate.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("statsTab.progression.exercisePicker")
+                exerciseMenu(stats, selected: exercise)
 
                 rangePicker(
                     selection: $progressionRange,
@@ -99,6 +99,8 @@ struct StatsTabView: View {
                         identifier: "statsTab.progression.empty"
                     )
                 } else {
+                    chartUnitLine(unit.symbol)
+
                     Chart {
                         ForEach(stats.progression.points, id: \.sessionID) { point in
                             LineMark(
@@ -132,13 +134,27 @@ struct StatsTabView: View {
                         "Estimated 1RM": Color.orange,
                         "Personal record": Color.red
                     ])
-                    .chartYAxisLabel(unit.symbol)
+                    .statsYAxisLabel(unit.symbol, isAccessibilitySize: isAccessibilitySize)
+                    .chartXAxis {
+                        if isAccessibilitySize {
+                            endpointDateMarks(axisDates, weekBars: false)
+                        } else {
+                            AxisMarks()
+                        }
+                    }
+                    .chartYAxis {
+                        if isAccessibilitySize {
+                            AxisMarks(values: .automatic(desiredCount: 3))
+                        } else {
+                            AxisMarks()
+                        }
+                    }
                     .chartLegend(.hidden)
-                    .frame(height: 220)
+                    .frame(height: 160 + axisLabelAllowance)
                     .accessibilityIdentifier("statsTab.progression.chart")
                     .accessibilityLabel("Exercise progression chart for \(exercise.name)")
 
-                    progressionLegend
+                    progressionLegend(stats.progression.records)
 
                     // A findable, VoiceOver-readable statement of the
                     // chart's headline numbers in the display unit. Worded
@@ -160,22 +176,81 @@ struct StatsTabView: View {
         }
     }
 
+    /// A menu rather than a `.menu` picker, so a long exercise name wraps
+    /// instead of clipping at large text (#30). Exercises trained in the
+    /// last 52 weeks come first; the view model has already left out
+    /// archived exercises that weren't.
+    private func exerciseMenu(_ stats: PhoneStatsDashboard, selected exercise: ExerciseData) -> some View {
+        let recent = stats.exercises.filter { stats.recentExerciseIDs.contains($0.id) }
+        let others = stats.exercises.filter { !stats.recentExerciseIDs.contains($0.id) }
+        return Menu {
+            Picker(
+                "Exercise",
+                selection: Binding(
+                    get: { selectedExerciseID ?? exercise.id },
+                    set: { newID in
+                        selectedExerciseID = newID
+                        reloadStats()
+                    }
+                )
+            ) {
+                if recent.isEmpty || others.isEmpty {
+                    exerciseOptions(stats.exercises)
+                } else {
+                    Section("Trained in the last year") { exerciseOptions(recent) }
+                    Section("Other exercises") { exerciseOptions(others) }
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: 8) {
+                Text(exercise.name)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .accessibilityLabel("Exercise")
+        .accessibilityValue(exercise.name)
+        .accessibilityIdentifier("statsTab.progression.exercisePicker")
+    }
+
+    private func exerciseOptions(_ exercises: [ExerciseData]) -> some View {
+        ForEach(exercises) { candidate in
+            Text(candidate.name).tag(candidate.id)
+        }
+    }
+
     /// Keep legend text in the ordinary accessibility tree, outside the
     /// chart's synthesized data representation. Narrow/large-text layouts
     /// can use a vertical legend without squeezing the plot itself.
-    private var progressionLegend: some View {
+    private func progressionLegend(_ records: [PersonalRecord]) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) { progressionLegendItems }
-            VStack(alignment: .leading, spacing: 6) { progressionLegendItems }
+            HStack(spacing: 16) { progressionLegendItems(records) }
+            VStack(alignment: .leading, spacing: 6) { progressionLegendItems(records) }
         }
         .font(.caption)
     }
 
+    /// The two PR kinds draw different symbols, so each gets its own entry,
+    /// shown only when the range has a PR of that kind.
     @ViewBuilder
-    private var progressionLegendItems: some View {
+    private func progressionLegendItems(_ records: [PersonalRecord]) -> some View {
         legendLabel("Top set", symbol: "circle.fill", color: .blue, id: "topSet")
         legendLabel("Estimated 1RM", symbol: "diamond.fill", color: .orange, id: "estimate")
-        legendLabel("Personal record", symbol: "triangle.fill", color: .red, id: "record")
+        if records.contains(where: { $0.kind == .topWeight }) {
+            legendLabel("Weight PR", symbol: "triangle.fill", color: .red, id: "recordWeight")
+        }
+        if records.contains(where: { $0.kind == .estimatedOneRepMax }) {
+            legendLabel("Est. 1RM PR", symbol: "square.fill", color: .red, id: "recordEstimate")
+        }
     }
 
     private func legendLabel(_ title: String, symbol: String, color: Color, id: String) -> some View {
@@ -188,7 +263,8 @@ struct StatsTabView: View {
     }
 
     private func volumeCard(_ stats: PhoneStatsDashboard) -> some View {
-        StatsCard(title: "Weekly volume", subtitle: "Working sets only") {
+        let axisDates = endpointDates(stats.volume.map(\.weekStart))
+        return StatsCard(title: "Weekly volume", subtitle: "Working sets only") {
             rangePicker(
                 selection: $volumeRange,
                 identifier: "statsTab.volume.rangePicker",
@@ -196,6 +272,8 @@ struct StatsTabView: View {
             )
 
             if stats.volume.contains(where: { $0.totalVolumeKg > 0 }) {
+                chartUnitLine(volumeUnitLabel)
+
                 Chart(stats.volume) { week in
                     BarMark(
                         x: .value("Week", week.weekStart, unit: .weekOfYear),
@@ -203,17 +281,34 @@ struct StatsTabView: View {
                     )
                     .foregroundStyle(.mint.gradient)
                 }
-                .chartYAxisLabel(volumeUnitLabel)
+                .statsYAxisLabel(volumeUnitLabel, isAccessibilitySize: isAccessibilitySize)
                 .chartXAxis {
-                    AxisMarks(values: .stride(by: .weekOfYear, count: max(1, volumeRange.weekCount / 4)))
+                    if isAccessibilitySize {
+                        endpointDateMarks(axisDates, weekBars: true)
+                    } else {
+                        AxisMarks(values: .stride(by: .weekOfYear, count: max(1, volumeRange.weekCount / 4)))
+                    }
                 }
-                .frame(height: 200)
+                .chartYAxis {
+                    if isAccessibilitySize {
+                        // "3K" rather than "3,000": four digits at the
+                        // largest size take a third of the plot's width.
+                        AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                            AxisGridLine()
+                            AxisTick()
+                            AxisValueLabel(format: FloatingPointFormatStyle<Double>.number.notation(.compactName))
+                        }
+                    } else {
+                        AxisMarks()
+                    }
+                }
+                .frame(height: 140 + axisLabelAllowance)
                 .accessibilityIdentifier("statsTab.volume.chart")
                 .accessibilityLabel("Weekly training volume chart")
             } else {
                 StatsChartEmptyState(
                     title: "No volume in this range",
-                    message: "Volume is weight times reps for working sets; warmups are excluded.",
+                    message: "Volume is weight times reps for working sets. Warmups and bodyweight sets add nothing to it.",
                     identifier: "statsTab.volume.empty"
                 )
             }
@@ -235,6 +330,10 @@ struct StatsTabView: View {
                     identifier: "statsTab.muscleSplit.empty"
                 )
             } else {
+                // The chart's own legend is hidden: the rows below are the
+                // one legend, and they share the sectors' colour scale
+                // (#38). The donut carries no text, so it needs no room to
+                // grow with Dynamic Type.
                 Chart(slices) { slice in
                     SectorMark(
                         angle: .value("Share", slice.fraction),
@@ -243,29 +342,47 @@ struct StatsTabView: View {
                     )
                     .foregroundStyle(by: .value("Muscle group", slice.name))
                 }
+                .chartForegroundStyleScale(domain: slices.map(\.name), range: slices.map(\.color))
+                .chartLegend(.hidden)
                 .frame(height: 210)
                 .accessibilityIdentifier("statsTab.muscleSplit.chart")
                 .accessibilityLabel("Muscle split chart")
 
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(slices) { slice in
-                        Text("\(slice.name): \(slice.fraction, format: .percent.precision(.fractionLength(0)))")
-                    }
+                // Every row takes the same shape: name and percentage on one
+                // line when all of them fit, stacked for all when any
+                // doesn't, so the percentages stay in one readable column.
+                ViewThatFits(in: .horizontal) {
+                    muscleSplitLegend(slices, stacked: false)
+                    muscleSplitLegend(slices, stacked: true)
                 }
                 .font(.footnote)
-                .accessibilityIdentifier("statsTab.muscleSplit.legend")
 
-                Text(
-                    "Total: 100% of working sets. Each set is shared equally across its exercise tags. Unattributed work is included (\(stats.muscleSplit.unattributedFraction, format: .percent.precision(.fractionLength(0)))) rather than redistributed."
-                )
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("statsTab.muscleSplit.attributionNote")
+                Text(attributionNote(stats.muscleSplit))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("statsTab.muscleSplit.attributionNote")
             }
         }
     }
 
+    private func muscleSplitLegend(_ slices: [PhoneStatsMuscleSlice], stacked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(slices) { slice in
+                MuscleSplitLegendRow(slice: slice, stacked: stacked)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("statsTab.muscleSplit.legend")
+    }
+
+    private func attributionNote(_ summary: MuscleSplitSummary) -> String {
+        let shared = "Total: 100% of working sets. Each set is shared equally across its exercise tags."
+        guard summary.unattributedFraction > 0 else { return shared }
+        return "\(shared) Unattributed work is included (\(percentText(summary.unattributedFraction))) rather than redistributed."
+    }
+
     private func consistencyCard(_ stats: PhoneStatsDashboard) -> some View {
+        let axisDates = endpointDates(stats.consistencyWeeks.map(\.weekStart))
         return StatsCard(title: "Consistency", subtitle: "Sessions this week vs. a typical week") {
             if stats.consistency.weeks.isEmpty {
                 StatsChartEmptyState(
@@ -280,6 +397,8 @@ struct StatsTabView: View {
                 .font(.subheadline)
                 .accessibilityIdentifier("statsTab.consistency.summary")
 
+                chartUnitLine("sessions")
+
                 Chart(stats.consistencyWeeks) { week in
                     BarMark(
                         x: .value("Week", week.weekStart, unit: .weekOfYear),
@@ -291,8 +410,24 @@ struct StatsTabView: View {
                         .foregroundStyle(.orange)
                         .lineStyle(StrokeStyle(dash: [4, 4]))
                 }
-                .chartYAxisLabel("sessions")
-                .frame(height: 190)
+                .statsYAxisLabel("sessions", isAccessibilitySize: isAccessibilitySize)
+                .chartXAxis {
+                    if isAccessibilitySize {
+                        endpointDateMarks(axisDates, weekBars: true)
+                    } else {
+                        AxisMarks()
+                    }
+                }
+                .chartYAxis {
+                    if isAccessibilitySize {
+                        // Whole sessions only, and just the floor and the
+                        // busiest week, so the large labels never overlap.
+                        AxisMarks(values: [0, max(1, stats.consistencyWeeks.map(\.count).max() ?? 0)])
+                    } else {
+                        AxisMarks()
+                    }
+                }
+                .frame(height: 130 + axisLabelAllowance)
                 .accessibilityIdentifier("statsTab.consistency.chart")
                 .accessibilityLabel("Weekly consistency chart")
 
@@ -332,12 +467,88 @@ struct StatsTabView: View {
         .accessibilityIdentifier(identifier)
     }
 
+    /// At accessibility sizes Charts' own value-axis title collides with the
+    /// top tick label (#37), so the unit gets its own line above the plot,
+    /// over the value labels. At other sizes `statsYAxisLabel` keeps the
+    /// Charts title and this draws nothing.
+    @ViewBuilder
+    private func chartUnitLine(_ label: String) -> some View {
+        if isAccessibilitySize {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.bottom, unitLineClearance)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The first and last of `dates` (one date if they are the same), for
+    /// the large-text date axes.
+    private func endpointDates(_ dates: [Date]) -> [Date] {
+        guard let first = dates.first, let last = dates.last else { return [] }
+        return first == last ? [first] : [first, last]
+    }
+
+    /// The large-text date axis: only the first and last dates, each
+    /// stacked month over day so it fits under the plot and anchored inward
+    /// so neither runs off the chart. The year is added unless both dates
+    /// are in the current year.
+    ///
+    /// Session points sit on their dates. A weekly bar spans its week, so
+    /// `weekBars` moves each mark to mid-week, under the middle of its bar,
+    /// while the label still names the week's first day. At the band's
+    /// start, an inward-anchored last label sat under the week before it
+    /// (on 8W, "Nov 1" under the bar for Oct 25); anchored outward it ran
+    /// into the value labels and Charts dropped it.
+    private func endpointDateMarks(_ dates: [Date], weekBars: Bool) -> some AxisContent {
+        let calendar = Calendar.autoupdatingCurrent
+        let showsYear = dates.contains { !calendar.isDate($0, equalTo: .now, toGranularity: .year) }
+        let positions = weekBars ? dates.map { midWeek(of: $0, calendar: calendar) } : dates
+        return AxisMarks(values: positions) { value in
+            if !weekBars {
+                AxisGridLine()
+            }
+            AxisTick()
+            if dates.indices.contains(value.index) {
+                let date = dates[value.index]
+                let isFirst = dates.count > 1 && value.index == 0
+                let isLast = dates.count > 1 && value.index == dates.count - 1
+                AxisValueLabel(anchor: isFirst ? .topLeading : (isLast ? .topTrailing : .top)) {
+                    VStack(alignment: isFirst ? .leading : (isLast ? .trailing : .center), spacing: 0) {
+                        Text(date, format: .dateTime.month(.abbreviated))
+                        Text(date, format: .dateTime.day())
+                        if showsYear {
+                            Text(date, format: .dateTime.year())
+                        }
+                    }
+                    .font(.caption2)
+                }
+            }
+        }
+    }
+
+    private func midWeek(of weekStart: Date, calendar: Calendar) -> Date {
+        let weekEnd = calendar.date(byAdding: .weekOfYear, value: 1, to: weekStart) ?? weekStart
+        return weekStart.addingTimeInterval(weekEnd.timeIntervalSince(weekStart) / 2)
+    }
+
     private func muscleSlices(from summary: MuscleSplitSummary) -> [PhoneStatsMuscleSlice] {
         var slices = summary.shares.map {
-            PhoneStatsMuscleSlice(name: muscleGroupTitle($0.muscleGroup), fraction: $0.fraction)
+            PhoneStatsMuscleSlice(
+                key: $0.muscleGroup.rawValue,
+                name: muscleGroupTitle($0.muscleGroup),
+                fraction: $0.fraction,
+                color: muscleGroupColor($0.muscleGroup)
+            )
         }
         if summary.unattributedFraction > 0 {
-            slices.append(PhoneStatsMuscleSlice(name: "Unattributed", fraction: summary.unattributedFraction))
+            slices.append(PhoneStatsMuscleSlice(
+                key: "unattributed",
+                name: "Unattributed",
+                fraction: summary.unattributedFraction,
+                color: .gray
+            ))
         }
         return slices
     }
@@ -372,6 +583,19 @@ struct StatsTabView: View {
     }
 }
 
+private extension View {
+    /// Charts' value-axis title, except at accessibility sizes, where
+    /// `StatsTabView.chartUnitLine` shows the unit above the chart instead.
+    @ViewBuilder
+    func statsYAxisLabel(_ label: String, isAccessibilitySize: Bool) -> some View {
+        if isAccessibilitySize {
+            self
+        } else {
+            chartYAxisLabel(label)
+        }
+    }
+}
+
 private protocol PhoneStatsRangeTitle {
     var title: String { get }
 }
@@ -380,10 +604,58 @@ extension PhoneStatsProgressionRange: PhoneStatsRangeTitle {}
 extension PhoneStatsVolumeRange: PhoneStatsRangeTitle {}
 
 private struct PhoneStatsMuscleSlice: Identifiable {
+    /// Stable across loads: a `MuscleGroup` raw value, or "unattributed".
+    let key: String
     let name: String
     let fraction: Double
+    let color: Color
 
-    var id: String { name }
+    var id: String { key }
+}
+
+/// One muscle-split legend row: swatch, group name and percentage, read by
+/// VoiceOver as one element. `stacked` puts the percentage under the name
+/// instead of at the row's end, so a long name at a large size wraps
+/// without pushing the number off the card.
+private struct MuscleSplitLegendRow: View {
+    let slice: PhoneStatsMuscleSlice
+    let stacked: Bool
+
+    var body: some View {
+        Group {
+            if stacked {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        swatch
+                        Text(slice.name).fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        swatch.hidden()
+                        Text(percent).monospacedDigit()
+                    }
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    swatch
+                    Text(slice.name)
+                    Spacer(minLength: 8)
+                    Text(percent).monospacedDigit()
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(slice.name)
+        .accessibilityValue(percent)
+        .accessibilityIdentifier("statsTab.muscleSplit.legend.\(slice.key)")
+    }
+
+    private var percent: String { percentText(slice.fraction) }
+
+    private var swatch: some View {
+        Image(systemName: "circle.fill")
+            .foregroundStyle(slice.color)
+            .imageScale(.small)
+    }
 }
 
 private struct StatsCard<Content: View>: View {
@@ -435,6 +707,11 @@ private struct StatsChartEmptyState: View {
     }
 }
 
+/// Whole percent, as the split's legend and attribution note both show it.
+private func percentText(_ fraction: Double) -> String {
+    fraction.formatted(.percent.precision(.fractionLength(0)))
+}
+
 private func muscleGroupTitle(_ group: MuscleGroup) -> String {
     switch group {
     case .chest: "Chest"
@@ -449,6 +726,28 @@ private func muscleGroupTitle(_ group: MuscleGroup) -> String {
     case .glutes: "Glutes"
     case .calves: "Calves"
     case .core: "Core"
+    }
+}
+
+/// One fixed colour per group, so a group keeps its colour from load to
+/// load and no two groups share one (Charts' automatic palette repeats
+/// after eight). Unattributed work is grey. Sectors follow `MuscleGroup`
+/// order, so neighbours there get contrasting colours (triceps and quads
+/// sit side by side whenever forearms has no share).
+private func muscleGroupColor(_ group: MuscleGroup) -> Color {
+    switch group {
+    case .chest: .blue
+    case .upperBack: .green
+    case .lats: .cyan
+    case .shoulders: .orange
+    case .biceps: .purple
+    case .triceps: .pink
+    case .forearms: .teal
+    case .quads: .yellow
+    case .hamstrings: .indigo
+    case .glutes: .red
+    case .calves: .mint
+    case .core: .brown
     }
 }
 

@@ -16,6 +16,7 @@
 		14C35F29898FAD7D7CAF87A0 /* BurlyCore in Frameworks */ = {isa = PBXBuildFile; productRef = B02C76D9A43342F914107FCA /* BurlyCore */; };
 		21394FE9483946108F6D713B /* BurlyWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB914BD26132469AA50A68C0 /* BurlyWatchApp.swift */; };
 		258796C96795AAD47DC0760B /* BurlyPhoneUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E096219D3CBCC86425088168 /* BurlyPhoneUITests.swift */; };
+		6A3584DA0FDA08139C9004BF /* StatsLargeTextUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDCDF5C67816671617242358 /* StatsLargeTextUITests.swift */; };
 		052946BFA2912DD9B70C62B2 /* SettingsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 831A69A7A453C868EB8BC404 /* SettingsUITests.swift */; };
 		25D37AC8BD4FB5B3718ACD4C /* StoreUnavailableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F8F8EB3CCE67A8F9C27F537 /* StoreUnavailableView.swift */; };
 		2CB27701E02A4C12AF71EFA0 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AAD12240990445278C58B1D9 /* Preview Assets.xcassets */; };
@@ -149,6 +150,7 @@
 		C51BD6EEF9104C888FE46F50 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DF27525A87E947E58AE0661E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		E096219D3CBCC86425088168 /* BurlyPhoneUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BurlyPhoneUITests.swift; path = BurlyPhoneUITests.swift; sourceTree = "<group>"; };
+		DDCDF5C67816671617242358 /* StatsLargeTextUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatsLargeTextUITests.swift; sourceTree = "<group>"; };
 		831A69A7A453C868EB8BC404 /* SettingsUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsUITests.swift; sourceTree = "<group>"; };
 		E3C85F96D5269BE088023865 /* WatchHomeViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchHomeViewModel.swift; sourceTree = "<group>"; };
 		FAD4CBAF4F7848EC9884D20B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -351,6 +353,7 @@
 			isa = PBXGroup;
 			children = (
 				E096219D3CBCC86425088168 /* BurlyPhoneUITests.swift */,
+				DDCDF5C67816671617242358 /* StatsLargeTextUITests.swift */,
 				831A69A7A453C868EB8BC404 /* SettingsUITests.swift */,
 				B93D51444666972BC5B477A8 /* ImportUITests.swift */,
 				E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */,
@@ -625,6 +628,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				258796C96795AAD47DC0760B /* BurlyPhoneUITests.swift in Sources */,
+				6A3584DA0FDA08139C9004BF /* StatsLargeTextUITests.swift in Sources */,
 				052946BFA2912DD9B70C62B2 /* SettingsUITests.swift in Sources */,
 				4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */,
 				7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */,

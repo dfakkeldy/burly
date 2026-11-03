@@ -500,9 +500,29 @@ final class PhoneHomeViewModel {
             // The catalog is intentionally small (~100 rows), and supplies
             // both the progression picker and muscle-tag attribution.
             let exercises = try store.exercises(includingArchived: true)
-            let selectedExercise = exerciseID.flatMap { requestedID in
-                exercises.first(where: { $0.id == requestedID })
-            } ?? exercises.first(where: { $0.name == "Back Squat" }) ?? exercises.first
+
+            let volumeSlices = try store.loggedSetSlices(
+                window: .weeks(volumeRange.weekCount),
+                through: referenceDate,
+                calendar: calendar
+            )
+            // The picker leads with what was trained in the longest §7
+            // window, and hides archived exercises unless they were trained
+            // in it. The chart opens on the latest session's main exercise.
+            let recentWeeks = PhoneStatsVolumeRange.fiftyTwoWeeks.weekCount
+            let recentSlices = volumeRange.weekCount == recentWeeks ? volumeSlices : try store.loggedSetSlices(
+                window: .weeks(recentWeeks),
+                through: referenceDate,
+                calendar: calendar
+            )
+            let recentExerciseIDs = ExerciseRecencyStats.trainedExerciseIDs(from: recentSlices)
+            let pickerExercises = ExerciseRecencyStats.pickerExercises(exercises, trainedIDs: recentExerciseIDs)
+            func pickable(_ id: UUID?) -> ExerciseData? {
+                id.flatMap { id in pickerExercises.first(where: { $0.id == id }) }
+            }
+            let selectedExercise = pickable(exerciseID)
+                ?? pickable(ExerciseRecencyStats.mainExerciseOfLatestSession(from: recentSlices))
+                ?? pickerExercises.first(where: { $0.name == "Back Squat" }) ?? pickerExercises.first
 
             let displayRange = progressionRange.dateRange(asOf: referenceDate, calendar: calendar)
             let progression: PhoneStatsProgression
@@ -526,11 +546,6 @@ final class PhoneHomeViewModel {
                 progression = .empty
             }
 
-            let volumeSlices = try store.loggedSetSlices(
-                window: .weeks(volumeRange.weekCount),
-                through: referenceDate,
-                calendar: calendar
-            )
             let volumeWindow = CalendarBucketing.trailingWeekWindow(
                 weekCount: volumeRange.weekCount,
                 asOf: referenceDate,
@@ -573,7 +588,8 @@ final class PhoneHomeViewModel {
             )
 
             stats = PhoneStatsDashboard(
-                exercises: exercises,
+                exercises: pickerExercises,
+                recentExerciseIDs: recentExerciseIDs,
                 progression: progression,
                 volume: volume,
                 muscleSplit: muscleSplit,
@@ -731,7 +747,11 @@ struct PhoneStatsDashboard {
     static let consistencyWeekCount = 8
     static let calendarDotDayCount = 28
 
+    /// The progression picker's exercises, by name: the active catalog
+    /// plus archived exercises trained in the last 52 weeks.
     let exercises: [ExerciseData]
+    /// Exercises with a working set in the last 52 weeks.
+    let recentExerciseIDs: Set<UUID>
     let progression: PhoneStatsProgression
     let volume: [PhoneStatsVolumePoint]
     let muscleSplit: MuscleSplitSummary
