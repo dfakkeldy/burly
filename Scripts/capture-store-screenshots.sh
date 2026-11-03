@@ -355,10 +355,17 @@ done
 # failure on the way puts it back.
 BACKUP_DIR="$RUN_DIR/previous-store"
 mkdir -p "$STORE_DIR" "$BACKUP_DIR"
-cp "$STORE_DIR"/*.png "$BACKUP_DIR"/ 2> /dev/null
+shopt -s nullglob
+PREVIOUS=("$STORE_DIR"/*.png)
+shopt -u nullglob
+if (( ${#PREVIOUS[@]} > 0 )); then
+  cp "${PREVIOUS[@]}" "$BACKUP_DIR"/ || fail "could not back up $STORE_DIR; nothing in it was changed"
+fi
 restore_store() {
   rm -f "$STORE_DIR"/*.png "$STORE_DIR"/.*.png.new
-  cp "$BACKUP_DIR"/*.png "$STORE_DIR"/ 2> /dev/null
+  if (( ${#PREVIOUS[@]} > 0 )) && ! cp "$BACKUP_DIR"/*.png "$STORE_DIR"/; then
+    fail "$1, and restoring the previous set from $BACKUP_DIR failed too"
+  fi
   fail "$1; fastlane/screenshots/en-US was restored to its previous set"
 }
 for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
