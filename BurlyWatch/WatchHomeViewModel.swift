@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Loads the watch home's state from the store (spec §2 Start, §5 fresh
 // install). Routines reach the watch store only through the phone's sync
-// snapshot (routine authoring is phone-only, §9), so an empty routine list
-// always means "nothing has arrived from the iPhone yet," exactly the §5
-// "waiting for iPhone" case. `ContentView` reloads this after every applied
-// snapshot or digest.
+// snapshot (routine authoring is phone-only, §9), so until the first
+// snapshot has been applied the home is §5's "waiting for iPhone". After
+// that an empty routine list is a real answer, not a wait: a new user who
+// has not built a routine yet, or one who archived them all, gets a
+// snapshot with none. The list then shows with a hint to build one on
+// iPhone and §2's "Empty session", which needs no routine. `ContentView`
+// reloads this after every applied snapshot or digest.
 //
 // ## Resume (m2-06)
 //
@@ -13,9 +16,9 @@
 // That is a home-shell-level gate, not something reachable only after the
 // lifter picks a routine -- so `load()` checks `resumableActiveSession()`
 // *first*, before ever computing the routine list, exactly like it already
-// treats an empty routine list as "waiting for iPhone" rather than showing
-// an empty list. One consequence worth being explicit about: with this
-// gate in place, the routine list is never shown while a session is
+// treats a store no snapshot has reached as "waiting for iPhone" rather
+// than showing an empty list. One consequence worth being explicit about:
+// with this gate in place, the routine list is never shown while a session is
 // active, so `RoutineListView` -> `SessionEntryView`'s own defensive
 // `resumableActiveSession()` pre-check (`SessionConflictView`'s doc) should
 // no longer be reachable in ordinary use -- it stays as a second layer
@@ -137,7 +140,7 @@ final class WatchHomeViewModel {
             }
 
             let routines = try store.routines(includingArchived: false)
-            guard !routines.isEmpty else {
+            guard !routines.isEmpty || hasAppliedSnapshot() else {
                 state = .waitingForPhone
                 return
             }
@@ -184,6 +187,18 @@ final class WatchHomeViewModel {
         } catch {
             state = .failed(String(describing: error))
         }
+    }
+
+    /// §5: "waiting for iPhone" lasts until the phone's first snapshot has
+    /// been applied, which the watch sync journal records in the same save
+    /// as the working set. A store that cannot report its journal (a
+    /// UI-test fault wrapper) falls back to whether any exercise is stored:
+    /// before a session can start, only a snapshot puts one there.
+    private func hasAppliedSnapshot() -> Bool {
+        if let syncStore = store as? any WatchSyncStore {
+            return (try? syncStore.watchSyncState().lastAppliedSnapshotVersion) != nil
+        }
+        return !((try? store.exercises(includingArchived: true)) ?? []).isEmpty
     }
 
     /// `sessions(state:)` is already reverse-chronological (BurlyStore.swift

@@ -239,6 +239,83 @@ struct WCSessionAdapterTests {
         #expect(adapter.retainedBackgroundTaskCount == 0)
     }
 
+    @Test("a background task waits until an envelope delivered before WCSession drained has reached the sink")
+    @MainActor
+    func backgroundTaskWaitsForDeliveredEnvelope() async {
+        let session = FakeWCSessionTransport()
+        session.activationState = .activated
+        session.hasContentPending = true
+        let task = FakeRefreshBackgroundTask()
+        let sink = ProbingEventSink { !task.snapshots.isEmpty }
+        let adapter = WCSessionAdapter(
+            session: session,
+            eventSink: sink,
+            payloadKinds: testPayloadKinds,
+            inspectEnvelope: acceptedTestEnvelope
+        )
+        adapter.retainBackgroundTask(task)
+        let metadata = WCSessionTransferMetadata(kind: testPayloadKinds.snapshot)
+
+        // WatchConnectivity's order, in one main-actor turn: the delegate
+        // gets the file, then WCSession reports its queue drained.
+        adapter.transportDidReceive(channel: .snapshotFile, data: Data("snapshot".utf8), metadata: metadata)
+        adapter.transportSessionStateDidChange(activationState: .activated, hasContentPending: false)
+        #expect(task.snapshots.isEmpty)
+        #expect(adapter.retainedBackgroundTaskCount == 1)
+
+        await adapter.flushEvents()
+        let delivered = await sink.probedEvents()
+        #expect(delivered.map { $0.event } == [
+            .envelopeReceived(channel: .snapshotFile, data: Data("snapshot".utf8), metadata: metadata),
+            .activationStateChanged(.activated)
+        ])
+        #expect(delivered.first?.probed == false, "the task completed before the envelope reached the sink")
+        #expect(task.snapshots == [false])
+        #expect(adapter.retainedBackgroundTaskCount == 0)
+    }
+
+    @Test("activation completion holds a background task until the sink has handled it")
+    @MainActor
+    func backgroundTaskWaitsForActivationCompletion() async {
+        let session = FakeWCSessionTransport()
+        let task = FakeRefreshBackgroundTask()
+        let sink = ProbingEventSink { !task.snapshots.isEmpty }
+        let adapter = WCSessionAdapter(
+            session: session,
+            eventSink: sink,
+            payloadKinds: testPayloadKinds,
+            inspectEnvelope: acceptedTestEnvelope
+        )
+        adapter.retainBackgroundTask(task)
+
+        adapter.transportActivationDidComplete(state: .activated, hasContentPending: false, error: nil)
+        #expect(task.snapshots.isEmpty)
+
+        await adapter.flushEvents()
+        #expect(await sink.probedEvents().map { $0.probed } == [false])
+        #expect(task.snapshots == [false])
+    }
+
+    @Test("activation re-reads the application context WCSession still holds, before reporting activation")
+    @MainActor
+    func activationReReadsHeldApplicationContext() async {
+        let session = FakeWCSessionTransport()
+        let metadata = WCSessionTransferMetadata(kind: testPayloadKinds.digest)
+        session.receivedApplicationContext = (envelope: Data("digest".utf8), metadata: metadata)
+        let sink = RecordingEventSink()
+        let adapter = makeAdapter(session: session, sink: sink)
+
+        adapter.transportActivationDidComplete(state: .inactive, hasContentPending: false, error: nil)
+        adapter.transportActivationDidComplete(state: .activated, hasContentPending: false, error: nil)
+        await adapter.flushEvents()
+
+        #expect(await sink.recordedEvents() == [
+            .activationCompleted(state: .inactive, alreadyQueuedSessionIDs: [], error: nil),
+            .envelopeReceived(channel: .digestApplicationContext, data: Data("digest".utf8), metadata: metadata),
+            .activationCompleted(state: .activated, alreadyQueuedSessionIDs: [], error: nil)
+        ])
+    }
+
     @MainActor
     private func makeAdapter(
         session: FakeWCSessionTransport = FakeWCSessionTransport(),

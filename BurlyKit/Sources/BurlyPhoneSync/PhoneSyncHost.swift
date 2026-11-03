@@ -27,6 +27,25 @@
 //   schema version in `heldSchemaVersion` for the app to show "update
 //   Burly". The watch keeps the session until it is acked, so nothing is
 //   lost while this phone waits for the update.
+// - **An unrecoverable journal is reset in the foreground, never at
+//   launch.** A journal that exists but holds no valid record leaves the
+//   coordinator quiescent (`syncStateUnrecoverable`): no push, no digest, no
+//   session ingest. Its only exit is `resetSyncStateForRePair()`, and
+//   without a caller sync stayed off for the life of the install. The same
+//   flag is also set when the journal could not be *read* at all, which can
+//   be temporary: iOS data protection on a background launch before the
+//   first unlock. Resetting then would replace a good identity line with a
+//   fresh one. So the host waits for the first foreground
+//   (`sceneDidBecomeActive()`: the device is unlocked) and loads the journal
+//   again. If it is still unrecoverable, the host resets it, logs that, and
+//   runs the launch push. The realistic cause is a first write that was torn
+//   or hit a full disk, and the coordinator persists before it transmits,
+//   so that identity line never reached the watch. A journal corrupted
+//   after it had sent snapshots costs what the reset's contract says: the
+//   watch ignores the restarted snapshot versions until they pass the one
+//   it applied, while sessions, acks and digests flow again. If the journal
+//   now loads, the failure was transient: nothing is reset, and sync
+//   resumes on the next launch.
 import Foundation
 import Observation
 import os
@@ -49,8 +68,14 @@ public final class PhoneSyncHost {
     public let coordinator: PhoneSyncCoordinator
     private let adapter: WCSessionAdapter
     private let session: any WCSessionTransport
+    private let statePersisting: any PhoneSyncStatePersisting
     private let isWatchAppInstalled: @MainActor () -> Bool
     @ObservationIgnored private var hasRunLaunchPush = false
+    /// Set once the foreground check of an unrecoverable journal (see the
+    /// file doc) has settled, by a reset or by finding it readable again.
+    @ObservationIgnored private var journalRecoverySettled = false
+    /// The launch push a journal reset runs. Tests await it.
+    @ObservationIgnored private(set) var journalResetPush: Task<Void, Never>?
 
     public init(
         store: any BurlyStore,
@@ -84,11 +109,12 @@ public final class PhoneSyncHost {
         self.coordinator = coordinator
         self.adapter = adapter
         self.session = session
+        self.statePersisting = statePersisting
         self.isWatchAppInstalled = isWatchAppInstalled
         route.handle = { [weak self] event in await self?.handle(event) }
 
         if coordinator.syncStateUnrecoverable {
-            PhoneSyncLog.logger.error("sync journal unrecoverable; phone sync is quiescent until re-pair")
+            PhoneSyncLog.logger.error("sync journal unrecoverable; phone sync is quiescent until the app is in the foreground, then it is checked again")
         } else if coordinator.recoveredFromCorruptState {
             PhoneSyncLog.logger.notice("sync journal recovered from corruption")
         }
@@ -127,8 +153,15 @@ public final class PhoneSyncHost {
 
     /// The app came to the foreground: §5's daily push and the install edge
     /// get their chance to fire. Before WCSession activation completes this
-    /// does nothing; activation itself runs the launch push.
+    /// does nothing; activation itself runs the launch push. It is also when
+    /// an unrecoverable sync journal is checked again and reset (file doc).
     public func sceneDidBecomeActive() {
+        guard !coordinator.syncStateUnrecoverable else {
+            // Every push is gated while quiescent; a reset runs the launch
+            // push itself.
+            resetUnrecoverableJournalIfConfirmed()
+            return
+        }
         guard hasRunLaunchPush, session.activationState == .activated else { return }
         Task {
             do {
@@ -136,6 +169,46 @@ public final class PhoneSyncHost {
                 try await coordinator.dailyPushIfDue()
             } catch {
                 PhoneSyncLog.logger.error("foreground push failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    // MARK: - Unrecoverable journal
+
+    /// The foreground check of an unrecoverable journal (file doc). After a
+    /// reset the launch push runs in `journalResetPush` if activation already
+    /// ran its no-op one, and from activation otherwise.
+    private func resetUnrecoverableJournalIfConfirmed() {
+        guard !journalRecoverySettled else { return }
+        do {
+            _ = try statePersisting.load()
+            journalRecoverySettled = true
+            PhoneSyncLog.logger.notice("sync journal is readable in the foreground; it was unreadable at launch, so nothing is reset and sync resumes on the next launch")
+            return
+        } catch is PhoneSyncStateUnrecoverableError {
+            // Still unrecoverable with the device unlocked: reset below.
+        } catch {
+            journalRecoverySettled = true
+            PhoneSyncLog.logger.error("sync journal check failed, not resetting: \(String(describing: error), privacy: .public)")
+            return
+        }
+        do {
+            try coordinator.resetSyncStateForRePair()
+        } catch {
+            // The old journal is intact and the coordinator still quiescent;
+            // the next foreground tries again.
+            PhoneSyncLog.logger.error("sync journal reset failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+        journalRecoverySettled = true
+        PhoneSyncLog.logger.notice("sync journal still unrecoverable in the foreground; reset to a fresh sync identity")
+        guard hasRunLaunchPush else { return }
+        hasRunLaunchPush = false
+        journalResetPush = Task {
+            do {
+                try await runLaunchPushIfNeeded()
+            } catch {
+                PhoneSyncLog.logger.error("launch push after journal reset failed: \(String(describing: error), privacy: .public)")
             }
         }
     }

@@ -4,20 +4,34 @@
 import Foundation
 
 /// Pure state behind the WKWatchConnectivityRefreshBackgroundTask lifecycle.
-/// Retained task IDs drain only after WCSession is activated and reports no
-/// content pending. Transfer-finish callback order is intentionally absent:
-/// it is not a safe completion signal.
+/// Retained task IDs drain only after WCSession is activated, reports no
+/// content pending, and everything it already handed over has been applied.
+/// Transfer-finish callback order is intentionally absent: it is not a safe
+/// completion signal.
+///
+/// The third fact exists because WCSession's `hasContentPending` turns false
+/// once the delegate *received* the content, not once the app applied it.
+/// The adapter hands each envelope upward asynchronously (its delivery
+/// chain, then the caller's actor, then the store write), so completing the
+/// task on `hasContentPending` alone lets watchOS suspend the app with a
+/// just-delivered snapshot or digest consumed from WatchConnectivity and
+/// never written.
 public struct WCBackgroundTaskCompletionState<TaskID: Hashable & Sendable>: Sendable {
     public private(set) var activationState: WCSessionActivation
     public private(set) var hasContentPending: Bool
+    /// `true` while the adapter has handed upward content the receiver has
+    /// not finished applying.
+    public private(set) var hasUndeliveredContent: Bool
     public private(set) var retainedTaskIDs: [TaskID]
 
     public init(
         activationState: WCSessionActivation = .notActivated,
-        hasContentPending: Bool = true
+        hasContentPending: Bool = true,
+        hasUndeliveredContent: Bool = false
     ) {
         self.activationState = activationState
         self.hasContentPending = hasContentPending
+        self.hasUndeliveredContent = hasUndeliveredContent
         retainedTaskIDs = []
     }
 
@@ -50,8 +64,13 @@ public struct WCBackgroundTaskCompletionState<TaskID: Hashable & Sendable>: Send
         return drainIfReady()
     }
 
+    public mutating func undeliveredContentChanged(to hasUndeliveredContent: Bool) -> [TaskID] {
+        self.hasUndeliveredContent = hasUndeliveredContent
+        return drainIfReady()
+    }
+
     private mutating func drainIfReady() -> [TaskID] {
-        guard activationState == .activated, !hasContentPending else { return [] }
+        guard activationState == .activated, !hasContentPending, !hasUndeliveredContent else { return [] }
         let completed = retainedTaskIDs
         retainedTaskIDs.removeAll(keepingCapacity: true)
         return completed
@@ -107,6 +126,10 @@ public final class WCBackgroundTaskCoordinator {
             activationState: activationState,
             hasContentPending: hasContentPending
         ))
+    }
+
+    public func undeliveredContentChanged(to hasUndeliveredContent: Bool) {
+        complete(state.undeliveredContentChanged(to: hasUndeliveredContent))
     }
 
     private func complete(_ taskIDs: [ObjectIdentifier]) {

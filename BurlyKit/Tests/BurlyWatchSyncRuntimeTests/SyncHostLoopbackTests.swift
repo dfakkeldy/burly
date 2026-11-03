@@ -87,6 +87,7 @@ struct SyncHostLoopbackTests {
     @Test("a snapshot from a newer schema is held and surfaced, and changes nothing")
     func newerSchemaIsHeld() async throws {
         let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
         try await rig.activateBoth()
         let future = Data(#"{"schemaVersion":99,"kind":"snapshot","payload":{}}"#.utf8)
 
@@ -102,6 +103,86 @@ struct SyncHostLoopbackTests {
 
         #expect(rig.watchHost.heldSchemaVersion == 99)
         #expect(try rig.watch.watchSyncState().lastAppliedSnapshotVersion == nil)
+    }
+
+    @Test("a held schema is still surfaced after a relaunch, and a readable snapshot clears it")
+    func heldSchemaSurvivesRelaunchUntilASnapshotApplies() async throws {
+        let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
+        try await rig.activateBoth()
+        rig.watchSession.delegate?.transportDidReceive(
+            channel: .digestApplicationContext,
+            data: Data(#"{"schemaVersion":99,"kind":"digest","payload":{}}"#.utf8),
+            metadata: WCSessionTransferMetadata(kind: BurlySyncPayloadKind.digest.rawValue)
+        )
+        await rig.watchHost.flushEvents()
+        #expect(rig.watchDefaults.integer(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == 99)
+        #expect(WatchSyncHost.needsAppUpdate(heldSchemaVersion: 99))
+
+        // The next launch has heard nothing from the phone yet.
+        let relaunched = try WatchSyncHost(store: rig.watch, session: LoopbackSession(), defaults: rig.watchDefaults)
+        #expect(relaunched.heldSchemaVersion == 99)
+
+        // A snapshot this build reads means the phone speaks its schema.
+        await rig.deliverPhoneToWatch()
+        #expect(rig.watchHost.heldSchemaVersion == nil)
+        #expect(rig.watchDefaults.object(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == nil)
+    }
+
+    @Test("a readable snapshot older than the held one does not clear the notice; a newer one does")
+    func onlyANewerSnapshotClearsTheHold() async throws {
+        let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
+        try await rig.activateBoth()
+        func deliverSnapshot(_ data: Data, version: Int) async {
+            rig.watchSession.delegate?.transportDidReceive(
+                channel: .snapshotFile,
+                data: data,
+                metadata: WCSessionTransferMetadata(
+                    kind: BurlySyncPayloadKind.snapshot.rawValue,
+                    snapshot: SnapshotTransferIdentity(version: version, generation: 1)
+                )
+            )
+            await rig.watchHost.flushEvents()
+        }
+        func readable(version: Int) throws -> Data {
+            try BurlySyncEnvelope(payload: .snapshot(BurlySnapshotPayloadDTO(
+                version: version,
+                exercises: [],
+                routines: [],
+                displayUnit: .kilograms,
+                restDefault: RestDuration.globalDefault
+            ))).encodedData()
+        }
+
+        // The updated phone's snapshot v9 is held...
+        await deliverSnapshot(Data(#"{"schemaVersion":99,"kind":"snapshot","payload":{}}"#.utf8), version: 9)
+        #expect(rig.watchHost.heldSchemaVersion == 99)
+        // ...then v8, queued before the phone updated, arrives late. It
+        // applies, but proves nothing about the phone's schema now.
+        await deliverSnapshot(try readable(version: 8), version: 8)
+        #expect(try rig.watch.watchSyncState().lastAppliedSnapshotVersion == 8)
+        #expect(rig.watchHost.heldSchemaVersion == 99)
+        let relaunched = try WatchSyncHost(store: rig.watch, session: LoopbackSession(), defaults: rig.watchDefaults)
+        #expect(relaunched.heldSchemaVersion == 99)
+
+        // A rolled-back phone continues its version line past the held one.
+        await deliverSnapshot(try readable(version: 10), version: 10)
+        #expect(rig.watchHost.heldSchemaVersion == nil)
+        #expect(rig.watchDefaults.object(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == nil)
+    }
+
+    @Test("a held schema this build can read is dropped at launch: the watch app was updated")
+    func heldSchemaThisBuildReadsIsDroppedAtLaunch() throws {
+        let rig = try Rig()
+        defer { rig.removeWatchDefaults() }
+        rig.watchDefaults.set(BurlySync.currentSchemaVersion, forKey: WatchSyncHost.heldSchemaVersionDefaultsKey)
+        #expect(!WatchSyncHost.needsAppUpdate(heldSchemaVersion: BurlySync.currentSchemaVersion))
+
+        let relaunched = try WatchSyncHost(store: rig.watch, session: LoopbackSession(), defaults: rig.watchDefaults)
+
+        #expect(relaunched.heldSchemaVersion == nil)
+        #expect(rig.watchDefaults.object(forKey: WatchSyncHost.heldSchemaVersionDefaultsKey) == nil)
     }
 
     @Test("a snapshot transfer that cannot start clears the phone's outstanding slot")
@@ -126,6 +207,69 @@ struct SyncHostLoopbackTests {
         #expect(rig.watchHost.retainedBackgroundTaskCount == 0)
         #expect(task.completions == [false])
     }
+
+    @Test("a background task is completed only after the snapshot WatchConnectivity just delivered is in the store")
+    func backgroundTaskWaitsForSnapshotApply() async throws {
+        let rig = try Rig()
+        let bench = ExerciseData(name: "Bench Press", muscleGroups: [.chest], origin: .curated)
+        let routine = RoutineData(
+            name: "Push",
+            orderIndex: 0,
+            items: [RoutineItemData(exerciseID: bench.id, order: 0, defaultSetCount: 3)],
+            updatedAt: .now
+        )
+        try rig.phone.createExercise(bench)
+        try rig.phone.createRoutine(routine)
+        try await rig.activateBoth()
+        let snapshot = try #require(rig.phoneSession.takeFileTransfers().last)
+
+        // A background wake: watchOS hands the app a task, WCSession delivers
+        // the file, then reports nothing pending, all in one turn.
+        let task = LoopbackBackgroundTask()
+        var routineStoredAtCompletion: Bool?
+        task.onComplete = { routineStoredAtCompletion = (try? rig.watch.routine(id: routine.id)) != nil }
+        rig.watchSession.hasContentPending = true
+        rig.watchSession.delegate?.transportSessionStateDidChange(activationState: .activated, hasContentPending: true)
+        rig.watchHost.retainBackgroundTask(task)
+        rig.watchSession.delegate?.transportDidReceive(
+            channel: .snapshotFile,
+            data: snapshot.envelope,
+            metadata: snapshot.metadata
+        )
+        rig.watchSession.hasContentPending = false
+        rig.watchSession.delegate?.transportSessionStateDidChange(activationState: .activated, hasContentPending: false)
+        #expect(task.completions.isEmpty)
+        #expect(try rig.watch.routine(id: routine.id) == nil)
+
+        await rig.watchHost.flushEvents()
+        #expect(task.completions == [false])
+        #expect(routineStoredAtCompletion == true)
+        #expect(rig.watchHost.retainedBackgroundTaskCount == 0)
+    }
+
+    @Test("activation re-applies a digest WatchConnectivity delivered on an earlier launch, before the outbox retry")
+    func activationReappliesHeldDigest() async throws {
+        // Logged and sent on an earlier launch; the phone's digest acking it
+        // was delivered, but the app was suspended before applying it.
+        let session = SessionData(startedAt: .now, endedAt: .now, state: .logged, origin: .live, items: [])
+        let rig = try Rig(seedWatch: { try $0.createSession(session) })
+        let digest = try BurlySyncEnvelope(payload: .digest(BurlyDigestPayloadDTO(
+            snapshotVersion: 0,
+            lastPerformance: [],
+            ackedSessionIDs: [session.id]
+        ))).encodedData()
+        rig.watchSession.receivedApplicationContext = (
+            envelope: digest,
+            metadata: WCSessionTransferMetadata(kind: BurlySyncPayloadKind.digest.rawValue)
+        )
+
+        try await rig.activateBoth()
+
+        #expect(try rig.watch.session(id: session.id) == nil)
+        #expect(try rig.watch.loggedSessionsAwaitingAck().isEmpty)
+        // Pruned before activation's outbox retry, so it was not re-sent.
+        #expect(rig.watchSession.userInfoTransfers.isEmpty)
+    }
 }
 
 // MARK: - Rig
@@ -138,6 +282,10 @@ private struct Rig {
     let watchSession = LoopbackSession()
     let phoneHost: PhoneSyncHost
     let watchHost: WatchSyncHost
+    /// The watch host's own defaults suite, so a held schema never leaks
+    /// between tests or into the test runner's standard defaults.
+    let watchDefaults: UserDefaults
+    private let watchDefaultsSuite = "burly.tests.watchSyncHost.\(UUID().uuidString)"
 
     /// `seedWatch` runs before the watch host exists: what it stores is
     /// what an earlier launch left behind.
@@ -159,7 +307,12 @@ private struct Rig {
                 digestPublishDebounce: .milliseconds(1)
             )
         )
-        watchHost = try WatchSyncHost(store: watch, session: watchSession)
+        watchDefaults = UserDefaults(suiteName: watchDefaultsSuite)!
+        watchHost = try WatchSyncHost(store: watch, session: watchSession, defaults: watchDefaults)
+    }
+
+    func removeWatchDefaults() {
+        watchDefaults.removePersistentDomain(forName: watchDefaultsSuite)
     }
 
     func activateBoth() async throws {
@@ -232,6 +385,7 @@ private final class LoopbackSession: WCSessionTransport {
     var activationState: WCSessionActivation = .notActivated
     var hasContentPending = true
     var outstandingSessionIDs: Set<UUID> = []
+    var receivedApplicationContext: (envelope: Data, metadata: WCSessionTransferMetadata)?
     var transferFileError: (any Error)?
     private(set) var userInfoTransfers: [Transfer] = []
     private(set) var applicationContexts: [Transfer] = []
@@ -280,10 +434,13 @@ private final class LoopbackFileTransferHandle: WCSessionFileTransferHandle {
 @MainActor
 private final class LoopbackBackgroundTask: WCRefreshBackgroundTask {
     private(set) var completions: [Bool] = []
+    /// Runs at the moment of completion, to record what the store held then.
+    var onComplete: (() -> Void)?
 
     var completionID: ObjectIdentifier { ObjectIdentifier(self) }
 
     func setTaskCompletedWithSnapshot(_ snapshot: Bool) {
+        onComplete?()
         completions.append(snapshot)
     }
 }
