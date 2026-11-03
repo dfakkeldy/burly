@@ -350,18 +350,23 @@ for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
 done
 [[ $BAD == 0 ]] || fail "screenshot verification failed; fastlane/screenshots/en-US is unchanged"
 
-# Copy the new set in under temporary names first, so a failed copy leaves
-# the committed set untouched; only then drop the old PNGs and rename.
-mkdir -p "$STORE_DIR"
+# Copy the new set in under temporary names, then drop the old PNGs and
+# rename. The previous set is kept in the run directory first, and any
+# failure on the way puts it back.
+BACKUP_DIR="$RUN_DIR/previous-store"
+mkdir -p "$STORE_DIR" "$BACKUP_DIR"
+cp "$STORE_DIR"/*.png "$BACKUP_DIR"/ 2> /dev/null
+restore_store() {
+  rm -f "$STORE_DIR"/*.png "$STORE_DIR"/.*.png.new
+  cp "$BACKUP_DIR"/*.png "$STORE_DIR"/ 2> /dev/null
+  fail "$1; fastlane/screenshots/en-US was restored to its previous set"
+}
 for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
-  if ! cp "$STAGE_DIR/$shot.png" "$STORE_DIR/.$shot.png.new"; then
-    rm -f "$STORE_DIR"/.*.png.new
-    fail "could not copy into $STORE_DIR; its screenshots are unchanged"
-  fi
+  cp "$STAGE_DIR/$shot.png" "$STORE_DIR/.$shot.png.new" || restore_store "could not copy $shot.png"
 done
 rm -f "$STORE_DIR"/*.png
 for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
-  mv "$STORE_DIR/.$shot.png.new" "$STORE_DIR/$shot.png" || fail "could not move $shot.png into $STORE_DIR"
+  mv "$STORE_DIR/.$shot.png.new" "$STORE_DIR/$shot.png" || restore_store "could not move $shot.png into place"
 done
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
