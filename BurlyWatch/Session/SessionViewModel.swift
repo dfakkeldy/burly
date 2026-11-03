@@ -760,6 +760,7 @@ final class SessionViewModel {
     private func persistFinish() {
         do {
             try store.saveActiveSession(engine.session)
+            workoutRecorder?.sessionWasLogged(sessionID: engine.session.id)
             onSessionLogged(engine.session.id)
             finishSaveError = nil
             play(pendingFinishHaptics)

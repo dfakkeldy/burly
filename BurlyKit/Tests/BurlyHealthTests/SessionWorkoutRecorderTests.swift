@@ -174,7 +174,29 @@ struct SessionWorkoutRecorderTests {
         #expect(!rig.log.calls.contains { if case .finishWorkout = $0 { true } else { false } })
         #expect(rig.store.durationOnlySaves.isEmpty)
         #expect(rig.recorder.liveSessionID == nil)
+        // The mark outlives Finish until the store has saved the session.
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+        rig.recorder.sessionWasLogged(sessionID: sessionID)
         #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+    }
+
+    @Test("a crash between Finish and the store save leaves the next Finish saving nothing too")
+    func takeoverFinishIsRepeatable() async {
+        let box = MarkBox()
+        let rig = Rig(status: .authorized, marks: box.marks)
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        rig.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        _ = await rig.recorder.sessionDidFinish(sessionID: sessionID, startedAt: startedAt, endedAt: endedAt)
+
+        // No sessionWasLogged: the app died before the store save.
+        let relaunched = Rig(status: .authorized, marks: box.marks)
+        let recording = await relaunched.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(relaunched.store.durationOnlySaves.isEmpty)
+        #expect(box.ids == [sessionID])
     }
 
     @Test("a live start refused because another workout started saves no duration-only workout")
@@ -190,6 +212,7 @@ struct SessionWorkoutRecorderTests {
 
         #expect(recording == .supersededByAnotherWorkout)
         #expect(rig.store.durationOnlySaves.isEmpty)
+        rig.recorder.sessionWasLogged(sessionID: sessionID)
         #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
     }
 
@@ -213,6 +236,7 @@ struct SessionWorkoutRecorderTests {
 
         #expect(recording == .supersededByAnotherWorkout)
         #expect(after.store.durationOnlySaves.isEmpty)
+        after.recorder.sessionWasLogged(sessionID: sessionID)
         #expect(box.ids.isEmpty)
     }
 

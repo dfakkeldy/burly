@@ -137,6 +137,7 @@ struct SessionConflictView: View {
     private func persist(_ engine: SessionEngine) {
         do {
             try store.saveActiveSession(engine.session)
+            workoutRecorder?.sessionWasLogged(sessionID: engine.session.id)
             sessionLogged(engine.session.id)
             onResolved()
         } catch {

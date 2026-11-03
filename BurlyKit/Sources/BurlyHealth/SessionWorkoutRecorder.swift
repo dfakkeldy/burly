@@ -102,7 +102,9 @@ public final class SessionWorkoutRecorder {
     ///
     /// When another app's workout took over (§4), nothing is saved: that
     /// app has its own workout for the same time, and a second one from
-    /// Burly, live or duration-only, would overlap it in Health.
+    /// Burly, live or duration-only, would overlap it in Health. The mark
+    /// stays until `sessionWasLogged(sessionID:)`, so a crash before the
+    /// store save leaves the next Finish saving nothing too.
     public func sessionDidFinish(
         sessionID: UUID,
         startedAt: Date,
@@ -111,10 +113,10 @@ public final class SessionWorkoutRecorder {
         await enqueue { [self] in
             let metadata = WorkoutMetadata.linking(sessionID: sessionID)
             if anotherWorkoutTookOver(sessionID: sessionID) {
+                markSuperseded(sessionID)
                 if liveSessionID == sessionID {
                     await discardLiveWorkout()
                 }
-                clearMark(sessionID)
                 return .supersededByAnotherWorkout
             }
             if liveSessionID == sessionID {
@@ -133,7 +135,7 @@ public final class SessionWorkoutRecorder {
                         || controller.lifecycle == .failed(.anotherWorkoutSessionStarted)
                     await discardLiveWorkout()
                     if tookOver {
-                        clearMark(sessionID)
+                        markSuperseded(sessionID)
                         return .supersededByAnotherWorkout
                     }
                 case .timedOut:
@@ -159,6 +161,12 @@ public final class SessionWorkoutRecorder {
             }) else { return .notSaved }
             return .retrospective(workoutID: workoutID)
         }
+    }
+
+    /// The store has saved the session as logged: it can never finish
+    /// again, so its another-workout mark, if any, goes.
+    public func sessionWasLogged(sessionID: UUID) {
+        clearMark(sessionID)
     }
 
     /// Spec §4: the discard path never persists an HKWorkout.
