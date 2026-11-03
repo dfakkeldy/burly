@@ -29,15 +29,18 @@ struct HistorySessionDetailView: View {
     var body: some View {
         List {
             #if DEBUG
-            Text("Revision \(session.revision)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("historyDetail.revision.\(session.revision)")
-            if let healthKitWorkoutID = session.healthKitWorkoutID {
-                Text("HealthKit workout \(healthKitWorkoutID.uuidString)")
+            // UI-test rows; the App Store screenshots leave them out.
+            if !PhoneDemoSeed.isStoreScreenshots {
+                Text("Revision \(session.revision)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("historyDetail.healthKitWorkout.\(healthKitWorkoutID.uuidString)")
+                    .accessibilityIdentifier("historyDetail.revision.\(session.revision)")
+                if let healthKitWorkoutID = session.healthKitWorkoutID {
+                    Text("HealthKit workout \(healthKitWorkoutID.uuidString)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("historyDetail.healthKitWorkout.\(healthKitWorkoutID.uuidString)")
+                }
             }
             #endif
             Section("Exercises") {

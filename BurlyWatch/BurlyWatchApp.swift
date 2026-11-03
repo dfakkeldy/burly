@@ -151,7 +151,15 @@ private struct RootView: View {
     /// Read in `body`, so a newly applied snapshot re-renders with the
     /// phone's new unit and rest default.
     private var settings: WatchSyncedSettings {
-        guard let sync = model.sync else { return WatchSyncedSettings() }
+        guard let sync = model.sync else {
+            #if DEBUG
+            // A seeded UI-test launch has no sync to carry the phone's unit.
+            if let unit = WatchDemoSeed.requestedDisplayUnit {
+                return WatchSyncedSettings(displayUnit: unit)
+            }
+            #endif
+            return WatchSyncedSettings()
+        }
         return WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
     }
 
