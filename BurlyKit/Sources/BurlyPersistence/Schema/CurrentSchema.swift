@@ -56,5 +56,6 @@ typealias Routine = BurlySchemaCurrent.Routine
 typealias RoutineItem = BurlySchemaCurrent.RoutineItem
 typealias Session = BurlySchemaCurrent.Session
 typealias SessionItem = BurlySchemaCurrent.SessionItem
+typealias SessionTombstone = BurlySchemaCurrent.SessionTombstone
 typealias SetRecord = BurlySchemaCurrent.SetRecord
 typealias WatchSyncJournal = BurlySchemaCurrent.WatchSyncJournal

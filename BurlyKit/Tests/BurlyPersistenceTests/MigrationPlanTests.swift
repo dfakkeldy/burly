@@ -43,6 +43,7 @@ struct MigrationPlanTests {
             "RoutineItem",
             "Session",
             "SessionItem",
+            "SessionTombstone",
             "SetRecord",
             "WatchSyncJournal"
         ].sorted())

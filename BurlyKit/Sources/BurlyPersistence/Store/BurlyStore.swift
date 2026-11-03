@@ -98,8 +98,20 @@ public protocol BurlyStore: AnyObject {
     func archiveExercise(id: UUID, at date: Date) throws
     /// Resolves a watch-created naming placeholder without changing its
     /// identity, so every existing history reference continues to point to
-    /// the now-named exercise.
-    func namePlaceholderExercise(id: UUID, name: String) throws
+    /// the now-named exercise. The name and the muscle tags land in one
+    /// save: the watch creates placeholders with no tags (§2 cannot ask
+    /// for them on the wrist), and this is where the phone collects them,
+    /// so a named exercise is never left counting as unattributed in the
+    /// §7 muscle split for want of a second write.
+    func namePlaceholderExercise(id: UUID, name: String, muscleGroups: [MuscleGroup]) throws
+    /// Replaces an exercise's muscle tags, and nothing else about it. Exists
+    /// for the exercises born without tags: a Hevy import's unmatched
+    /// customs (§8 deliberately does not guess) and placeholders named
+    /// before tags were collected. The store does not police which origins
+    /// may be retagged; the phone offers it for custom and imported
+    /// exercises only, since curated tags are catalog truth (§9). Throws
+    /// `.notFound` for an unknown id.
+    func updateExerciseMuscleGroups(id: UUID, muscleGroups: [MuscleGroup]) throws
     /// Resolves a placeholder by moving its history references to an existing
     /// exercise, then archiving the placeholder. This deliberately changes no
     /// Session fields other than the item exercise references, so revisions
@@ -226,8 +238,30 @@ public protocol BurlyStore: AnyObject {
     /// Cascades to items and sets. Returns the linked `healthKitWorkoutID`
     /// if there was one, so the caller can delete the HKWorkout too (§1
     /// deletion rule) — BurlyPersistence does not import HealthKit.
+    ///
+    /// The raw removal: it leaves no trace, so a §5 re-delivery of the same
+    /// id afterwards is an ordinary create. That is right for the watch's
+    /// Discard paths (the session never left the device). A user deleting
+    /// history on the phone wants `deleteLoggedSession(id:)` instead.
     @discardableResult
     func deleteSession(id: UUID) throws -> UUID?
+    /// §1/§6 "delete session (phone)": `deleteSession`'s cascade plus a
+    /// tombstone for `id`, in **one** save, returning the linked
+    /// `healthKitWorkoutID` the same way.
+    ///
+    /// The tombstone is what makes the delete stick. The watch keeps a
+    /// finished session until a digest acks it and re-sends it until then,
+    /// so a session deleted here may arrive again; `applyReplicatedSession`
+    /// treats a tombstoned id with nothing stored as already settled —
+    /// nothing is written and the caller acks as usual, so the watch prunes
+    /// its copy instead of resurrecting the workout. Tombstones are never
+    /// pruned (see `Models/SessionTombstone.swift` for why).
+    ///
+    /// `createSession` deliberately ignores tombstones: a strict create is
+    /// a local, explicit act (a Hevy re-import the user chose to run), not
+    /// a replica arriving uninvited. Throws `.notFound` for an unknown id.
+    @discardableResult
+    func deleteLoggedSession(id: UUID) throws -> UUID?
 
     // MARK: - The in-flight session (§2/§3; watch-authored)
     //
@@ -421,6 +455,15 @@ public protocol BurlyStore: AnyObject {
     ///   read further, nothing is mutated, nothing is saved. Returns the
     ///   unchanged stored revision. This is the §5 "drop silently" rule,
     ///   realized as a store guarantee rather than a caller convention.
+    /// - Nothing stored, and the id carries a `deleteLoggedSession`
+    ///   tombstone → **no-op**, decided beside the existing-row check and
+    ///   before the `.active` guard (the same major-8 ordering, for the same
+    ///   reason): the user deleted this session, and a re-delivery must
+    ///   not bring it back. Nothing is written — not the session, not the
+    ///   placeholders riding with it (an orphan placeholder would only
+    ///   queue a naming prompt for history that no longer exists) — and the
+    ///   incoming revision is returned, so the sync runtime confirms and
+    ///   acks the delivery exactly as it does an honest duplicate.
     /// - Nothing stored, or incoming revision **>** stored revision →
     ///   creates or replaces the graph wholesale (same reconciliation
     ///   `applyPhoneEdit` uses) and **overwrites the stored revision with

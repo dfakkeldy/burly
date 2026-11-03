@@ -142,12 +142,21 @@ public final class SwiftDataStore: BurlyStore {
         try commit()
     }
 
-    public func namePlaceholderExercise(id: UUID, name: String) throws {
+    public func namePlaceholderExercise(id: UUID, name: String, muscleGroups: [MuscleGroup]) throws {
         guard let exercise = try model(Exercise.self, id: id) else {
             throw BurlyStoreError.notFound(id)
         }
         exercise.name = name
+        exercise.muscleGroups = muscleGroups
         exercise.needsNaming = false
+        try commit()
+    }
+
+    public func updateExerciseMuscleGroups(id: UUID, muscleGroups: [MuscleGroup]) throws {
+        guard let exercise = try model(Exercise.self, id: id) else {
+            throw BurlyStoreError.notFound(id)
+        }
+        exercise.muscleGroups = muscleGroups
         try commit()
     }
 
@@ -401,6 +410,28 @@ public final class SwiftDataStore: BurlyStore {
             // true — otherwise a discarded mid-session workout would leave
             // a Resume pointer into nothing.
             context.delete(journal)
+        }
+        context.delete(session)
+        try commit()
+        return workoutID
+    }
+
+    @discardableResult
+    public func deleteLoggedSession(id: UUID) throws -> UUID? {
+        guard let session = try model(Session.self, id: id) else {
+            throw BurlyStoreError.notFound(id)
+        }
+        let workoutID = session.healthKitWorkoutID
+        if let journal = try journalModel(sessionID: id) {
+            // Same reason as `deleteSession`: the journal names its session
+            // by plain UUID, so the cascade cannot reach it.
+            context.delete(journal)
+        }
+        // Staged beside the delete so the two land in one save: a crash can
+        // leave the session stored or deleted-and-tombstoned, never deleted
+        // with nothing to stop a §5 re-delivery from recreating it.
+        if try tombstoneModel(sessionID: id) == nil {
+            context.insert(SessionTombstone(sessionID: id, deletedAt: clock.now))
         }
         context.delete(session)
         try commit()
@@ -678,6 +709,17 @@ public final class SwiftDataStore: BurlyStore {
             // that actually decides. Nothing is mutated, nothing is saved
             // — the §5 "drop silently" rule, realized as a store guarantee.
             return stored.revision
+        }
+        if stored == nil, try tombstoneModel(sessionID: session.id) != nil {
+            // The user deleted this session on the phone
+            // (`deleteLoggedSession`), and the watch — which keeps a
+            // session until a digest acks it — sent it again. Settled, not
+            // new: nothing is written, the session's placeholders included
+            // (they would only queue a naming prompt for deleted history),
+            // and the caller acks as it does for a duplicate. Ahead of the
+            // `.active` guard for major 8's reason: a payload this store has
+            // already settled is owed a quiet re-ack, never a throw.
+            return session.revision
         }
 
         // Only reached when this call is actually about to create or
@@ -1213,6 +1255,14 @@ public final class SwiftDataStore: BurlyStore {
     private func lastPerformanceModel(exerciseID: UUID) throws -> ExerciseLastPerformance? {
         var descriptor = FetchDescriptor<ExerciseLastPerformance>(
             predicate: #Predicate { $0.exerciseID == exerciseID }
+        )
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first
+    }
+
+    private func tombstoneModel(sessionID: UUID) throws -> SessionTombstone? {
+        var descriptor = FetchDescriptor<SessionTombstone>(
+            predicate: #Predicate { $0.sessionID == sessionID }
         )
         descriptor.fetchLimit = 1
         return try context.fetch(descriptor).first
