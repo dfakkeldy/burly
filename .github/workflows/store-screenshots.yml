@@ -82,7 +82,7 @@ jobs:
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: store-screenshots-${{ github.run_id }}
+          name: store-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
           path: fastlane/screenshots/en-US/*.png
           if-no-files-found: error
 
@@ -90,7 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: store-screenshots-raw-${{ github.run_id }}
+          name: store-screenshots-raw-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             Scripts/output/screenshots/**
             !Scripts/output/screenshots/**/*.xcresult/**
