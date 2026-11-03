@@ -1,5 +1,31 @@
 <!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
 
+## 2026-11-03 — Stats opens progression on the latest session's highest-volume exercise; the picker hides archived exercises not trained in that window
+
+#48. Spec §7 #1 names the progression chart's ranges but no default
+exercise. Opening on Back Squat showed an empty chart to anyone who
+doesn't squat, even when the other Stats cards had data. The card now
+opens on the main exercise of the latest session in the last 52 weeks
+(the longest §7 window, so the all-exercise stats queries stay
+window-bounded): among working sets that name an exercise, the session
+with the latest start, then the exercise with the most volume
+(Σ weight × reps) in it. Warmups and unnamed sets do not count. Set
+times can't settle it, because a Hevy import stamps every set with the
+workout's start; volume also passes over bodyweight accessories, whose
+chart would be a flat line at 0 kg. Equal volume goes to the exercise
+trained first in that session. Back Squat remains the fallback when
+nothing was trained in the window.
+
+The picker lists exercises trained in that window first, and leaves out
+archived exercises unless they were trained in it. Archiving takes an
+exercise out of the pickers you plan with, but its recent history is
+still worth charting; an archived exercise last trained more than 52
+weeks ago is no longer reachable from Stats. Muscle-tag attribution
+still uses the whole catalog. The rule is `ExerciseRecencyStats` in
+BurlyCore; the phone reuses the 52-week volume fetch when that range is
+already showing. Recorded because m6-03 left the archived listing as an
+open product call.
+
 ## 2026-10-31 — The store text describes Apple Health again; acceptance compiles Release
 
 #13 put HealthKit on the watch, and #39, merged just before it, had
