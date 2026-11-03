@@ -61,8 +61,9 @@ enum HevyCSVSchema {
 
     /// How a missing weight column is named in
     /// `HevyImportError.unrecognizedHeader(missingColumns:)`: either unit's
-    /// column satisfies the requirement.
-    static let weightColumnRequirement = "\(weightKilogramsColumn) or \(weightPoundsColumn)"
+    /// column satisfies the requirement. Worded as one item, so it still
+    /// reads as one in a comma-separated list of missing columns.
+    static let weightColumnRequirement = "\(weightKilogramsColumn) (or \(weightPoundsColumn))"
 
     /// Columns without which a row cannot be turned into anything at all,
     /// besides the weight column (see `weightColumnRequirement`): exactly
@@ -121,7 +122,10 @@ struct HevyCSVHeader {
     /// KNOWN column name (a header oddity, not expected in practice)
     /// resolves to its first occurrence for `value(_:in:)` lookups rather
     /// than being treated as fatal — `columnIndex` intentionally keeps
-    /// only the first index per name for that reason.
+    /// only the first index per name for that reason. The weight column is
+    /// the exception: any repeat of it is refused (see
+    /// `hasAmbiguousWeightColumns`), because a blank first copy would
+    /// import a loaded set as bodyweight.
     ///
     /// `unknownColumnIndices` deliberately does NOT dedupe by name the
     /// same way: two duplicate UNKNOWN columns (e.g. a header with `tempo`
@@ -178,8 +182,9 @@ struct HevyCSVHeader {
     }
 
     /// Required columns the header lacks. A file with neither weight
-    /// column reports them as one entry, `weight_kg or weight_lbs`, placed
-    /// just before `reps` (their order in a real export).
+    /// column reports them as one entry, `weight_kg (or weight_lbs)`,
+    /// placed just before `reps` (their order in a real export). A file
+    /// with no header at all reports the same list as an empty header.
     var missingRequiredColumns: [String] {
         var missing = HevyCSVSchema.requiredColumns.filter { columnIndex[$0] == nil }
         if columnIndex[HevyCSVSchema.weightKilogramsColumn] == nil, columnIndex[HevyCSVSchema.weightPoundsColumn] == nil {
