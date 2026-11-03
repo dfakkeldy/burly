@@ -357,6 +357,15 @@ final class LoggingScreenUITests: XCTestCase {
 
         let remaining = app.staticTexts["restTimer.remaining"]
         XCTAssertTrue(remaining.waitForExistence(timeout: 5), "Expected a rest countdown after logging a set")
+        // §3 acceptance #2 says "countdown visible", not merely present: the
+        // page must bring the banner on screen by itself, with no scrolling
+        // here. Tapping a countdown that is mostly below the screen edge is
+        // also what made the skip below miss on CI.
+        let window = app.windows.firstMatch
+        XCTAssertTrue(
+            waitFor(timeout: 3) { window.frame.contains(remaining.frame) },
+            "Expected the rest countdown fully on screen after logging, got \(remaining.frame) in \(window.frame)"
+        )
         let initialSeconds = try restSeconds(from: remaining.value)
 
         // A timeline update must make progress without an arbitrary sleep.
@@ -370,6 +379,7 @@ final class LoggingScreenUITests: XCTestCase {
 
         let increase = anyElement(app, identifier: "restTimer.increaseButton")
         XCTAssertTrue(increase.waitForExistence(timeout: 5))
+        XCTAssertTrue(window.frame.contains(increase.frame), "Expected +15 fully on screen beside the countdown")
         let beforeIncrease = try restSeconds(from: remaining.value)
         increase.tap()
         XCTAssertTrue(

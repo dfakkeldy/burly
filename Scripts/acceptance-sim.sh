@@ -659,11 +659,19 @@ run_ui_suite() {
   return "$rc"
 }
 
+# Both suites always run: a red phone suite used to end the script under
+# `set -e`, so the watch suite went unrun on main for days (2026-10-31 to
+# 2026-11-03) behind one phone failure. The gate is just as strict: the
+# first failing suite's exit code is the run's, after both have reported
+# and their screenshots are exported.
+SUITE_EXIT=0
 log "running BurlyPhoneUITests on $IPHONE_NAME"
-run_ui_suite BurlyPhoneUITests BurlyPhone "platform=iOS Simulator,id=$IPHONE_UDID" "$RESULT_BUNDLE"
+run_ui_suite BurlyPhoneUITests BurlyPhone "platform=iOS Simulator,id=$IPHONE_UDID" "$RESULT_BUNDLE" \
+  || { rc=$?; log "BurlyPhoneUITests failed (exit $rc); running the watch suite anyway"; SUITE_EXIT=$rc; }
 
 log "running BurlyWatchUITests on $WATCH_NAME"
-run_ui_suite BurlyWatchUITests BurlyWatch "platform=watchOS Simulator,id=$WATCH_UDID" "$WATCH_RESULT_BUNDLE"
+run_ui_suite BurlyWatchUITests BurlyWatch "platform=watchOS Simulator,id=$WATCH_UDID" "$WATCH_RESULT_BUNDLE" \
+  || { rc=$?; log "BurlyWatchUITests failed (exit $rc)"; [ "$SUITE_EXIT" -ne 0 ] || SUITE_EXIT=$rc; }
 
 if [ "$RETRIED_TESTS_COUNT" -gt 0 ]; then
   log "WARNING: $RETRIED_TESTS_COUNT UI test(s) passed only on retry; see retried-tests.txt"
@@ -698,3 +706,7 @@ xcrun xcresulttool export attachments \
 
 log "screenshots exported:"
 find "$SCREENSHOTS_DIR" -type f -print >&2
+
+if [ "$SUITE_EXIT" -ne 0 ]; then
+  exit "$SUITE_EXIT"
+fi

@@ -9,7 +9,11 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push cancels a branch's older run, except on main: there the
+  # simulator job takes about an hour, so back-to-back merges cancelled each
+  # other and some main commits never got a simulator verdict. Main runs
+  # queue instead.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   package-tests:

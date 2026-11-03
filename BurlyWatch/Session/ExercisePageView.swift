@@ -21,17 +21,32 @@ struct ExercisePageView: View {
 
     private var isCurrent: Bool { item.id == viewModel.currentItemID }
 
+    private static let restBannerID = "exercisePage.restBanner"
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                header
-                ghostRow
-                if isCurrent {
-                    interactiveControls
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    header
+                    ghostRow
+                    if isCurrent {
+                        interactiveControls
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 2)
+            }
+            // §3: the countdown sits "near the Log button area" and must be
+            // visible once a set is logged. The banner is the last row, below
+            // Log set, so on a 46 mm watch it starts mostly off screen; bring
+            // it in whenever a new rest starts. `startedAt` changes only on a
+            // new rest, so ±15 and skip do not move the page.
+            .onChange(of: viewModel.restTimer?.startedAt) { _, startedAt in
+                guard isCurrent, startedAt != nil else { return }
+                withAnimation {
+                    proxy.scrollTo(Self.restBannerID, anchor: .bottom)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 2)
         }
     }
 
@@ -111,6 +126,7 @@ struct ExercisePageView: View {
                     onAdjust: viewModel.adjustRest(by:),
                     onSkip: viewModel.skipRest
                 )
+                .id(Self.restBannerID)
             }
         }
     }
