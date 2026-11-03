@@ -56,8 +56,12 @@ WATCH_SHOTS=(01_watch_routines 02_watch_logging 03_watch_rest 04_watch_summary)
 LOCK_OWNED=0
 BOOTED=()
 OVERRIDDEN=()
+REPLACING=0
 cleanup() {
   local udid
+  if [[ $REPLACING == 1 ]]; then
+    put_back_previous_store || log "WARNING: could not restore fastlane/screenshots/en-US from $BACKUP_DIR"
+  fi
   for udid in "${OVERRIDDEN[@]:-}"; do
     [[ -n "$udid" ]] && xcrun simctl status_bar "$udid" clear > /dev/null 2>&1
   done
@@ -206,6 +210,8 @@ if xcrun simctl status_bar "$WATCH" override --time 9:41 2> "$RUN_DIR/watch-stat
 else
   log "WARNING: the watch refused a status bar override ($(tr '\n' ' ' < "$RUN_DIR/watch-status-bar.log")); its clock shows the real time"
 fi
+# Light appearance stays set: the phone is this script's own device. The
+# watch keeps every setting; its override, if taken, is cleared on exit.
 xcrun simctl ui "$PHONE" appearance light || fail "could not set the iPhone to light appearance"
 
 # ---------------------------------------------------------------------------
@@ -361,13 +367,17 @@ shopt -u nullglob
 if (( ${#PREVIOUS[@]} > 0 )); then
   cp "${PREVIOUS[@]}" "$BACKUP_DIR"/ || fail "could not back up $STORE_DIR; nothing in it was changed"
 fi
-restore_store() {
+put_back_previous_store() {
   rm -f "$STORE_DIR"/*.png "$STORE_DIR"/.*.png.new
-  if (( ${#PREVIOUS[@]} > 0 )) && ! cp "$BACKUP_DIR"/*.png "$STORE_DIR"/; then
-    fail "$1, and restoring the previous set from $BACKUP_DIR failed too"
-  fi
+  (( ${#PREVIOUS[@]} == 0 )) || cp "$BACKUP_DIR"/*.png "$STORE_DIR"/
+}
+restore_store() {
+  REPLACING=0
+  put_back_previous_store || fail "$1, and restoring the previous set from $BACKUP_DIR failed too"
   fail "$1; fastlane/screenshots/en-US was restored to its previous set"
 }
+# From here until the last rename, an interrupt also restores (cleanup).
+REPLACING=1
 for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
   cp "$STAGE_DIR/$shot.png" "$STORE_DIR/.$shot.png.new" || restore_store "could not copy $shot.png"
 done
@@ -375,6 +385,7 @@ rm -f "$STORE_DIR"/*.png
 for shot in "${PHONE_SHOTS[@]}" "${WATCH_SHOTS[@]}"; do
   mv "$STORE_DIR/.$shot.png.new" "$STORE_DIR/$shot.png" || restore_store "could not move $shot.png into place"
 done
+REPLACING=0
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "### Store screenshots"
