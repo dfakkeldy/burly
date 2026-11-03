@@ -35,9 +35,15 @@ final class StoreScreenshotsUITests: XCTestCase {
     func testCaptureStoreScreenshots() throws {
         let app = XCUIApplication()
         app.launchEnvironment["BURLY_PHONE_UI_TEST_SCENARIO"] = "storeScreenshots"
-        // The unit pair goes first: the argument domain reads "-key value"
-        // pairs, and the welcome flag is matched on its own.
-        app.launchArguments += ["-com.burly.lifting.displayUnit", "lb", "-burly-skip-welcome"]
+        // The "-key value" pairs go first, since the argument domain reads
+        // them in pairs, and the welcome flag is matched on its own. These
+        // are the en-US screenshots, whatever the simulator's own locale.
+        app.launchArguments += [
+            "-com.burly.lifting.displayUnit", "lb",
+            "-AppleLanguages", "(en-US)",
+            "-AppleLocale", "en_US",
+            "-burly-skip-welcome"
+        ]
         app.launch()
 
         // History: weeks of sessions, the newest with a PR.

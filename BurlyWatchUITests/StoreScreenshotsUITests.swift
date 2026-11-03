@@ -33,6 +33,8 @@ final class StoreScreenshotsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["BURLY_WATCH_UI_TEST_SCENARIO"] = "storeScreenshots"
         app.launchEnvironment["BURLY_WATCH_UI_TEST_DISPLAY_UNIT"] = "lb"
+        // The en-US screenshots, whatever the simulator's own locale.
+        app.launchArguments += ["-AppleLanguages", "(en-US)", "-AppleLocale", "en_US"]
         app.launch()
 
         // Today's Legs: its summary, then saved.

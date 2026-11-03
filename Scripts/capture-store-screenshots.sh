@@ -107,9 +107,10 @@ for _ in $(seq 1 270); do
     echo "$$ $(date +%s)" > "$LOCK_DIR/owner"
     break
   fi
-  # Only an existing lock is worth waiting for; a missing parent or a
-  # permission error never clears by itself.
+  # Only an existing lock directory is worth waiting for; a missing parent,
+  # a permission error or a file at that path never clears by itself.
   [[ "$mkdir_err" == *"File exists"* ]] || fail "could not create the simulator lock $LOCK_DIR: $mkdir_err"
+  [[ -d "$LOCK_DIR" ]] || fail "the simulator lock path $LOCK_DIR exists but is not a directory"
   if lock_is_stale; then
     log "reclaiming the stale simulator lock $LOCK_DIR"
     rm -f "$LOCK_DIR/owner"
