@@ -12,8 +12,9 @@ live in `fastlane/` (see DECISIONS.md).
 On iPhone:
 
 - **History**: logged sessions grouped by week, with a session editor
-  (sets, warmups, added or removed exercises, notes). Edits keep the linked
-  HealthKit workout identifier. History refreshes when a session arrives
+  (sets, warmups, added, removed or reordered exercises, notes). Edits keep
+  the linked HealthKit workout identifier. A workout can be deleted, from
+  its row or its detail screen. History refreshes when a session arrives
   from the watch.
 - **Routines**: a routine builder, plus a catalog browser where you can
   create and archive your own exercises. The bundled curated catalog is
@@ -48,12 +49,16 @@ over WatchConnectivity (`PhoneSyncHost` / `WatchSyncHost`). Snapshot schema
 2 carries the phone's display unit and rest default. Before the first
 snapshot the watch shows kilograms and 90 seconds.
 
-## Not wired up yet
+## Deleting a workout
 
-The iPhone app does not read or write Apple Health itself; only the watch
-does. Deleting a workout from Health when its session is deleted is built
-in `BurlyKit` but not wired, because the phone has no session-delete action
-yet (see DECISIONS.md).
+Deleting a workout in iPhone History removes it from Burly's history and
+stats, and it stays deleted: the watch cannot send it back, and a later
+Hevy import skips it. If the watch saved it to Apple Health, the phone also
+asks Health to delete it. That is the only time the iPhone app asks for
+Health access, and it asks only to write workouts; it reads nothing from
+Health. Whether iOS lets the iPhone app delete a workout the watch app
+saved has not been checked on a device yet. When it can't, History says so
+and you can delete the workout in the Health app.
 
 ## Simulator acceptance
 

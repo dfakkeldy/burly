@@ -30,7 +30,8 @@ own privacy policy.
 ## Apple Health
 
 Burly asks for Health access on Apple Watch the first time you start a
-workout. If you allow it:
+workout, and on iPhone only when you delete a workout Burly saved to Health
+(see below). If you allow it:
 
 - Burly **writes** each finished workout to Health, so other apps you allow
   can see it.
@@ -39,8 +40,10 @@ workout. If you allow it:
 
 When you delete a workout in Burly on iPhone and Burly saved it to Health,
 Burly also asks Health to delete that workout. The first time, iPhone may
-ask whether Burly can change workouts in Health. If Burly can't delete it, Burly
-tells you, and you can delete it in the Health app.
+ask whether Burly can write workouts to Health; that is the only Health
+access the iPhone app asks for, and it reads nothing from Health. If Burly
+can't delete the workout, Burly tells you, and you can delete it in the
+Health app.
 
 Health data is used only for these purposes. It is never used for
 advertising or marketing, never sold, and never shared with anyone. If you
@@ -52,7 +55,8 @@ Apps, then Burly.
 
 Deleting Burly from a device deletes its storage on that device. Workouts
 Burly saved to Apple Health stay in Health until you delete them there, or
-until you delete them in Burly on iPhone (see Apple Health above).
+until Burly removes one when you delete that workout in Burly on iPhone
+(see Apple Health above).
 
 ## Changes and contact
 
