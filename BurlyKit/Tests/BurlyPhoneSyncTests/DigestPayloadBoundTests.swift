@@ -59,12 +59,13 @@ struct DigestPayloadBoundTests {
         #expect(Set((payload.routineLastPerformed ?? []).map(\.routineID)) == fixture.routineIDs)
 
         // Every kept entry is exactly the full-history answer.
-        let referenceByID = Dictionary(uniqueKeysWithValues: reference.map { ($0.exerciseID, $0) })
+        var referenceByID: [UUID: ExerciseLastPerformanceData] = [:]
+        for entry in reference { referenceByID[entry.exerciseID] = entry }
         for entry in payload.lastPerformance {
             #expect(referenceByID[entry.exerciseID] == entry)
         }
-        #expect(payload.lastPerformance.map(\.exerciseID.uuidString)
-            == payload.lastPerformance.map(\.exerciseID.uuidString).sorted())
+        let keptOrder: [String] = payload.lastPerformance.map { $0.exerciseID.uuidString }
+        #expect(keptOrder == keptOrder.sorted())
 
         // Out-of-working-set exercises are never sent.
         let keptIDs = Set(payload.lastPerformance.map(\.exerciseID))
@@ -85,7 +86,7 @@ struct DigestPayloadBoundTests {
 
     // MARK: - The working set
 
-    @Test("archived exercises outside every live routine are left out; one a live routine still uses stays")
+    @Test("the digest leaves out archived exercises no live routine uses, though the snapshot carries the whole catalog")
     func onlyTheWatchWorkingSet() throws {
         let store = try makePhoneStore()
         let bench = Fixture.exercise(name: "Bench Press")
@@ -108,7 +109,17 @@ struct DigestPayloadBoundTests {
         try store.archiveRoutine(id: archived.id, at: later)
 
         let payload = try SessionDigestGenerator.generate(from: store, snapshotVersion: 1, ackedSessionIDs: [])
-        #expect(Set(payload.lastPerformance.map(\.exerciseID)) == [bench.id, stillUsed.id])
+        let digestIDs: Set<UUID> = Set(payload.lastPerformance.map { $0.exerciseID })
+        let expectedIDs: Set<UUID> = [bench.id, stillUsed.id]
+        #expect(digestIDs == expectedIDs)
+
+        // The snapshot is the other half of the split: since #49 it carries
+        // the whole catalog, archived rows included, so an archive reaches
+        // the watch's picker. The digest does not follow it there.
+        let snapshot = try SnapshotPayloadBuilder.build(version: 1, from: store)
+        let snapshotIDs: Set<UUID> = Set(snapshot.exercises.map { $0.id })
+        let catalogIDs: Set<UUID> = [bench.id, retired.id, stillUsed.id, archivedRoutineOnly.id]
+        #expect(snapshotIDs == catalogIDs)
     }
 
     // MARK: - Routine dates
@@ -138,11 +149,14 @@ struct DigestPayloadBoundTests {
         try store.deleteRoutine(id: deleted.id)
 
         let payload = try SessionDigestGenerator.generate(from: store, snapshotVersion: 1, ackedSessionIDs: [])
-        #expect(payload.routineLastPerformed == [
-            BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: Fixture.epoch.addingTimeInterval(86_400)),
-            BurlyRoutineLastPerformedDTO(routineID: pull.id, performedAt: Fixture.epoch.addingTimeInterval(3_600)),
-            BurlyRoutineLastPerformedDTO(routineID: retired.id, performedAt: Fixture.epoch)
-        ].sorted { $0.routineID.uuidString < $1.routineID.uuidString })
+        let pushDate: Date = Fixture.epoch.addingTimeInterval(86_400)
+        let pullDate: Date = Fixture.epoch.addingTimeInterval(3_600)
+        var expected: [BurlyRoutineLastPerformedDTO] = []
+        expected.append(BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: pushDate))
+        expected.append(BurlyRoutineLastPerformedDTO(routineID: pull.id, performedAt: pullDate))
+        expected.append(BurlyRoutineLastPerformedDTO(routineID: retired.id, performedAt: Fixture.epoch))
+        expected.sort { $0.routineID.uuidString < $1.routineID.uuidString }
+        #expect(payload.routineLastPerformed == expected)
     }
 
     // MARK: - The budget, directly
@@ -168,12 +182,13 @@ struct DigestPayloadBoundTests {
         #expect(trimmed.ackedSessionIDs == payload.ackedSessionIDs)
         #expect(trimmed.routineLastPerformed == payload.routineLastPerformed)
         #expect(trimmed.lastPerformance.count < payload.lastPerformance.count)
-        let keptIDs = Set(trimmed.lastPerformance.map(\.exerciseID))
+        let keptIDs: Set<UUID> = Set(trimmed.lastPerformance.map { $0.exerciseID })
         #expect(routineIDs.isSubset(of: keptIDs))
-        let othersNewestFirst = byAge.dropFirst(2).reversed().map(\.exerciseID)
-        #expect(Set(othersNewestFirst.prefix(keptIDs.count - 2)) == keptIDs.subtracting(routineIDs))
-        #expect(trimmed.lastPerformance.map(\.exerciseID.uuidString)
-            == trimmed.lastPerformance.map(\.exerciseID.uuidString).sorted())
+        let othersNewestFirst: [UUID] = byAge.dropFirst(2).reversed().map { $0.exerciseID }
+        let expectedOthers: Set<UUID> = Set(othersNewestFirst.prefix(keptIDs.count - 2))
+        #expect(expectedOthers == keptIDs.subtracting(routineIDs))
+        let keptOrder: [String] = trimmed.lastPerformance.map { $0.exerciseID.uuidString }
+        #expect(keptOrder == keptOrder.sorted())
 
         // Greedy and exact: one more entry would not have fit.
         let next = try #require(othersNewestFirst.dropFirst(keptIDs.count - 2).first)
@@ -212,7 +227,10 @@ struct DigestPayloadBoundTests {
             ackedSessionIDs: payload.ackedSessionIDs,
             routineLastPerformed: payload.routineLastPerformed
         ))
-        let entrySize = try JSONEncoder().encode(byAge[0]).count + JSONEncoder().encode(byAge[1]).count + 1
+        let encoder = JSONEncoder()
+        let firstSize: Int = try encoder.encode(byAge[0]).count
+        let secondSize: Int = try encoder.encode(byAge[1]).count
+        let entrySize: Int = firstSize + secondSize + 1
         let trimmed = try SessionDigestGenerator.fitting(
             payload,
             within: base + entrySize,
@@ -220,7 +238,8 @@ struct DigestPayloadBoundTests {
             acknowledgedLatestSession: acknowledged
         )
 
-        #expect(Set(trimmed.lastPerformance.map(\.exerciseID)) == [byAge[0].exerciseID, byAge[1].exerciseID])
+        let expectedIDs: Set<UUID> = [byAge[0].exerciseID, byAge[1].exerciseID]
+        #expect(Set(trimmed.lastPerformance.map { $0.exerciseID }) == expectedIDs)
         #expect(trimmed.ackedSessionIDs == payload.ackedSessionIDs, "every entry an ack needed fit, so no ack is held back")
     }
 
@@ -228,7 +247,8 @@ struct DigestPayloadBoundTests {
     func unfittableAcknowledgedSessionHoldsItsAck() throws {
         let payload = syntheticPayload(entryCount: 10, ackCount: 3)
         let delivered = payload.ackedSessionIDs[1]
-        let acknowledged = Dictionary(uniqueKeysWithValues: payload.lastPerformance.prefix(4).map { ($0.exerciseID, delivered) })
+        var acknowledged: [UUID: UUID] = [:]
+        for entry in payload.lastPerformance.prefix(4) { acknowledged[entry.exerciseID] = delivered }
 
         let trimmed = try SessionDigestGenerator.fitting(
             payload,
@@ -238,28 +258,34 @@ struct DigestPayloadBoundTests {
         )
 
         #expect(trimmed.lastPerformance.isEmpty)
-        #expect(trimmed.ackedSessionIDs == payload.ackedSessionIDs.filter { $0 != delivered })
+        let remainingAcks: [UUID] = payload.ackedSessionIDs.filter { $0 != delivered }
+        #expect(trimmed.ackedSessionIDs == remainingAcks)
         #expect(trimmed.routineLastPerformed == payload.routineLastPerformed)
     }
 
     @Test("generate holds back the ack of a heavy session whose numbers outgrow the budget, and acks it once they fit")
     func generateHoldsBackAnAckUntilItsNumbersFit() throws {
         let store = try makePhoneStore()
-        let exercises = (0..<12).map { Fixture.exercise(name: "Exercise \($0)") }
+        var exercises: [ExerciseData] = []
+        for index in 0..<12 { exercises.append(Fixture.exercise(name: "Exercise \(index)")) }
         for exercise in exercises { try store.createExercise(exercise) }
-        let delivered = loggedSession(at: 0, exercises.map { ($0, [100, 105, 110, 115, 120]) })
+        let weights: [Double] = [100, 105, 110, 115, 120]
+        var sessionEntries: [(ExerciseData, [Double])] = []
+        for exercise in exercises { sessionEntries.append((exercise, weights)) }
+        let delivered = loggedSession(at: 0, sessionEntries)
         try store.createSession(delivered)
         let other = UUID()
+        let bothAcks: Set<UUID> = [delivered.id, other]
 
-        let full = try SessionDigestGenerator.generate(from: store, snapshotVersion: 1, ackedSessionIDs: [delivered.id, other])
+        let full = try SessionDigestGenerator.generate(from: store, snapshotVersion: 1, ackedSessionIDs: bothAcks)
         let fullSize = try SessionDigestGenerator.envelopeByteCount(full)
         #expect(full.lastPerformance.count == 12)
-        #expect(Set(full.ackedSessionIDs) == [delivered.id, other])
+        #expect(Set(full.ackedSessionIDs) == bothAcks)
 
         let tight = try SessionDigestGenerator.generate(
             from: store,
             snapshotVersion: 1,
-            ackedSessionIDs: [delivered.id, other],
+            ackedSessionIDs: bothAcks,
             byteBudget: fullSize - 1
         )
         #expect(tight.lastPerformance.count == 11)
@@ -268,39 +294,48 @@ struct DigestPayloadBoundTests {
 
     // MARK: - Helpers
 
+    // Loops and typed locals, not chained `map`/`sorted` closures: the
+    // hosted Xcode 26.6 gave up type-checking the chained form ("unable to
+    // type-check this expression in reasonable time").
     private func syntheticPayload(entryCount: Int, ackCount: Int) -> BurlyDigestPayloadDTO {
-        let entries = (0..<entryCount).map { index in
-            ExerciseLastPerformanceData(
-                exerciseID: UUID(),
-                performedAt: Fixture.epoch.addingTimeInterval(Double(index) * 86_400),
-                sets: (0..<(1 + index % 5)).map { SetSnapshot(weight: Weight(pounds: Double(45 + 10 * $0)), reps: 8) }
-            )
+        var entries: [ExerciseLastPerformanceData] = []
+        for index in 0..<entryCount {
+            var sets: [SetSnapshot] = []
+            for setIndex in 0..<(1 + index % 5) {
+                let pounds: Double = Double(45 + 10 * setIndex)
+                sets.append(SetSnapshot(weight: Weight(pounds: pounds), reps: 8))
+            }
+            let performedAt: Date = Fixture.epoch.addingTimeInterval(Double(index) * 86_400)
+            entries.append(ExerciseLastPerformanceData(exerciseID: UUID(), performedAt: performedAt, sets: sets))
         }
-        .sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
+        entries.sort { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
+
+        var ackedSessionIDs: [UUID] = []
+        for _ in 0..<ackCount { ackedSessionIDs.append(UUID()) }
+        ackedSessionIDs.sort { $0.uuidString < $1.uuidString }
+
+        let routineDates: [BurlyRoutineLastPerformedDTO] = [
+            BurlyRoutineLastPerformedDTO(routineID: UUID(), performedAt: Fixture.epoch)
+        ]
         return BurlyDigestPayloadDTO(
             snapshotVersion: 3,
             lastPerformance: entries,
-            ackedSessionIDs: (0..<ackCount).map { _ in UUID() }.sorted { $0.uuidString < $1.uuidString },
-            routineLastPerformed: [BurlyRoutineLastPerformedDTO(routineID: UUID(), performedAt: Fixture.epoch)]
+            ackedSessionIDs: ackedSessionIDs,
+            routineLastPerformed: routineDates
         )
     }
 
     private func loggedSession(at hours: Int, _ items: [(ExerciseData, [Double])]) -> SessionData {
-        let startedAt = Fixture.epoch.addingTimeInterval(Double(hours) * 3_600)
-        return SessionData(
-            startedAt: startedAt,
-            state: .logged,
-            origin: .live,
-            items: items.enumerated().map { index, entry in
-                SessionItemData(
-                    exerciseID: entry.0.id,
-                    order: index,
-                    sets: entry.1.enumerated().map { order, kg in
-                        SetRecordData(order: order, weight: Weight(kg: kg), reps: 5, completedAt: startedAt)
-                    }
-                )
+        let startedAt: Date = Fixture.epoch.addingTimeInterval(Double(hours) * 3_600)
+        var sessionItems: [SessionItemData] = []
+        for (index, entry) in items.enumerated() {
+            var sets: [SetRecordData] = []
+            for (order, kg) in entry.1.enumerated() {
+                sets.append(SetRecordData(order: order, weight: Weight(kg: kg), reps: 5, completedAt: startedAt))
             }
-        )
+            sessionItems.append(SessionItemData(exerciseID: entry.0.id, order: index, sets: sets))
+        }
+        return SessionData(startedAt: startedAt, state: .logged, origin: .live, items: sessionItems)
     }
 }
 
@@ -325,24 +360,36 @@ private struct HeavyHistory {
     /// exercise id: what the full-history derivation must produce.
     let expectedWorkingSetEntries: [ExerciseLastPerformanceData]
 
+    // Loops and typed locals throughout: the fixture is the most
+    // expression-dense helper in the file, and the hosted Xcode 26.6 gives
+    // up on nested `map` closures that Xcode 27 accepts. The random draws
+    // happen in the same order as the closure form did (set count, then each
+    // set's weight, then its reps), so the seeded history is unchanged.
     static func seed() throws -> HeavyHistory {
         var rng = SeededGenerator(seed: 0xD1_6E57)
         let store = try makePhoneStore()
 
-        let live = (0..<liveExerciseCount).map {
-            Fixture.exercise(name: "Imported \($0)", origin: .hevyImport)
+        var live: [ExerciseData] = []
+        for index in 0..<liveExerciseCount {
+            live.append(Fixture.exercise(name: "Imported \(index)", origin: .hevyImport))
         }
-        let archivedUnused = (0..<5).map { Fixture.exercise(name: "Retired \($0)", origin: .hevyImport) }
+        var archivedUnused: [ExerciseData] = []
+        for index in 0..<5 {
+            archivedUnused.append(Fixture.exercise(name: "Retired \(index)", origin: .hevyImport))
+        }
         let archivedInRoutine = Fixture.exercise(name: "Retired but planned", origin: .hevyImport)
-        for exercise in live + archivedUnused + [archivedInRoutine] { try store.createExercise(exercise) }
+        var everyExercise: [ExerciseData] = live
+        everyExercise.append(contentsOf: archivedUnused)
+        everyExercise.append(archivedInRoutine)
+        for exercise in everyExercise { try store.createExercise(exercise) }
 
         // Routine exercises: the first 24, plus the archived one in Legs.
-        let routines = (0..<3).map { index in
-            Fixture.routine(
-                name: ["Push", "Pull", "Legs"][index],
-                orderIndex: index,
-                over: Array(live[(index * 8)..<(index * 8 + 8)]) + (index == 2 ? [archivedInRoutine] : [])
-            )
+        let routineNames: [String] = ["Push", "Pull", "Legs"]
+        var routines: [RoutineData] = []
+        for index in 0..<3 {
+            var routineExercises: [ExerciseData] = Array(live[(index * 8)..<(index * 8 + 8)])
+            if index == 2 { routineExercises.append(archivedInRoutine) }
+            routines.append(Fixture.routine(name: routineNames[index], orderIndex: index, over: routineExercises))
         }
         for routine in routines { try store.createRoutine(routine) }
 
@@ -351,32 +398,46 @@ private struct HeavyHistory {
         // the oldest; after that only exercises 24..<300 recur, one a day.
         // Days are distinct and each session names an exercise once, so the
         // last session written for an exercise is its latest.
-        let extras = [archivedInRoutine] + archivedUnused
+        var extras: [ExerciseData] = [archivedInRoutine]
+        extras.append(contentsOf: archivedUnused)
         var latest: [UUID: ExerciseLastPerformanceData] = [:]
         for day in 0..<sessionCount {
-            let startedAt = Fixture.epoch.addingTimeInterval(Double(day) * 86_400)
-            var exercises: [ExerciseData]
+            let startedAt: Date = Fixture.epoch.addingTimeInterval(Double(day) * 86_400)
+            var exercises: [ExerciseData] = []
             if day < liveExerciseCount {
-                exercises = [live[day]]
+                exercises.append(live[day])
                 if day < extras.count { exercises.append(extras[day]) }
             } else {
-                exercises = [live[24 + (day % (liveExerciseCount - 24))]]
+                exercises.append(live[24 + (day % (liveExerciseCount - 24))])
             }
-            let routine = routines.first { $0.items.contains { $0.exerciseID == exercises[0].id } }
-            let items = exercises.enumerated().map { order, exercise in
-                SessionItemData(
-                    exerciseID: exercise.id,
-                    order: order,
-                    sets: (0..<Int.random(in: 4...5, using: &rng)).map { setIndex in
-                        SetRecordData(
-                            order: setIndex,
-                            weight: Weight(pounds: Double(Int.random(in: 9...63, using: &rng) * 5)),
-                            reps: Int.random(in: 3...12, using: &rng),
-                            isWarmup: setIndex == 0,
-                            completedAt: startedAt.addingTimeInterval(Double(setIndex) * 150)
-                        )
-                    }
-                )
+            let firstExerciseID: UUID = exercises[0].id
+            var routine: RoutineData?
+            for candidate in routines {
+                var usesExercise = false
+                for item in candidate.items where item.exerciseID == firstExerciseID { usesExercise = true }
+                if usesExercise {
+                    routine = candidate
+                    break
+                }
+            }
+
+            var items: [SessionItemData] = []
+            for (order, exercise) in exercises.enumerated() {
+                let setCount: Int = Int.random(in: 4...5, using: &rng)
+                var sets: [SetRecordData] = []
+                for setIndex in 0..<setCount {
+                    let fiveLbSteps: Int = Int.random(in: 9...63, using: &rng)
+                    let reps: Int = Int.random(in: 3...12, using: &rng)
+                    let completedAt: Date = startedAt.addingTimeInterval(Double(setIndex) * 150)
+                    sets.append(SetRecordData(
+                        order: setIndex,
+                        weight: Weight(pounds: Double(fiveLbSteps * 5)),
+                        reps: reps,
+                        isWarmup: setIndex == 0,
+                        completedAt: completedAt
+                    ))
+                }
+                items.append(SessionItemData(exerciseID: exercise.id, order: order, sets: sets))
             }
             try store.createSession(SessionData(
                 routineID: routine?.id,
@@ -388,29 +449,55 @@ private struct HeavyHistory {
             ))
             for item in items {
                 guard let exerciseID = item.exerciseID else { continue }
+                var snapshots: [SetSnapshot] = []
+                for set in item.sets {
+                    snapshots.append(SetSnapshot(weight: set.weight, reps: set.reps, isWarmup: set.isWarmup))
+                }
                 latest[exerciseID] = ExerciseLastPerformanceData(
                     exerciseID: exerciseID,
                     performedAt: startedAt,
-                    sets: item.sets.map { SetSnapshot(weight: $0.weight, reps: $0.reps, isWarmup: $0.isWarmup) }
+                    sets: snapshots
                 )
             }
         }
 
-        let later = Fixture.epoch.addingTimeInterval(Double(sessionCount) * 86_400)
-        for exercise in archivedUnused + [archivedInRoutine] {
+        let later: Date = Fixture.epoch.addingTimeInterval(Double(sessionCount) * 86_400)
+        var toArchive: [ExerciseData] = archivedUnused
+        toArchive.append(archivedInRoutine)
+        for exercise in toArchive {
             try store.archiveExercise(id: exercise.id, at: later)
         }
 
-        let workingSet = Set((live + [archivedInRoutine]).map(\.id))
+        var workingSet = Set<UUID>()
+        for exercise in live { workingSet.insert(exercise.id) }
+        workingSet.insert(archivedInRoutine.id)
+
+        var expectedEntries: [ExerciseLastPerformanceData] = []
+        for entry in latest.values where workingSet.contains(entry.exerciseID) {
+            expectedEntries.append(entry)
+        }
+        expectedEntries.sort { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
+
+        var routineIDs = Set<UUID>()
+        var routineExerciseIDs = Set<UUID>()
+        for routine in routines {
+            routineIDs.insert(routine.id)
+            for item in routine.items {
+                if let exerciseID = item.exerciseID { routineExerciseIDs.insert(exerciseID) }
+            }
+        }
+        var archivedUnusedIDs = Set<UUID>()
+        for exercise in archivedUnused { archivedUnusedIDs.insert(exercise.id) }
+        var ackedSessionIDs = Set<UUID>()
+        for _ in 0..<120 { ackedSessionIDs.insert(UUID()) }
+
         return HeavyHistory(
             store: store,
-            routineIDs: Set(routines.map(\.id)),
-            routineExerciseIDs: Set(routines.flatMap { $0.items.compactMap(\.exerciseID) }),
-            archivedUnusedExerciseIDs: Set(archivedUnused.map(\.id)),
-            ackedSessionIDs: Set((0..<120).map { _ in UUID() }),
-            expectedWorkingSetEntries: latest.values
-                .filter { workingSet.contains($0.exerciseID) }
-                .sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
+            routineIDs: routineIDs,
+            routineExerciseIDs: routineExerciseIDs,
+            archivedUnusedExerciseIDs: archivedUnusedIDs,
+            ackedSessionIDs: ackedSessionIDs,
+            expectedWorkingSetEntries: expectedEntries
         )
     }
 }

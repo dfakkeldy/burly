@@ -49,9 +49,14 @@ struct LatestLoggedSetSlicesTests {
         try store.createSession(session(at: 2, [(squat, [140])]))
 
         let slices = try store.latestLoggedSetSlices(forExercises: [bench.id, row.id])
-        #expect(Set(slices.filter { $0.exerciseID == bench.id }.map(\.set.weight.kg)) == [110, 112.5, 115])
-        #expect(slices.filter { $0.exerciseID == bench.id }.allSatisfy { $0.sessionID == latest.id })
-        #expect(slices.filter { $0.exerciseID == row.id }.map(\.set.weight.kg) == [60])
+        let benchSlices: [SetRecordSlice] = slices.filter { $0.exerciseID == bench.id }
+        let rowSlices: [SetRecordSlice] = slices.filter { $0.exerciseID == row.id }
+        let benchWeights: Set<Double> = Set(benchSlices.map { $0.set.weight.kg })
+        let expectedBenchWeights: Set<Double> = [110, 112.5, 115]
+        #expect(benchWeights == expectedBenchWeights)
+        #expect(benchSlices.allSatisfy { $0.sessionID == latest.id })
+        let rowWeights: [Double] = rowSlices.map { $0.set.weight.kg }
+        #expect(rowWeights == [60])
         #expect(slices.allSatisfy { $0.exerciseID != squat.id })
         try expectMatchesFullHistory(store, [bench.id, row.id])
     }
@@ -215,9 +220,15 @@ struct LatestLoggedSetSlicesTests {
             var items: [(ExerciseData, [Double])] = []
             for exercise in exercises where Bool.random(using: &rng) {
                 let setCount = Int.random(in: 0...3, using: &rng)
-                items.append((exercise, (0..<setCount).map { _ in Double(Int.random(in: 4...40, using: &rng) * 5) }))
+                var weights: [Double] = []
+                for _ in 0..<setCount {
+                    let fiveKgSteps: Int = Int.random(in: 4...40, using: &rng)
+                    weights.append(Double(fiveKgSteps * 5))
+                }
+                items.append((exercise, weights))
                 if Int.random(in: 0..<5, using: &rng) == 0 {
-                    items.append((exercise, [Double(Int.random(in: 4...40, using: &rng) * 5)]))
+                    let fiveKgSteps: Int = Int.random(in: 4...40, using: &rng)
+                    items.append((exercise, [Double(fiveKgSteps * 5)]))
                 }
             }
             let created = session(at: hour, items)
@@ -227,7 +238,10 @@ struct LatestLoggedSetSlicesTests {
             }
         }
 
-        let requested = Set(exercises.filter { _ in Int.random(in: 0..<4, using: &rng) != 0 }.map(\.id))
+        var requested = Set<UUID>()
+        for exercise in exercises where Int.random(in: 0..<4, using: &rng) != 0 {
+            requested.insert(exercise.id)
+        }
         try expectMatchesFullHistory(store, requested)
     }
 
@@ -255,29 +269,27 @@ struct LatestLoggedSetSlicesTests {
         _ items: [(ExerciseData, [Double])],
         setIDs: [UUID] = []
     ) -> SessionData {
-        let startedAt = Fixture.epoch.addingTimeInterval(Double(hours) * 3_600)
+        let startedAt: Date = Fixture.epoch.addingTimeInterval(Double(hours) * 3_600)
         var remainingSetIDs = setIDs[...]
-        return SessionData(
-            id: id,
-            startedAt: startedAt,
-            state: .logged,
-            origin: .live,
-            items: items.enumerated().map { index, entry in
-                SessionItemData(
-                    exerciseID: entry.0.id,
-                    order: index,
-                    sets: entry.1.enumerated().map { order, kg in
-                        SetRecordData(
-                            id: remainingSetIDs.popFirst() ?? UUID(),
-                            order: order,
-                            weight: Weight(kg: kg),
-                            reps: 5,
-                            completedAt: startedAt.addingTimeInterval(Double(order) * 60)
-                        )
-                    }
-                )
+        // Loops, not nested `map` closures: the hosted Xcode 26.6 gave up
+        // type-checking a sibling helper written that way.
+        var sessionItems: [SessionItemData] = []
+        for (index, entry) in items.enumerated() {
+            var sets: [SetRecordData] = []
+            for (order, kg) in entry.1.enumerated() {
+                let setID: UUID = remainingSetIDs.popFirst() ?? UUID()
+                let completedAt: Date = startedAt.addingTimeInterval(Double(order) * 60)
+                sets.append(SetRecordData(
+                    id: setID,
+                    order: order,
+                    weight: Weight(kg: kg),
+                    reps: 5,
+                    completedAt: completedAt
+                ))
             }
-        )
+            sessionItems.append(SessionItemData(exerciseID: entry.0.id, order: index, sets: sets))
+        }
+        return SessionData(id: id, startedAt: startedAt, state: .logged, origin: .live, items: sessionItems)
     }
 
     /// Reaches past the store to write a weight no store API can, the way
@@ -317,10 +329,11 @@ struct RoutineLastPerformedDatesTests {
         ))
         try store.saveActiveSession(Fixture.activeSession(from: pull, startedAt: Fixture.epoch.addingTimeInterval(5 * 86_400)))
 
-        #expect(try store.routineLastPerformedDates() == [
-            push.id: Fixture.epoch.addingTimeInterval(86_400),
-            pull.id: Fixture.epoch.addingTimeInterval(3_600)
-        ])
+        let pushDate: Date = Fixture.epoch.addingTimeInterval(86_400)
+        let pullDate: Date = Fixture.epoch.addingTimeInterval(3_600)
+        let expected: [UUID: Date] = [push.id: pushDate, pull.id: pullDate]
+        let reported: [UUID: Date] = try store.routineLastPerformedDates()
+        #expect(reported == expected)
     }
 
     @Test("a watch store keeps the phone's reported date after pruning the session, and prefers a newer unacknowledged one")
@@ -339,25 +352,28 @@ struct RoutineLastPerformedDatesTests {
 
         // The phone acknowledges it and reports Push and Pull (Pull from
         // phone-side history the watch never held).
+        let dayBefore: Date = Fixture.epoch.addingTimeInterval(-86_400)
+        let reportedDates: [BurlyRoutineLastPerformedDTO] = [
+            BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: Fixture.epoch),
+            BurlyRoutineLastPerformedDTO(routineID: pull.id, performedAt: dayBefore)
+        ]
         try store.applyWatchDigest(BurlyDigestPayloadDTO(
             snapshotVersion: 0,
             lastPerformance: [],
             ackedSessionIDs: [delivered.id],
-            routineLastPerformed: [
-                BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: Fixture.epoch),
-                BurlyRoutineLastPerformedDTO(routineID: pull.id, performedAt: Fixture.epoch.addingTimeInterval(-86_400))
-            ]
+            routineLastPerformed: reportedDates
         ))
         #expect(try store.session(id: delivered.id) == nil, "the acknowledged session is pruned")
-        #expect(try store.routineLastPerformedDates() == [
-            push.id: Fixture.epoch,
-            pull.id: Fixture.epoch.addingTimeInterval(-86_400)
-        ])
+        let afterPrune: [UUID: Date] = try store.routineLastPerformedDates()
+        let expectedAfterPrune: [UUID: Date] = [push.id: Fixture.epoch, pull.id: dayBefore]
+        #expect(afterPrune == expectedAfterPrune)
 
         // Finished on the watch, not yet acknowledged: newer than the report.
         let fresh = Fixture.session(from: pull, startedAt: Fixture.epoch.addingTimeInterval(86_400))
         try store.createSession(fresh)
-        #expect(try store.routineLastPerformedDates()[pull.id] == Fixture.epoch.addingTimeInterval(86_400))
+        let freshDate: Date = Fixture.epoch.addingTimeInterval(86_400)
+        let latestPull: Date? = try store.routineLastPerformedDates()[pull.id]
+        #expect(latestPull == freshDate)
     }
 
     @Test("the reported dates are replaced whole by each digest, and survive a cold reopen")
@@ -366,15 +382,19 @@ struct RoutineLastPerformedDatesTests {
         defer { removeStoreFiles(at: url) }
         let push = UUID()
         let pull = UUID()
+        let minuteLater: Date = Fixture.epoch.addingTimeInterval(60)
         do {
             let store = try SwiftDataStore(kind: .watch, at: .file(url))
             try store.applyWatchDigest(digest([push: Fixture.epoch, pull: Fixture.epoch]))
             // The phone deleted Pull's only session: it is no longer reported.
-            try store.applyWatchDigest(digest([push: Fixture.epoch.addingTimeInterval(60)]))
+            try store.applyWatchDigest(digest([push: minuteLater]))
         }
         let reopened = try SwiftDataStore(kind: .watch, at: .file(url))
-        #expect(try reopened.routineLastPerformedDates() == [push: Fixture.epoch.addingTimeInterval(60)])
-        #expect(try reopened.watchSyncState().routineLastPerformedAt == [push: Fixture.epoch.addingTimeInterval(60)])
+        let expected: [UUID: Date] = [push: minuteLater]
+        let reported: [UUID: Date] = try reopened.routineLastPerformedDates()
+        let journalled: [UUID: Date] = try reopened.watchSyncState().routineLastPerformedAt
+        #expect(reported == expected)
+        #expect(journalled == expected)
     }
 
     @Test("applyDigest, which carries no routine dates, leaves the reported ones alone")
@@ -396,17 +416,17 @@ struct RoutineLastPerformedDatesTests {
         let older = UUID()
         try store.applyWatchDigest(digest([push.id: Fixture.epoch, older: Fixture.epoch]))
 
-        let delivered = Fixture.session(from: push, startedAt: Fixture.epoch.addingTimeInterval(86_400))
+        let deliveredAt: Date = Fixture.epoch.addingTimeInterval(86_400)
+        let delivered = Fixture.session(from: push, startedAt: deliveredAt)
         try store.createSession(delivered)
         try store.applyWatchDigest(BurlyDigestPayloadDTO(
             snapshotVersion: 0, lastPerformance: [], ackedSessionIDs: [delivered.id]
         ))
 
         #expect(try store.session(id: delivered.id) == nil, "the acknowledged session is pruned")
-        #expect(try store.routineLastPerformedDates() == [
-            push.id: Fixture.epoch.addingTimeInterval(86_400),
-            older: Fixture.epoch
-        ])
+        let reported: [UUID: Date] = try store.routineLastPerformedDates()
+        let expected: [UUID: Date] = [push.id: deliveredAt, older: Fixture.epoch]
+        #expect(reported == expected)
     }
 
     @Test("two dates for one routine reject the whole digest, acks and all")
@@ -419,14 +439,16 @@ struct RoutineLastPerformedDatesTests {
         let delivered = Fixture.session(from: push)
         try store.createSession(delivered)
 
+        let minuteLater: Date = Fixture.epoch.addingTimeInterval(60)
+        let twoDates: [BurlyRoutineLastPerformedDTO] = [
+            BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: Fixture.epoch),
+            BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: minuteLater)
+        ]
         let payload = BurlyDigestPayloadDTO(
             snapshotVersion: 0,
             lastPerformance: [],
             ackedSessionIDs: [delivered.id],
-            routineLastPerformed: [
-                BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: Fixture.epoch),
-                BurlyRoutineLastPerformedDTO(routineID: push.id, performedAt: Fixture.epoch.addingTimeInterval(60))
-            ]
+            routineLastPerformed: twoDates
         )
         #expect(throws: BurlyStoreError.duplicateID(push.id)) {
             try store.applyWatchDigest(payload)
@@ -450,11 +472,15 @@ struct RoutineLastPerformedDatesTests {
     }
 
     private func digest(_ dates: [UUID: Date]) -> BurlyDigestPayloadDTO {
-        BurlyDigestPayloadDTO(
+        var routineDates: [BurlyRoutineLastPerformedDTO] = []
+        for (routineID, performedAt) in dates {
+            routineDates.append(BurlyRoutineLastPerformedDTO(routineID: routineID, performedAt: performedAt))
+        }
+        return BurlyDigestPayloadDTO(
             snapshotVersion: 0,
             lastPerformance: [],
             ackedSessionIDs: [],
-            routineLastPerformed: dates.map { BurlyRoutineLastPerformedDTO(routineID: $0.key, performedAt: $0.value) }
+            routineLastPerformed: routineDates
         )
     }
 }

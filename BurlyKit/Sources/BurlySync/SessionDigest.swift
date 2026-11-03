@@ -77,8 +77,12 @@ import BurlyCore
 /// the watch's working set that has history** — the exercises the watch can
 /// start or add (`WatchWorkingSet.exercises`), not the snapshot's full
 /// catalog, which also names archived unused exercises so the picker can
-/// hide them — and, only when that would exceed its byte budget, drops the
-/// least-used of them. Exercises outside the working set are never sent.
+/// hide them — and, only when that would exceed its byte budget, drops
+/// entries from the end of a fixed ranking: exercises whose latest session
+/// this digest acknowledges come first, then exercises a routine starts
+/// with, then the rest by most recent `performedAt`. So what goes first is
+/// the longest-unperformed exercise that is neither. Exercises outside the
+/// working set are never sent.
 ///
 /// The consequence that makes this load-bearing: **the absence of an entry
 /// is a claim the watch acts on.** The watch upserts the entries it is
@@ -108,9 +112,11 @@ import BurlyCore
 public struct SessionDigestReceipt: Sendable, Equatable {
     /// Exact latest-per-exercise entries for the watch's working set, as
     /// bounded above — see the generator contract; an omission is a claim
-    /// the watch acts on, not a no-op. Empty is legitimate and means "the
-    /// phone has no history for any exercise the watch can show", which for
-    /// a fresh or fully cleared phone is simply true.
+    /// the watch acts on, not a no-op. Empty is legitimate, but it does not
+    /// by itself say the phone has no history. It can mean that: for a fresh
+    /// or fully cleared phone it is simply true. It can also mean the byte
+    /// budget was spent on the acks and routine dates alone, so no entry
+    /// fit; the watch then keeps the rows it has.
     public let lastPerformance: [ExerciseLastPerformanceData]
 
     /// IDs of sessions the phone has durably received. Carries no ordering

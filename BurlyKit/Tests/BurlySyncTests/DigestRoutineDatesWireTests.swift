@@ -27,7 +27,8 @@ struct DigestRoutineDatesWireTests {
 
         let object = try #require(try JSONSerialization.jsonObject(with: try envelope.encodedData()) as? [String: Any])
         let body = try #require(object["payload"] as? [String: Any])
-        #expect(Set(body.keys) == ["snapshotVersion", "lastPerformance", "ackedSessionIDs", "routineLastPerformed"])
+        let expectedKeys: Set<String> = ["snapshotVersion", "lastPerformance", "ackedSessionIDs", "routineLastPerformed"]
+        #expect(Set(body.keys) == expectedKeys)
     }
 
     @Test("a digest from a phone that predates routine dates keeps the key absent, distinct from an empty list")
