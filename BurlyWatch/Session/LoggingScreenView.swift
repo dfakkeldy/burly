@@ -47,6 +47,7 @@ struct LoggingScreenView: View {
     @State private var viewModel: SessionViewModel
     @State private var isShowingActions = false
     @State private var pendingAction: PendingSessionAction?
+    @State private var tickScheduleStart = Date.now
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @Environment(\.scenePhase) private var scenePhase
@@ -265,8 +266,11 @@ struct LoggingScreenView: View {
         .background {
             // §2 Always-On: "1 Hz TimelineView." The tick itself is the
             // side effect hook, not the render -- see `SessionViewModel
-            // .tick()`'s doc.
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            // .tick()`'s doc. The schedule's start is fixed: this body runs
+            // again on every tick (it reads the pager's items), and a
+            // schedule starting `.now` each time would hand the timeline a
+            // new date at once, tick again, and spin.
+            TimelineView(.periodic(from: tickScheduleStart, by: 1)) { context in
                 Color.clear
                     .onChange(of: context.date) { _, _ in viewModel.tick() }
             }
