@@ -114,7 +114,7 @@ struct SessionActionsView: View {
             .navigationDestination(for: ExercisePickerContext.self) { context in
                 ExercisePickerView(
                     context: context,
-                    exercises: viewModel.availableExercises(),
+                    exercises: viewModel.availableExercises(for: context),
                     onSelect: { exerciseID in
                         switch context {
                         case .swap(let itemID):

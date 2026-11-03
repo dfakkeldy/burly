@@ -13,8 +13,16 @@
 // fresh `Start` can proceed: Finish records the existing session as-is
 // (spec §4's "another workout is running" choice), Discard drops it
 // entirely. Either way, `SessionEntryView.start()` runs again afterward.
+//
+// Finish and Discard tell the HealthKit recorder exactly as the logging
+// screen's do (spec §4, `SessionViewModel`'s file doc): Finish saves the
+// session's workout before the store save so its UUID lands in the same
+// write, and Discard ends the live workout without saving it. Before this,
+// a Finish here wrote no workout at all, and the next Start then discarded
+// the one still running.
 import SwiftUI
 import BurlyCore
+import BurlyHealth
 import BurlyPersistence
 
 struct SessionConflictView: View {
@@ -24,9 +32,14 @@ struct SessionConflictView: View {
 
     @Environment(\.watchSettings) private var settings
     @Environment(\.sessionLogged) private var sessionLogged
+    @Environment(\.workoutRecorder) private var workoutRecorder
     @State private var isFinishing = false
     @State private var isShowingDiscardConfirm = false
     @State private var errorMessage: String?
+    /// The finished, workout-linked session once HealthKit has answered, so
+    /// a retry after a failed store save repeats only that save and never
+    /// asks HealthKit for a second workout.
+    @State private var finishedEngine: SessionEngine?
 
     var body: some View {
         ScrollView {
@@ -78,13 +91,51 @@ struct SessionConflictView: View {
     /// Records the existing session exactly as it stands -- spec §4's
     /// "another workout is running" choice offers finish, not silent
     /// discard, as the non-destructive option.
+    ///
+    /// A session past the §4 stale guard ends at its last activity, the
+    /// same original-timestamps rule the Resume gate applies.
     private func finish() {
         guard !isFinishing else { return }
         isFinishing = true
         errorMessage = nil
+        if let finishedEngine {
+            persist(finishedEngine)
+            return
+        }
+        var engine = settings.engine(for: existing)
         do {
-            var engine = settings.engine(for: existing)
-            _ = try engine.finish()
+            if StaleSessionGuard.isStale(existing, now: Date()) {
+                _ = try engine.finish(endingAt: StaleSessionGuard.lastActivity(of: existing))
+            } else {
+                _ = try engine.finish()
+            }
+        } catch {
+            errorMessage = String(describing: error)
+            isFinishing = false
+            return
+        }
+        guard let workoutRecorder else {
+            finishedEngine = engine
+            persist(engine)
+            return
+        }
+        let finished = engine
+        Task {
+            let session = finished.session.session
+            let recording = await workoutRecorder.sessionDidFinish(
+                sessionID: session.id,
+                startedAt: session.startedAt,
+                endedAt: session.endedAt ?? Date()
+            )
+            var linked = finished
+            linked.linkHealthKitWorkout(recording.workoutID)
+            finishedEngine = linked
+            persist(linked)
+        }
+    }
+
+    private func persist(_ engine: SessionEngine) {
+        do {
             try store.saveActiveSession(engine.session)
             sessionLogged(engine.session.id)
             onResolved()
@@ -98,6 +149,7 @@ struct SessionConflictView: View {
         errorMessage = nil
         do {
             _ = try store.deleteSession(id: existing.session.id)
+            workoutRecorder?.sessionDidDiscard(sessionID: existing.session.id)
             onResolved()
         } catch {
             errorMessage = String(describing: error)

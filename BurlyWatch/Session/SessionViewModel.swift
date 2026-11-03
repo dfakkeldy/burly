@@ -85,6 +85,23 @@ final class SessionViewModel {
     /// the lifter is back.
     private var finishAt: Date?
 
+    /// §4 stale-session guard on the logging screen: non-nil while the
+    /// "Still working out?" prompt is up, holding the session's last
+    /// activity. Set only by `checkForStaleSession()`, on app activation.
+    private(set) var staleSince: Date?
+
+    /// The last time the lifter answered for this session: opening the
+    /// logging screen (Start, Resume, or the home gate's own stale prompt),
+    /// or "Keep going". The guard counts an hour from the later of this and
+    /// the last logged set, so it does not ask again on every wrist raise.
+    private var lastAnsweredAt: Date
+
+    /// §4: "`anotherWorkoutSessionStarted` errors surface as 'another
+    /// workout is running' with a finish-or-discard choice." True while
+    /// that choice is on screen; shown once per session.
+    private(set) var isShowingAnotherWorkout = false
+    private var didNoteAnotherWorkout = false
+
     /// What happened in HealthKit when this session finished; `nil` until
     /// then, and always `nil` without a recorder.
     private(set) var workoutRecording: WorkoutRecording?
@@ -212,6 +229,7 @@ final class SessionViewModel {
         self.now = now
         self.workoutRecorder = workoutRecorder
         self.finishAt = finishAt
+        self.lastAnsweredAt = now()
         // m2-06 review round 2, finding "new defect": the page-selection
         // policy itself now lives on `ActiveSession.initialPageItemID`
         // (BurlyCore) -- see that property's doc for why, and for the
@@ -275,12 +293,22 @@ final class SessionViewModel {
     }
 
     /// The catalog picker's source list (§2 ellipsis "swap exercise" /
-    /// "add exercise"). Sorted by name (`BurlyStore.exercises(includingArchived:)`'s
-    /// own contract) -- this is the flat MVP list; sectioning into
-    /// recents/curated/customs is a follow-on UI polish item, not a
-    /// mutation-correctness one.
-    func availableExercises() -> [ExerciseData] {
-        (try? store.exercises(includingArchived: false)) ?? []
+    /// "add exercise"): recents, then curated, then customs
+    /// (`ExercisePickerOrder`). Recent means in this session, or with a
+    /// last-performance digest on the watch, newest first. A swap leaves
+    /// out the exercise it would replace.
+    func availableExercises(for context: ExercisePickerContext) -> [ExerciseData] {
+        let catalog = (try? store.exercises(includingArchived: false)) ?? []
+        let replaced: UUID? = switch context {
+        case .swap(let itemID): exerciseID(for: itemID)
+        case .add: nil
+        }
+        return ExercisePickerOrder.ordered(
+            catalog,
+            sessionExerciseIDs: engine.session.items.compactMap(\.exerciseID),
+            lastPerformedAt: { self.lastPerformance(for: $0)?.performedAt },
+            excluding: replaced
+        )
     }
 
     func exerciseName(_ exerciseID: UUID?) -> String {
@@ -501,6 +529,68 @@ final class SessionViewModel {
         if engine.session.restTimer != before {
             persist()
         }
+        checkForAnotherWorkout()
+    }
+
+    // MARK: - Stale session and another workout (§4 lifecycle rules)
+
+    /// §4 stale-session guard, "on watch app activation", for a lifter who
+    /// comes back to the logging screen itself rather than to the home
+    /// gate (an active workout keeps the app frontmost). Called when the
+    /// scene becomes active, never on appear: opening this screen is
+    /// already an answer. Never ends anything by itself.
+    func checkForStaleSession() {
+        guard staleSince == nil, endWorkoutPreview == nil, finishedSummary == nil,
+              saveFailure == nil, !isFinishing, !didDiscard,
+              StaleSessionGuard.isStale(engine.session, now: now(), answeredAt: lastAnsweredAt)
+        else { return }
+        staleSince = StaleSessionGuard.lastActivity(of: engine.session)
+    }
+
+    /// "End workout" on the stale prompt: the usual Finish/Keep going/
+    /// Discard summary, with the session ending at its last activity so
+    /// its duration and Health workout keep the original timestamps.
+    func endStaleSession() {
+        guard let staleSince else { return }
+        self.staleSince = nil
+        finishAt = staleSince
+        requestEndWorkout()
+    }
+
+    /// "Keep going" on the stale prompt: the lifter is back.
+    func dismissStalePrompt() {
+        staleSince = nil
+        lastAnsweredAt = now()
+    }
+
+    /// Polled from `tick()`: the recorder learns of the takeover from
+    /// HealthKit, which has no hook into this screen.
+    private func checkForAnotherWorkout() {
+        guard !didNoteAnotherWorkout, let workoutRecorder,
+              workoutRecorder.anotherWorkoutTookOver(sessionID: engine.session.id)
+        else { return }
+        didNoteAnotherWorkout = true
+        isShowingAnotherWorkout = true
+    }
+
+    /// "End workout" on the another-workout notice: the usual summary.
+    /// Finish then saves the sets but no Health workout, which would
+    /// overlap the other app's (`SessionWorkoutRecorder.sessionDidFinish`).
+    func endAfterAnotherWorkout() {
+        isShowingAnotherWorkout = false
+        requestEndWorkout()
+    }
+
+    /// "Discard" on the another-workout notice: the usual double confirm.
+    func discardAfterAnotherWorkout() {
+        isShowingAnotherWorkout = false
+        requestDiscard()
+    }
+
+    /// "Keep logging" on the another-workout notice. Sets are app data, so
+    /// the session carries on; Health just will not get this workout.
+    func dismissAnotherWorkout() {
+        isShowingAnotherWorkout = false
     }
 
     // MARK: - Mid-session edits (§2 ellipsis menu)
@@ -599,6 +689,7 @@ final class SessionViewModel {
     func keepGoing() {
         endWorkoutPreview = nil
         finishAt = nil
+        lastAnsweredAt = now()
     }
 
     /// Commits Finish. Guarded by `isFinishing` so a double-tap on the

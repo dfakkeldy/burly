@@ -33,6 +33,9 @@ struct SessionSummaryView: View {
     /// Spec §4 recovery matrix row 2: the workout went to Health as a
     /// duration-only record, with no heart rate or energy.
     var lacksSensorData = false
+    /// Spec §4: another app's workout took over, so no workout went to
+    /// Health (it would have overlapped that app's).
+    var skippedForAnotherWorkout = false
     let onFinish: () -> Void
     let onRetryFinish: () -> Void
     let onKeepGoing: () -> Void
@@ -78,6 +81,14 @@ struct SessionSummaryView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("sessionSummary.noSensorData")
+                }
+
+                if isFinal && skippedForAnotherWorkout {
+                    Text("Not saved to Health: another workout was running")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("sessionSummary.anotherWorkout")
                 }
 
                 if isFinal {
@@ -134,9 +145,13 @@ struct SessionSummaryView: View {
         .accessibilityIdentifier(identifier)
     }
 
+    /// m:ss, or h:mm:ss once a workout passes an hour ("75:12" read oddly).
     private var durationText: String {
         let total = max(0, Int(summary.duration.rounded()))
-        return String(format: "%d:%02d", total / 60, total % 60)
+        guard total >= 3_600 else {
+            return String(format: "%d:%02d", total / 60, total % 60)
+        }
+        return String(format: "%d:%02d:%02d", total / 3_600, total / 60 % 60, total % 60)
     }
 
     private var volumeText: String {

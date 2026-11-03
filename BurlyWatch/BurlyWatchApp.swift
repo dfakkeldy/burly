@@ -48,6 +48,14 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
             }
         }
     }
+
+    /// watchOS relaunches the app here after it died mid-workout, possibly
+    /// with no scene on screen. Reattach now rather than waiting for the UI
+    /// (spec §4 recovery matrix); `RootView` makes the same call when it
+    /// appears, and whichever comes second does nothing.
+    func handleActiveWorkoutRecovery() {
+        model.reconcileWorkoutOnce()
+    }
 }
 
 /// The watch's one store, its sync host, and the session-level HealthKit
@@ -70,6 +78,7 @@ final class WatchAppModel {
     let storeResult: Result<BurlyStore, Error>
     let sync: WatchSyncHost?
     let workoutRecorder: SessionWorkoutRecorder?
+    private var didReconcileWorkout = false
 
     init() {
         workoutRecorder = Self.makeWorkoutRecorder()
@@ -91,6 +100,27 @@ final class WatchAppModel {
             storeResult = .failure(error)
             sync = nil
         }
+    }
+
+    /// Spec §4 recovery matrix at launch: a workout HealthKit kept running
+    /// is reattached to the store's active session, or discarded when the
+    /// store has none. An unreadable store leaves HealthKit alone; the
+    /// orphan, if any, is discarded when the next session starts.
+    ///
+    /// Called from both `WatchAppDelegate.handleActiveWorkoutRecovery()`
+    /// (a relaunch after a mid-workout crash, maybe with no UI) and
+    /// `RootView`'s task; it runs once per launch, for whichever is first.
+    /// A store read that fails is not counted, so the other caller tries.
+    func reconcileWorkoutOnce() {
+        guard !didReconcileWorkout, let workoutRecorder, case .success(let store) = storeResult else { return }
+        let active: ActiveSession?
+        do {
+            active = try store.resumableActiveSession()
+        } catch {
+            return
+        }
+        didReconcileWorkout = true
+        workoutRecorder.reconcile(activeSessionID: active?.id)
     }
 
     /// A store that opened but whose sync state could not be read still
@@ -142,7 +172,7 @@ private struct RootView: View {
                 .environment(\.watchSettings, settings)
                 .environment(\.sessionLogged, { [sync = model.sync] id in sync?.sessionLogged(id: id) })
                 .environment(\.workoutRecorder, model.workoutRecorder)
-                .task { reconcileWorkout(with: store) }
+                .task { model.reconcileWorkoutOnce() }
         case .failure(let error):
             StoreUnavailableView(message: String(describing: error))
         }
@@ -153,21 +183,6 @@ private struct RootView: View {
     private var settings: WatchSyncedSettings {
         guard let sync = model.sync else { return WatchSyncedSettings() }
         return WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
-    }
-
-    /// Spec §4 recovery matrix at launch: a workout HealthKit kept running
-    /// is reattached to the store's active session, or discarded when the
-    /// store has none. An unreadable store leaves HealthKit alone; the
-    /// orphan, if any, is discarded when the next session starts.
-    private func reconcileWorkout(with store: BurlyStore) {
-        guard let workoutRecorder = model.workoutRecorder else { return }
-        let active: ActiveSession?
-        do {
-            active = try store.resumableActiveSession()
-        } catch {
-            return
-        }
-        workoutRecorder.reconcile(activeSessionID: active?.id)
     }
 }
 

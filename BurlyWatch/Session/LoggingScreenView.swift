@@ -35,6 +35,7 @@ struct LoggingScreenView: View {
     @State private var pendingAction: PendingSessionAction?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(\.scenePhase) private var scenePhase
 
     /// - Parameter startInSummary: threaded straight through to
     ///   `SessionViewModel.init` -- see its doc. m2-06's Resume-decline path
@@ -75,6 +76,7 @@ struct LoggingScreenView: View {
                     isFinishing: false,
                     saveError: nil,
                     lacksSensorData: viewModel.workoutRecording?.lacksSensorData == true,
+                    skippedForAnotherWorkout: viewModel.workoutRecording == .supersededByAnotherWorkout,
                     onFinish: {},
                     onRetryFinish: {},
                     onKeepGoing: {},
@@ -93,9 +95,47 @@ struct LoggingScreenView: View {
                     onDiscard: viewModel.requestDiscard,
                     onDone: {}
                 )
+            } else if let staleSince = viewModel.staleSince {
+                // §4 stale-session guard, met on the logging screen itself.
+                SessionPromptView(
+                    systemImage: "clock.badge.exclamationmark",
+                    heading: "Still working out?",
+                    detail: Text("Last set \(staleSince, format: .relative(presentation: .named))"),
+                    identifier: "staleSession",
+                    primaryTitle: "End workout",
+                    onPrimary: viewModel.endStaleSession,
+                    secondaryTitle: "Keep going",
+                    onSecondary: viewModel.dismissStalePrompt
+                )
+            } else if viewModel.isShowingAnotherWorkout {
+                // §4: "another workout is running", finish or discard.
+                SessionPromptView(
+                    systemImage: "exclamationmark.triangle",
+                    heading: "Another workout is running",
+                    detail: Text("Another app started a workout, so Burly stopped recording this one to Health. Your sets are saved."),
+                    identifier: "anotherWorkout",
+                    primaryTitle: "End workout",
+                    onPrimary: viewModel.endAfterAnotherWorkout,
+                    secondaryTitle: "Keep logging",
+                    onSecondary: viewModel.dismissAnotherWorkout,
+                    destructiveTitle: "Discard",
+                    onDestructive: viewModel.discardAfterAnotherWorkout
+                )
             } else {
                 loggingBody
             }
+        }
+        // §2 hands-busy test: a stray tap on the back chevron or an edge
+        // swipe used to pop this screen mid-workout, dropping the view
+        // model and with it the 1 Hz tick and the rest haptics. The way
+        // out is the actions menu (End workout, Discard) or the summary's
+        // Done, all of which still dismiss programmatically.
+        .navigationBarBackButtonHidden(true)
+        // §4 stale-session guard "on watch app activation": an active
+        // workout keeps the app frontmost, so a lifter who walked away
+        // comes back here, not to the home gate that checks on load.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active { viewModel.checkForStaleSession() }
         }
         .sheet(isPresented: $isShowingActions, onDismiss: applyPendingAction) {
             SessionActionsView(
@@ -127,7 +167,7 @@ struct LoggingScreenView: View {
                 NavigationStack {
                     ExercisePickerView(
                         context: context,
-                        exercises: viewModel.availableExercises(),
+                        exercises: viewModel.availableExercises(for: context),
                         onSelect: { exerciseID in
                             switch context {
                             case .swap(let itemID):
