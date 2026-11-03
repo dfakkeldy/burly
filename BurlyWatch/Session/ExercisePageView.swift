@@ -10,6 +10,15 @@
 // whichever item is `currentItemID` -- the guarded weight control and the
 // rest timer are each one shared value on the engine (§2/§3), not one per
 // item, so they are only meaningful on the page that is actually current.
+//
+// ## Compact on purpose
+//
+// Everything needed to log a set must be on screen when the page opens,
+// with no crown turn first: the 46 mm screen leaves about 190 pt under the
+// navigation bar, the 42 mm one about 165 pt. So the set counter and ghost
+// row share one subtitle line under a one-line name (wrapping to two lines
+// only when they do not fit side by side), and weight and reps sit side by
+// side with their units underneath. Every tap target stays 44 pt.
 import SwiftUI
 import BurlyCore
 
@@ -26,9 +35,8 @@ struct ExercisePageView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
                     header
-                    ghostRow
                     if isCurrent {
                         interactiveControls
                     }
@@ -38,9 +46,9 @@ struct ExercisePageView: View {
             }
             // §3: the countdown sits "near the Log button area" and must be
             // visible once a set is logged. The banner is the last row, below
-            // Log set, so on a 46 mm watch it starts mostly off screen; bring
-            // it in whenever a new rest starts. `startedAt` changes only on a
-            // new rest, so ±15 and skip do not move the page.
+            // Log set, so it can start partly off screen; bring it in
+            // whenever a new rest starts. `startedAt` changes only on a new
+            // rest, so ±15 and skip do not move the page.
             .onChange(of: viewModel.restTimer?.startedAt) { _, startedAt in
                 guard isCurrent, startedAt != nil else { return }
                 withAnimation {
@@ -51,17 +59,36 @@ struct ExercisePageView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             Text(viewModel.exerciseName(item.exerciseID))
                 .font(.headline)
-                .lineLimit(2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .accessibilityIdentifier("exercisePage.name")
                 .accessibilityValue(ordinalText)
-            Text(setCounterText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("exercisePage.setCounter")
+            // One line when the counter and the ghost fit side by side,
+            // two otherwise. Only the chosen layout is drawn, so each
+            // identifier still names exactly one element.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    setCounter
+                    ghostRow
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    setCounter
+                    ghostRow
+                }
+            }
         }
+    }
+
+    private var setCounter: some View {
+        Text(setCounterText)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .accessibilityIdentifier("exercisePage.setCounter")
     }
 
     /// The pager shows one exercise at a time; this tells VoiceOver (and the
@@ -72,17 +99,24 @@ struct ExercisePageView: View {
         return "Exercise \(ordinal) of \(viewModel.items.count)"
     }
 
+    /// "Set 2 of 3" while sets remain, then "All 3 sets logged": a counter
+    /// that kept reading "Set 3 of 3" after the third set looked as if one
+    /// were still owed.
     private var setCounterText: String {
         let logged = viewModel.loggedSetCount(for: item.id)
         let planned = viewModel.plannedSetCount(for: item.id)
-        let displayIndex = min(logged + 1, max(planned, 1))
-        return "Set \(displayIndex) of \(planned)"
+        guard logged < planned else {
+            return logged == 1 ? "1 set logged" : "All \(logged) sets logged"
+        }
+        return "Set \(logged + 1) of \(planned)"
     }
 
     private var ghostRow: some View {
         Text(ghostText)
-            .font(.caption)
+            .font(.caption2)
             .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .fixedSize()
             .accessibilityIdentifier("exercisePage.ghost")
     }
 
@@ -96,21 +130,34 @@ struct ExercisePageView: View {
 
     @ViewBuilder
     private var interactiveControls: some View {
-        VStack(spacing: 10) {
-            GuardedWeightControlView(
-                weight: viewModel.currentWeight,
-                isArmed: viewModel.isWeightArmed,
-                isUnset: viewModel.isWeightUnset,
-                onArm: viewModel.armWeight,
-                onAdjustSteps: viewModel.adjustWeight(bySteps:)
-            )
+        VStack(spacing: 6) {
+            // Weight takes what width is left and shrinks its number to
+            // fit; reps keeps its two 44 pt buttons.
+            HStack(alignment: .center, spacing: 4) {
+                GuardedWeightControlView(
+                    weight: viewModel.currentWeight,
+                    isArmed: viewModel.isWeightArmed,
+                    isUnset: viewModel.isWeightUnset,
+                    onArm: viewModel.armWeight,
+                    onAdjustSteps: viewModel.adjustWeight(bySteps:)
+                )
 
-            RepsControlView(
-                reps: viewModel.currentReps,
-                onIncrement: viewModel.incrementReps,
-                onDecrement: viewModel.decrementReps,
-                onAdjustSteps: viewModel.adjustReps(bySteps:)
-            )
+                RepsControlView(
+                    reps: viewModel.currentReps,
+                    onIncrement: viewModel.incrementReps,
+                    onDecrement: viewModel.decrementReps,
+                    onAdjustSteps: viewModel.adjustReps(bySteps:)
+                )
+                .layoutPriority(1)
+            }
+
+            // §2: "Armed: ... +/− micro-buttons appear." A full-width row
+            // of its own, since the weight column beside reps is narrower
+            // than two 44 pt buttons.
+            if viewModel.isWeightArmed {
+                GuardedWeightAdjustButtons(onAdjustSteps: viewModel.adjustWeight(bySteps:))
+                    .transition(.opacity)
+            }
 
             // §2: "one primary full-width Log set button." Also the
             // Double Tap primary action (SessionViewModel.logCurrentSet's
@@ -121,10 +168,9 @@ struct ExercisePageView: View {
             // because Double Tap fired.
             Button(action: viewModel.logCurrentSet) {
                 Text("Log set")
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
             .handGestureShortcut(.primaryAction)
             .disabled(!viewModel.canLogCurrentSet)
             .accessibilityIdentifier("logSetButton")
