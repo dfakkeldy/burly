@@ -24,29 +24,36 @@
 // 2. **A byte budget** (`applicationContextByteBudget`). Hevy imports its
 //    exercises non-archived, so step 1 alone still leaves hundreds of
 //    entries. When the encoded envelope would exceed the budget, entries
-//    are kept in order of use — exercises a routine starts with first, then
-//    the most recently performed — until the next one would not fit.
+//    are kept in this order until the next one would not fit: exercises
+//    whose latest session this digest acknowledges, then exercises a
+//    routine starts with, then the most recently performed.
 //
 // The watch upserts the entries it receives and never deletes a row for an
 // exercise a digest leaves out (`BurlyStore.applyDigest`), so an absent
 // entry means "no update", not "erase". It is still a claim the watch acts
-// on: it prunes an acknowledged session whatever the entries say, and an
-// exercise whose latest numbers were in that session would be left with
-// older ones. The ordering is what makes that safe in practice: an
-// acknowledged session is at most §5's 30-day ack retention old, so its
-// exercises rank among the most recently performed and are the last to be
-// trimmed.
+// on: it prunes every acknowledged session whatever the entries say, so an
+// exercise whose latest numbers are in an acknowledged session must not be
+// trimmed, or the watch would be left with older numbers and nothing would
+// ever resend them. That is why those entries rank first. Ranking by date
+// alone would not be enough: the 30-day ack clock starts when the phone
+// receives a session, not when it was performed, so a watch that was away
+// for months can deliver a months-old workout that is still some
+// exercise's latest. If even those entries cannot all fit (more than a
+// hundred exercises, each last done in a session this digest acknowledges),
+// the acks for the sessions whose numbers were left out are held back for
+// a later digest: the watch keeps those sessions, and resends them, rather
+// than losing their numbers.
 //
 // The degenerate case still holds: an empty store (nothing ever logged, or
 // everything since deleted) produces an empty `lastPerformance`, emittable
 // alongside a non-empty `ackedSessionIDs` (the acked-then-deleted sequence
-// `BurlyStore.applyDigest`'s doc walks through). `ackedSessionIDs` is never
-// trimmed: it is what lets the watch prune, and §5's 30-day retention in
-// `PhoneSyncMachine` already bounds it to the sessions a watch delivered in
-// that window (Hevy-imported sessions are never acknowledged). Nothing here
-// validates the acks against `lastPerformance`; they are two independent
-// facts, exactly as `PhoneSyncMachine.Command.publishDigest`'s two
-// parameters are.
+// `BurlyStore.applyDigest`'s doc walks through). Apart from the hold-back
+// above, `ackedSessionIDs` is never trimmed: it is what lets the watch
+// prune, and §5's 30-day retention in `PhoneSyncMachine` already bounds it
+// to the sessions a watch delivered in that window (Hevy-imported sessions
+// are never acknowledged). Nothing else validates the acks against
+// `lastPerformance`; they are two independent facts, exactly as
+// `PhoneSyncMachine.Command.publishDigest`'s two parameters are.
 //
 // ## A narrow read, not full history (issue #24)
 //
@@ -82,7 +89,7 @@ public enum SessionDigestGenerator {
     ///
     /// The returned payload's encoded envelope stays within `byteBudget`
     /// unless the acks and routine dates alone exceed it (they are never
-    /// trimmed; see the file doc).
+    /// trimmed, apart from the hold-back the file doc describes).
     @MainActor
     public static func generate(
         from store: any BurlyStore,
@@ -97,21 +104,38 @@ public enum SessionDigestGenerator {
             .filter { routineIDs.contains($0.key) }
             .map { BurlyRoutineLastPerformedDTO(routineID: $0.key, performedAt: $0.value) }
             .sorted { $0.routineID.uuidString < $1.routineID.uuidString }
+        // Every slice of one exercise is from its winning session, so this
+        // maps each exercise to that session when this digest acknowledges it.
+        var acknowledgedLatestSession: [UUID: UUID] = [:]
+        for slice in slices where ackedSessionIDs.contains(slice.sessionID) {
+            guard let exerciseID = slice.exerciseID else { continue }
+            acknowledgedLatestSession[exerciseID] = slice.sessionID
+        }
         let payload = BurlyDigestPayloadDTO(
             snapshotVersion: snapshotVersion,
             lastPerformance: latestPerformancePerExercise(from: slices),
             ackedSessionIDs: ackedSessionIDs.sorted { $0.uuidString < $1.uuidString },
             routineLastPerformed: routineDates
         )
-        return try fitting(payload, within: byteBudget, routineExerciseIDs: workingSet.routineExerciseIDs)
+        return try fitting(
+            payload,
+            within: byteBudget,
+            routineExerciseIDs: workingSet.routineExerciseIDs,
+            acknowledgedLatestSession: acknowledgedLatestSession
+        )
     }
 
     /// `payload` itself when its encoded envelope fits `budget`; otherwise
     /// the same payload with `lastPerformance` cut to the entries that fit,
-    /// kept in this order: exercises in `routineExerciseIDs` first, then by
-    /// `performedAt`, newest first, then by exercise id. The kept entries
-    /// stay sorted by exercise id, like every digest, so equal input always
-    /// encodes to equal bytes.
+    /// kept in this order: exercises in `acknowledgedLatestSession` (whose
+    /// latest session, the value, is among the payload's acks), then those
+    /// in `routineExerciseIDs`, then by `performedAt`, newest first, then by
+    /// exercise id. The kept entries stay sorted by exercise id, like every
+    /// digest, so equal input always encodes to equal bytes.
+    ///
+    /// An acknowledged session whose numbers did not all fit loses its ack
+    /// in the result, so the watch keeps it instead of pruning it without
+    /// them (see the file doc).
     ///
     /// Sizes are measured, not estimated: each entry is encoded once with
     /// the same encoder the envelope uses, and JSON array encoding adds
@@ -120,12 +144,16 @@ public enum SessionDigestGenerator {
     static func fitting(
         _ payload: BurlyDigestPayloadDTO,
         within budget: Int,
-        routineExerciseIDs: Set<UUID>
+        routineExerciseIDs: Set<UUID>,
+        acknowledgedLatestSession: [UUID: UUID] = [:]
     ) throws -> BurlyDigestPayloadDTO {
         let fullSize = try envelopeByteCount(payload)
         guard fullSize > budget else { return payload }
 
         let ranked = payload.lastPerformance.sorted { lhs, rhs in
+            let lhsAcknowledged = acknowledgedLatestSession[lhs.exerciseID] != nil
+            let rhsAcknowledged = acknowledgedLatestSession[rhs.exerciseID] != nil
+            if lhsAcknowledged != rhsAcknowledged { return lhsAcknowledged }
             let lhsInRoutine = routineExerciseIDs.contains(lhs.exerciseID)
             let rhsInRoutine = routineExerciseIDs.contains(rhs.exerciseID)
             if lhsInRoutine != rhsInRoutine { return lhsInRoutine }
@@ -142,19 +170,35 @@ public enum SessionDigestGenerator {
             kept.append(entry)
         }
 
-        var trimmed = payload.replacingLastPerformance(
-            kept.sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
-        )
-        // The arithmetic above is exact; this only guards a future encoder
-        // change that would break it.
+        // The arithmetic above is exact; the loop only guards a future
+        // encoder change that would break it. Holding acks back only ever
+        // shrinks the payload, so the check covers that too.
+        var trimmed = holdingBackAcks(of: payload, keeping: kept, acknowledgedLatestSession)
         while try envelopeByteCount(trimmed) > budget, !kept.isEmpty {
             kept.removeLast()
-            trimmed = payload.replacingLastPerformance(
-                kept.sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
-            )
+            trimmed = holdingBackAcks(of: payload, keeping: kept, acknowledgedLatestSession)
         }
-        PhoneSyncLog.logger.notice("digest trimmed to \(kept.count, privacy: .public) of \(payload.lastPerformance.count, privacy: .public) exercises: \(fullSize, privacy: .public) bytes exceeded the \(budget, privacy: .public)-byte budget")
+        let heldBack = payload.ackedSessionIDs.count - trimmed.ackedSessionIDs.count
+        PhoneSyncLog.logger.notice("digest trimmed to \(kept.count, privacy: .public) of \(payload.lastPerformance.count, privacy: .public) exercises, \(heldBack, privacy: .public) acks held back: \(fullSize, privacy: .public) bytes exceeded the \(budget, privacy: .public)-byte budget")
         return trimmed
+    }
+
+    /// `payload` with `kept` as its entries (sorted by exercise id) and
+    /// without the ack of any session that is the latest for an exercise
+    /// left out of `kept`.
+    private static func holdingBackAcks(
+        of payload: BurlyDigestPayloadDTO,
+        keeping kept: [ExerciseLastPerformanceData],
+        _ acknowledgedLatestSession: [UUID: UUID]
+    ) -> BurlyDigestPayloadDTO {
+        let keptIDs = Set(kept.map(\.exerciseID))
+        let heldBack = Set(acknowledgedLatestSession.filter { !keptIDs.contains($0.key) }.values)
+        return BurlyDigestPayloadDTO(
+            snapshotVersion: payload.snapshotVersion,
+            lastPerformance: kept.sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString },
+            ackedSessionIDs: payload.ackedSessionIDs.filter { !heldBack.contains($0) },
+            routineLastPerformed: payload.routineLastPerformed
+        )
     }
 
     /// The byte count of `payload`'s envelope exactly as

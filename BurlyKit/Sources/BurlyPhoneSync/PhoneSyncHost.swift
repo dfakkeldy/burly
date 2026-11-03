@@ -138,8 +138,15 @@ public final class PhoneSyncHost {
 
     /// §5 "on any routine/catalog edit (debounced 5 s)" — and the two
     /// watch-facing Settings rows, which ride the snapshot.
+    ///
+    /// The digest is refreshed too: it is bounded to the working set the
+    /// snapshot carries, ranks routine exercises first and reports routine
+    /// dates, so a catalog or routine edit can change what it should hold
+    /// without any history changing. Coalesced and latest-wins, like every
+    /// digest publish.
     public func catalogDidChange() {
         Task { await coordinator.catalogDidChange() }
+        historyDidChange()
     }
 
     /// §5 "Digest is refreshed whenever history changes".
@@ -324,7 +331,7 @@ final class PhoneWCSessionBridge: PhoneSyncTransporting, PhoneDigestPublishing {
         do {
             let envelope = try BurlySyncEnvelope(payload: .digest(payload)).encodedData()
             lastDigestEnvelopeByteCount = envelope.count
-            PhoneSyncLog.logger.info("publishing digest at snapshot v\(payload.snapshotVersion, privacy: .public), \(payload.ackedSessionIDs.count, privacy: .public) acked, \(payload.lastPerformance.count, privacy: .public) exercises, \(payload.routineLastPerformed.count, privacy: .public) routines, \(envelope.count, privacy: .public) bytes")
+            PhoneSyncLog.logger.info("publishing digest at snapshot v\(payload.snapshotVersion, privacy: .public), \(payload.ackedSessionIDs.count, privacy: .public) acked, \(payload.lastPerformance.count, privacy: .public) exercises, \(payload.routineLastPerformed?.count ?? 0, privacy: .public) routines, \(envelope.count, privacy: .public) bytes")
             adapter?.execute(.publishDigest(envelope: envelope))
         } catch {
             PhoneSyncLog.logger.error("digest did not encode: \(String(describing: error), privacy: .public)")

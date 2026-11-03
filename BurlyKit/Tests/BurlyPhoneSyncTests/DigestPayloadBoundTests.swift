@@ -56,7 +56,7 @@ struct DigestPayloadBoundTests {
         // Acks are never trimmed: they are what lets the watch prune.
         #expect(Set(payload.ackedSessionIDs) == fixture.ackedSessionIDs)
         // Every non-archived routine performed has its date.
-        #expect(Set(payload.routineLastPerformed.map(\.routineID)) == fixture.routineIDs)
+        #expect(Set((payload.routineLastPerformed ?? []).map(\.routineID)) == fixture.routineIDs)
 
         // Every kept entry is exactly the full-history answer.
         let referenceByID = Dictionary(uniqueKeysWithValues: reference.map { ($0.exerciseID, $0) })
@@ -80,7 +80,7 @@ struct DigestPayloadBoundTests {
         let newestDropped = try #require(droppedOthers.map(\.performedAt).max())
         #expect(newestDropped <= oldestKept)
 
-        print("[digest bound] \(payload.lastPerformance.count) of \(reference.count) entries, \(payload.ackedSessionIDs.count) acks, \(payload.routineLastPerformed.count) routines: \(size) bytes (untrimmed \(untrimmedSize)); seed \(String(format: "%.2f", seedSeconds))s, generate \(String(format: "%.3f", generateSeconds))s")
+        print("[digest bound] \(payload.lastPerformance.count) of \(reference.count) entries, \(payload.ackedSessionIDs.count) acks, \(payload.routineLastPerformed?.count ?? 0) routines: \(size) bytes (untrimmed \(untrimmedSize)); seed \(String(format: "%.2f", seedSeconds))s, generate \(String(format: "%.3f", generateSeconds))s")
     }
 
     // MARK: - The working set
@@ -186,6 +186,76 @@ struct DigestPayloadBoundTests {
         #expect(trimmed.lastPerformance.isEmpty)
         #expect(trimmed.ackedSessionIDs == payload.ackedSessionIDs)
         #expect(trimmed.routineLastPerformed == payload.routineLastPerformed)
+    }
+
+    @Test("an exercise whose latest session is being acknowledged outranks routines and recency, however old the workout")
+    func acknowledgedLatestSessionsRankFirst() throws {
+        let payload = syntheticPayload(entryCount: 40, ackCount: 3)
+        let byAge = payload.lastPerformance.sorted { $0.performedAt < $1.performedAt }
+        // The oldest entry's latest session is a months-old workout a watch
+        // only just delivered: its ack is in this payload.
+        let delivered = payload.ackedSessionIDs[0]
+        let acknowledged = [byAge[0].exerciseID: delivered]
+        let routineIDs: Set<UUID> = [byAge[1].exerciseID]
+        // Room for roughly two entries beyond the acks and routine dates.
+        let base = try SessionDigestGenerator.envelopeByteCount(BurlyDigestPayloadDTO(
+            snapshotVersion: payload.snapshotVersion,
+            lastPerformance: [],
+            ackedSessionIDs: payload.ackedSessionIDs,
+            routineLastPerformed: payload.routineLastPerformed
+        ))
+        let entrySize = try JSONEncoder().encode(byAge[0]).count + JSONEncoder().encode(byAge[1]).count + 1
+        let trimmed = try SessionDigestGenerator.fitting(
+            payload,
+            within: base + entrySize,
+            routineExerciseIDs: routineIDs,
+            acknowledgedLatestSession: acknowledged
+        )
+
+        #expect(Set(trimmed.lastPerformance.map(\.exerciseID)) == [byAge[0].exerciseID, byAge[1].exerciseID])
+        #expect(trimmed.ackedSessionIDs == payload.ackedSessionIDs, "every entry an ack needed fit, so no ack is held back")
+    }
+
+    @Test("an acknowledged session whose numbers cannot fit keeps its ack back, so the watch does not prune it without them")
+    func unfittableAcknowledgedSessionHoldsItsAck() throws {
+        let payload = syntheticPayload(entryCount: 10, ackCount: 3)
+        let delivered = payload.ackedSessionIDs[1]
+        let acknowledged = Dictionary(uniqueKeysWithValues: payload.lastPerformance.prefix(4).map { ($0.exerciseID, delivered) })
+
+        let trimmed = try SessionDigestGenerator.fitting(
+            payload,
+            within: 64,
+            routineExerciseIDs: [],
+            acknowledgedLatestSession: acknowledged
+        )
+
+        #expect(trimmed.lastPerformance.isEmpty)
+        #expect(trimmed.ackedSessionIDs == payload.ackedSessionIDs.filter { $0 != delivered })
+        #expect(trimmed.routineLastPerformed == payload.routineLastPerformed)
+    }
+
+    @Test("generate holds back the ack of a heavy session whose numbers outgrow the budget, and acks it once they fit")
+    func generateHoldsBackAnAckUntilItsNumbersFit() throws {
+        let store = try makePhoneStore()
+        let exercises = (0..<12).map { Fixture.exercise(name: "Exercise \($0)") }
+        for exercise in exercises { try store.createExercise(exercise) }
+        let delivered = loggedSession(at: 0, exercises.map { ($0, [100, 105, 110, 115, 120]) })
+        try store.createSession(delivered)
+        let other = UUID()
+
+        let full = try SessionDigestGenerator.generate(from: store, snapshotVersion: 1, ackedSessionIDs: [delivered.id, other])
+        let fullSize = try SessionDigestGenerator.envelopeByteCount(full)
+        #expect(full.lastPerformance.count == 12)
+        #expect(Set(full.ackedSessionIDs) == [delivered.id, other])
+
+        let tight = try SessionDigestGenerator.generate(
+            from: store,
+            snapshotVersion: 1,
+            ackedSessionIDs: [delivered.id, other],
+            byteBudget: fullSize - 1
+        )
+        #expect(tight.lastPerformance.count == 11)
+        #expect(tight.ackedSessionIDs == [other], "the delivered session waits for a digest that can carry all its numbers")
     }
 
     // MARK: - Helpers

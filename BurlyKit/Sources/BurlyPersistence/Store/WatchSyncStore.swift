@@ -21,10 +21,10 @@ public struct WatchSyncStateData: Sendable, Equatable, Codable {
     /// The phone's §3 global rest default from the last applied snapshot.
     public var restDefault: TimeInterval
     /// Each routine's last-performed date as the phone's last applied
-    /// digest reported it, for §2's "last done N days ago". The watch prunes
-    /// the sessions the phone acknowledged, so without this every routine
-    /// would read "Never done" once sync caught up. Empty until a digest
-    /// from a phone that sends them arrives.
+    /// digest reported it, plus the starts of sessions pruned since (newer
+    /// wins), for §2's "last done N days ago". The watch prunes the sessions
+    /// the phone acknowledged, so without this every routine would read
+    /// "Never done" once sync caught up.
     public var routineLastPerformedAt: [UUID: Date]
 
     private enum CodingKeys: String, CodingKey {

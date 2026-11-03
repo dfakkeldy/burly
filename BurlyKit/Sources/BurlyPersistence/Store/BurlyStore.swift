@@ -799,9 +799,10 @@ public protocol BurlyStore: AnyObject {
     /// digest so the watch can show §2's "last done N days ago". A watch
     /// store prunes delivered sessions (§1), so on its own it would answer
     /// "never" for every routine once the phone acknowledged its sessions.
-    /// It therefore also merges the dates the phone's last digest reported
-    /// (`WatchSyncStateData.routineLastPerformedAt`), keeping the newer of
-    /// that date and any session it still holds.
+    /// It therefore also merges `WatchSyncStateData.routineLastPerformedAt`
+    /// (the dates the phone's last digest reported, plus the starts of the
+    /// sessions pruned since), keeping the newer of that date and any
+    /// session it still holds.
     ///
     /// Bounded: a flat pass over `Session` rows, never `.items`.
     func routineLastPerformedDates() throws -> [UUID: Date]

@@ -160,16 +160,20 @@ public struct BurlySessionPayloadDTO: Sendable, Equatable, Codable {
 /// ignores the key (this decoder, like every payload decoder here, reads
 /// only the keys it knows). A bump would instead make every older watch
 /// hold every digest, which stops its acks and pruning, for a row of text.
-/// A digest without the key, from a phone that predates it, decodes as an
-/// empty list, which is all such a phone could report.
+///
+/// The key's absence is kept distinct from an empty list. A digest without
+/// it comes from a phone that predates it and says nothing about routines,
+/// so the watch must leave the dates it has alone; an empty list says the
+/// phone has no logged session for any live routine.
 public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
     /// The snapshot version from which this latest-wins digest was derived.
     public let snapshotVersion: Int
     public let lastPerformance: [ExerciseLastPerformanceData]
     public let ackedSessionIDs: [UUID]
-    /// Complete for the phone's non-archived routines: one that is absent
-    /// has no logged session on the phone. See the type doc.
-    public let routineLastPerformed: [BurlyRoutineLastPerformedDTO]
+    /// When present, complete for the phone's non-archived routines: one
+    /// that is absent has no logged session on the phone. `nil` when the
+    /// sender predates the key. See the type doc.
+    public let routineLastPerformed: [BurlyRoutineLastPerformedDTO]?
 
     public init(
         snapshotVersion: Int,
@@ -180,7 +184,7 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
             snapshotVersion: snapshotVersion,
             lastPerformance: lastPerformance,
             ackedSessionIDs: ackedSessionIDs,
-            routineLastPerformed: []
+            routineLastPerformed: nil
         )
     }
 
@@ -188,7 +192,7 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
         snapshotVersion: Int,
         lastPerformance: [ExerciseLastPerformanceData],
         ackedSessionIDs: [UUID],
-        routineLastPerformed: [BurlyRoutineLastPerformedDTO]
+        routineLastPerformed: [BurlyRoutineLastPerformedDTO]?
     ) {
         precondition(snapshotVersion >= 0, "Snapshot version must be non-negative.")
         self.snapshotVersion = snapshotVersion
@@ -226,12 +230,13 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
         self.snapshotVersion = snapshotVersion
         lastPerformance = try container.decode([ExerciseLastPerformanceData].self, forKey: .lastPerformance)
         ackedSessionIDs = try container.decode([UUID].self, forKey: .ackedSessionIDs)
-        // Absent from an older phone (see the type doc). When present, each
-        // element requires both fields (synthesized decoding).
+        // Absent from an older phone, and kept absent (see the type doc).
+        // When present, each element requires both fields (synthesized
+        // decoding); synthesized encoding omits the key when `nil`.
         routineLastPerformed = try container.decodeIfPresent(
             [BurlyRoutineLastPerformedDTO].self,
             forKey: .routineLastPerformed
-        ) ?? []
+        )
     }
 }
 

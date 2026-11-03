@@ -386,6 +386,29 @@ struct RoutineLastPerformedDatesTests {
         #expect(try store.routineLastPerformedDates() == [push: Fixture.epoch])
     }
 
+    @Test("a digest without routine dates (an older phone) still keeps a pruned session's last-done date")
+    func pruneFoldsTheSessionDateWhenThePhoneReportsNone() throws {
+        let store = try makeStore(.watch)
+        let bench = Fixture.exercise(name: "Bench Press")
+        let push = Fixture.routine(name: "Push", over: [bench])
+        try store.createExercise(bench)
+        try store.createRoutine(push)
+        let older = UUID()
+        try store.applyWatchDigest(digest([push.id: Fixture.epoch, older: Fixture.epoch]))
+
+        let delivered = Fixture.session(from: push, startedAt: Fixture.epoch.addingTimeInterval(86_400))
+        try store.createSession(delivered)
+        try store.applyWatchDigest(BurlyDigestPayloadDTO(
+            snapshotVersion: 0, lastPerformance: [], ackedSessionIDs: [delivered.id]
+        ))
+
+        #expect(try store.session(id: delivered.id) == nil, "the acknowledged session is pruned")
+        #expect(try store.routineLastPerformedDates() == [
+            push.id: Fixture.epoch.addingTimeInterval(86_400),
+            older: Fixture.epoch
+        ])
+    }
+
     @Test("two dates for one routine reject the whole digest, acks and all")
     func duplicateRoutineRejectsDigest() throws {
         let store = try makeStore(.watch)

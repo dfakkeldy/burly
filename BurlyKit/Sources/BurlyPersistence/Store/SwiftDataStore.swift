@@ -1801,11 +1801,15 @@ extension SwiftDataStore: WatchSyncStore {
     /// watch runtime. All throws happen in the planning phase; after the
     /// first mutation there is only one `commit()`.
     ///
-    /// `routineLastPerformed` is `nil` from `applyDigest`, which has no
-    /// routine dates to give and leaves the stored ones alone. From the
-    /// transport it replaces them whole: the digest is latest-wins and
-    /// complete for the phone's routines, so a date the phone no longer
-    /// reports (its session was deleted) must not linger.
+    /// Routine dates, in two steps. First, every session this prunes folds
+    /// its start into the stored date for its routine (newer wins), so a
+    /// prune never erases "last done" on its own, whatever the phone sends.
+    /// Then a non-`nil` `routineLastPerformed` replaces the stored dates
+    /// whole: the digest is latest-wins and complete for the phone's
+    /// routines, so a date the phone no longer reports (its session was
+    /// deleted) must not linger. It is `nil` from `applyDigest`, which has
+    /// no dates to give, and from a phone that predates the key; both leave
+    /// the folded dates as they are.
     private func applyDigestTransaction(
         lastPerformance: [ExerciseLastPerformanceData],
         ackedSessionIDs: [UUID],
@@ -1843,6 +1847,11 @@ extension SwiftDataStore: WatchSyncStore {
         let activeSessionIDs = Set(ackedSessionIDs.filter { existingSessions[$0]?.state == .active })
         var nextState = try recoveredWatchSyncState(from: journal)
         nextState.lastAckedSessionIDs = Set(ackedSessionIDs).subtracting(activeSessionIDs)
+        for (session, _) in deliveredSessions {
+            guard let routineID = session.routineID else { continue }
+            if let stored = nextState.routineLastPerformedAt[routineID], stored >= session.startedAt { continue }
+            nextState.routineLastPerformedAt[routineID] = session.startedAt
+        }
         if let routineLastPerformed {
             nextState.routineLastPerformedAt = Dictionary(
                 uniqueKeysWithValues: routineLastPerformed.map { ($0.routineID, $0.performedAt) }

@@ -76,9 +76,8 @@ import BurlyCore
 /// (`SessionDigestGenerator` in BurlyPhoneSync) covers **every exercise in
 /// the watch's working set that has history** — the exercises the current
 /// snapshot carries, the only ones the watch can start or add — and, only
-/// when that would exceed its byte budget, drops the least-used of them:
-/// exercises a routine starts with are kept first, then the most recently
-/// performed. Exercises outside the working set are never sent.
+/// when that would exceed its byte budget, drops the least-used of them.
+/// Exercises outside the working set are never sent.
 ///
 /// The consequence that makes this load-bearing: **the absence of an entry
 /// is a claim the watch acts on.** The watch upserts the entries it is
@@ -87,9 +86,10 @@ import BurlyCore
 /// prunes the acked session regardless. A generator that omitted an
 /// exercise whose latest numbers were in that session would leave the watch
 /// showing older ones, and §5's application context is latest-wins, so
-/// nothing redelivers to repair it. An acked session is at most ~30 days
-/// old (§5's ack retention), so its exercises are among the most recently
-/// performed and are the last the byte budget would ever drop.
+/// nothing redelivers to repair it. So the byte budget never drops such an
+/// entry while acknowledging its session: those entries are kept first,
+/// and if even they cannot all fit, the generator holds that session's ack
+/// back for a later digest instead.
 ///
 /// The watch **cannot** verify this, and deliberately does not try (m1-06
 /// review rounds E→F). It looks checkable — the store holds the sessions it
