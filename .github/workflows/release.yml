@@ -123,9 +123,11 @@ jobs:
             exit 1
           fi
 
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "marketing_version=$MARKETING_VERSION" >> "$GITHUB_OUTPUT"
-          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$TAG"
+            echo "marketing_version=$MARKETING_VERSION"
+            echo "build_number=$BUILD_NUMBER"
+          } >> "$GITHUB_OUTPUT"
           echo "Resolved $TAG -> MARKETING_VERSION=$MARKETING_VERSION CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
 
       # See Scripts/release-notes.sh for the full what's-new sourcing
@@ -143,6 +145,12 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
+          # The annotation is text chosen by whoever pushes the tag. It
+          # goes to a file first, then to the log inside a
+          # ::stop-commands:: window (so a line starting with "::" is not
+          # run as a workflow command), and into the job summary as an
+          # indented code block (so it cannot close a fence).
+          #
           # actions/checkout leaves refs/tags/$TAG as a LIGHTWEIGHT ref: it
           # fetches all tags, sees that the ref resolves to the tag object
           # rather than GITHUB_SHA, and force-fetches "+<sha>:refs/tags/<tag>"
@@ -155,16 +163,19 @@ jobs:
           # any failure here warns and writes a one-line note instead.
           if git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG" \
             && [[ "$(git rev-parse "refs/tags/$TAG^{commit}")" == "$GITHUB_SHA" ]]; then
-            Scripts/release-notes.sh "$TAG" | tee "$RUNNER_TEMP/whats-new.txt"
+            Scripts/release-notes.sh "$TAG" > "$RUNNER_TEMP/whats-new.txt"
           else
             echo "::warning::Could not restore the annotated tag $TAG at $GITHUB_SHA; what's-new not extracted."
-            echo "No release notes extracted ($TAG could not be re-fetched at the commit this run built)." | tee "$RUNNER_TEMP/whats-new.txt"
+            echo "No release notes extracted ($TAG could not be re-fetched at the commit this run built)." > "$RUNNER_TEMP/whats-new.txt"
           fi
+          STOP_TOKEN="$(uuidgen)"
+          echo "::stop-commands::$STOP_TOKEN"
+          cat "$RUNNER_TEMP/whats-new.txt"
+          echo "::$STOP_TOKEN::"
           {
             echo "## What's new (from tag annotation)"
-            echo '```'
-            cat "$RUNNER_TEMP/whats-new.txt"
-            echo '```'
+            echo
+            sed 's/^/    /' "$RUNNER_TEMP/whats-new.txt"
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Written with a restrictive umask so the key is never
