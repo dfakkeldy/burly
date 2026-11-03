@@ -56,6 +56,10 @@ final class PhoneHomeViewModel {
     // Archived metadata still names past work; pickers filter it out.
     private(set) var historyExercises: [ExerciseData] = []
     private(set) var namingQueue: [ExerciseData] = []
+    /// Set when a history delete's Health half did not clearly succeed
+    /// (see HistoryWorkoutHealthCleanup.swift); History shows it at the top
+    /// of the list until the user dismisses it or another delete replaces it.
+    private(set) var historyNotice: HistoryNotice?
 
     // Stats domain. Unlike the shell's count-only snapshot above, this is
     // loaded only when Stats appears and uses the §7 bounded query surfaces.
@@ -106,10 +110,21 @@ final class PhoneHomeViewModel {
 
     private let store: BurlyStore
     private let sync: PhoneSyncHost?
+    private let healthWorkouts: any HealthWorkoutRemoving
 
-    init(store: BurlyStore, sync: PhoneSyncHost? = nil) {
+    /// `healthWorkouts` defaults to HealthKit, except under a DEBUG UI-test
+    /// scenario, which gets a scripted remover and never reaches HealthKit.
+    init(store: BurlyStore, sync: PhoneSyncHost? = nil, healthWorkouts: (any HealthWorkoutRemoving)? = nil) {
         self.store = store
         self.sync = sync
+        self.healthWorkouts = healthWorkouts ?? Self.defaultHealthWorkoutRemover()
+    }
+
+    private static func defaultHealthWorkoutRemover() -> any HealthWorkoutRemoving {
+        #if DEBUG
+        if let scripted = UITestHealthWorkoutRemover.requested() { return scripted }
+        #endif
+        return HealthKitWorkoutRemover()
     }
 
     // MARK: - Bounded shell snapshot (finding 3)
@@ -323,6 +338,21 @@ final class PhoneHomeViewModel {
         catalogState = .loaded
     }
 
+    /// Retags a custom or imported exercise (the catalog's tag editor). Same
+    /// rule as creation: at least one tag. The muscle split attributes sets
+    /// through these tags, so a loaded Stats dashboard refreshes too.
+    func updateMuscleGroups(of exercise: ExerciseData, to muscleGroups: [MuscleGroup]) throws {
+        guard !muscleGroups.isEmpty else {
+            throw PhoneRoutineError.noMuscleGroups
+        }
+        try store.updateExerciseMuscleGroups(id: exercise.id, muscleGroups: muscleGroups)
+        sync?.catalogDidChange()
+        catalogExercises = try store.exercises(includingArchived: false)
+        catalogState = .loaded
+        historyExercises = try store.exercises(includingArchived: true)
+        refreshStatsIfRequested()
+    }
+
     /// Every routine mutation but create ends here, so this is also where
     /// the watch hears about it.
     private func refreshRoutinesAfterMutation() throws {
@@ -364,6 +394,9 @@ final class PhoneHomeViewModel {
 
     /// The phone's §6 edit gateway. `applyPhoneEdit` is the persistence
     /// invariant owner: it increments revision and never writes HealthKit.
+    /// Callers pass only real changes (the detail screen drops a save that
+    /// changes nothing), since every call here is an edit the History row
+    /// will mark.
     func saveHistoryEdit(_ session: SessionData) throws -> SessionData {
         let revision = try store.applyPhoneEdit(session)
         sync?.historyDidChange()
@@ -375,10 +408,48 @@ final class PhoneHomeViewModel {
         return saved
     }
 
-    func namePlaceholder(_ exercise: ExerciseData, as name: String) throws {
-        try store.namePlaceholderExercise(id: exercise.id, name: name)
+    /// §6 delete, both halves. Burly's half is one store save — the session,
+    /// its items and sets, and the tombstone that keeps a re-sent watch
+    /// copy from bringing it back — after which History, the shell count and
+    /// Stats reload and the digest refreshes. The Health half runs after,
+    /// never blocking or undoing the first: when it does not clearly
+    /// succeed, `historyNotice` says so and how to finish the job by hand.
+    func deleteHistorySession(_ session: SessionData) throws {
+        let linkedWorkoutID = try store.deleteLoggedSession(id: session.id)
+        sync?.historyDidChange()
+        load()
+        loadSessionsForDisplay()
+        refreshStatsIfRequested()
+        // HealthKit finds the workout by the session id (its external
+        // UUID); the stored link only says whether there is one to find. An
+        // unlinked session (a Hevy import, or Health declined on the watch)
+        // never asks for HealthKit access.
+        guard linkedWorkoutID != nil else { return }
+        let healthWorkouts = healthWorkouts
+        let sessionID = session.id
+        Task { [weak self] in
+            let outcome = await healthWorkouts.removeWorkouts(linkedTo: sessionID)
+            self?.historyNotice = HistoryNotice(afterRemoving: outcome)
+        }
+    }
+
+    func dismissHistoryNotice() {
+        historyNotice = nil
+    }
+
+    /// Names a watch placeholder and collects its muscle tags in the same
+    /// save, under the custom-creation rules (a trimmed, non-empty name and
+    /// at least one tag), so a named exercise never stays unattributed in
+    /// the muscle split.
+    func namePlaceholder(_ exercise: ExerciseData, as rawName: String, muscleGroups: [MuscleGroup]) throws {
+        let name = try validatedName(rawName, kind: .exercise)
+        guard !muscleGroups.isEmpty else {
+            throw PhoneRoutineError.noMuscleGroups
+        }
+        try store.namePlaceholderExercise(id: exercise.id, name: name, muscleGroups: muscleGroups)
         sync?.catalogDidChange()
         reloadHistoryExercises()
+        refreshStatsIfRequested()
     }
 
     func mergePlaceholder(_ exercise: ExerciseData, into destination: ExerciseData) throws {
@@ -388,6 +459,7 @@ final class PhoneHomeViewModel {
         sync?.catalogDidChange()
         sync?.historyDidChange()
         reloadHistoryExercises()
+        refreshStatsIfRequested()
     }
 
     private func reloadHistoryExercises() {

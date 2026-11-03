@@ -17,11 +17,35 @@ import SwiftUI
 @MainActor
 struct HistoryTabView: View {
     let viewModel: PhoneHomeViewModel
+    /// The row a swipe asked to delete, until the confirmation answers.
+    @State private var deleteCandidate: SessionData?
+    @State private var deleteError: String?
 
     var body: some View {
         NavigationStack {
             content
                 .navigationTitle("History")
+                .confirmationDialog(
+                    "Delete this workout?",
+                    isPresented: Binding(get: { deleteCandidate != nil }, set: { if !$0 { deleteCandidate = nil } }),
+                    titleVisibility: .visible,
+                    presenting: deleteCandidate
+                ) { session in
+                    Button("Delete Workout", role: .destructive) {
+                        do {
+                            try viewModel.deleteHistorySession(session)
+                        } catch {
+                            deleteError = error.localizedDescription
+                        }
+                        deleteCandidate = nil
+                    }
+                    .accessibilityIdentifier("historyTab.confirmDeleteSession")
+                } message: { session in
+                    Text(HistorySessionDeletion.confirmationMessage(for: session))
+                }
+                .alert("Couldn’t delete workout", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+                    Button("OK", role: .cancel) { deleteError = nil }
+                } message: { Text(deleteError ?? "") }
         }
             // Rows only when the tab is shown (finding 3).
             .task { viewModel.loadSessionsForDisplay() }
@@ -42,12 +66,20 @@ struct HistoryTabView: View {
             )
         case .loaded:
             if viewModel.loggedSessionCount == 0 {
-                EmptyStateView(
-                    icon: "clock.arrow.circlepath",
-                    title: "No history yet",
-                    message: "Workouts you finish will show up here, starting with your first session.",
-                    identifierPrefix: "historyTab"
-                )
+                VStack(spacing: 0) {
+                    // Deleting the last workout lands here, and its Health
+                    // report must still be seen.
+                    if let notice = viewModel.historyNotice {
+                        HistoryNoticeRow(notice: notice) { viewModel.dismissHistoryNotice() }
+                            .padding()
+                    }
+                    EmptyStateView(
+                        icon: "clock.arrow.circlepath",
+                        title: "No history yet",
+                        message: "Workouts you finish will show up here, starting with your first session.",
+                        identifierPrefix: "historyTab"
+                    )
+                }
             } else if viewModel.sessionRows.isEmpty {
                 // Count says history exists but the rows (this tab's lazy
                 // load) haven't landed yet.
@@ -56,12 +88,27 @@ struct HistoryTabView: View {
                 // Share this whole-history projection across every lazy row.
                 let recordSessionIDs = prSessionIDs
                 List {
+                    // A delete's Health half reports here when it finishes,
+                    // whether it started from a row or from the detail
+                    // screen (closed by then). A row, not an alert: an alert
+                    // raised the moment a dialog closes or a pop animates is
+                    // a presentation that can be dropped, and this one tells
+                    // the user about a copy they still have to remove.
+                    if let notice = viewModel.historyNotice {
+                        Section {
+                            HistoryNoticeRow(notice: notice) { viewModel.dismissHistoryNotice() }
+                        }
+                    }
                     if let placeholder = viewModel.namingQueue.first {
                         NavigationLink {
                             NamingQueueView(viewModel: viewModel, placeholder: placeholder)
                         } label: {
                             Label("Name your custom exercise", systemImage: "tag")
                         }
+                        // Keyed by placeholder: with two in the queue, the
+                        // second must get its own fresh naming state, not
+                        // the first one's typed name and tags.
+                        .id(placeholder.id)
                         .accessibilityIdentifier("historyTab.namingQueueBanner")
                     }
                     ForEach(weekGroups) { group in
@@ -73,6 +120,18 @@ struct HistoryTabView: View {
                                     HistorySessionRow(session: session, hasPersonalRecord: recordSessionIDs.contains(session.id))
                                 }
                                 .accessibilityIdentifier("historyTab.sessionRow.\(session.id.uuidString)")
+                                // Not `role: .destructive`: that role makes
+                                // the List animate the row away at once,
+                                // before the confirmation has been answered.
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button {
+                                        deleteCandidate = session
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    .tint(.red)
+                                    .accessibilityIdentifier("historyTab.deleteSession.\(session.id.uuidString)")
+                                }
                             }
                         }
                     }
@@ -100,6 +159,29 @@ struct HistoryTabView: View {
             }
         }
         return ExerciseProgressionStats.personalRecordSessionIDs(from: slices)
+    }
+}
+
+/// The Health report after a history delete (HistoryWorkoutHealthCleanup.swift).
+private struct HistoryNoticeRow: View {
+    let notice: HistoryNotice
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(notice.title, systemImage: "heart.text.square")
+                .font(.headline)
+                .accessibilityIdentifier("historyTab.notice.title")
+            Text(notice.message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("historyTab.notice.message")
+            Button("Dismiss", action: onDismiss)
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("historyTab.notice.dismiss")
+        }
+        .padding(.vertical, 4)
     }
 }
 
