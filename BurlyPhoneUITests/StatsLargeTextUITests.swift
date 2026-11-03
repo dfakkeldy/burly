@@ -227,9 +227,9 @@ final class StatsLargeTextUITests: XCTestCase {
     }
 
     /// The large-text week line under a weekly chart is on screen and
-    /// ends at this week, which the populated seed leaves empty: the case
-    /// where the axis's own last date sat under the previous week's bar.
-    /// Its accessibility label spells the months out.
+    /// ends at this week, whether or not this week has a workout yet (an
+    /// empty end week is where the axis's own last date sat under the
+    /// previous week's bar). Its accessibility label spells the months out.
     private func assertWeekRangeEndsThisWeek(
         _ weekLine: XCUIElement,
         in app: XCUIApplication,
@@ -239,12 +239,17 @@ final class StatsLargeTextUITests: XCTestCase {
         XCTAssertTrue(weekLine.waitForExistence(timeout: 5), "Expected the week line under the chart", file: file, line: sourceLine)
         scrollFullyIntoView(weekLine, in: app, file: file, line: sourceLine)
         assertWithinScreenWidth(weekLine, in: app, file: file, line: sourceLine)
-        let thisWeek = Calendar.current.dateInterval(of: .weekOfYear, for: .now)?.start ?? .now
-        let lastWeek: String = thisWeek.formatted(.dateTime.month(.wide).day())
+        // Stats loaded a little earlier, so a run that crosses into a new
+        // week may still show the week before; either is this week.
+        let now = Date()
+        let lastWeeks: [String] = [now.addingTimeInterval(-15 * 60), now].map { (date: Date) -> String in
+            let weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+            return weekStart.formatted(.dateTime.month(.wide).day())
+        }
         XCTAssertTrue(weekLine.label.hasPrefix("Weeks of "), "Unexpected week line: \(weekLine.label)", file: file, line: sourceLine)
         XCTAssertTrue(
-            weekLine.label.contains(" to " + lastWeek),
-            "The week line must end at this week (\(lastWeek)), got: \(weekLine.label)",
+            lastWeeks.contains { weekLine.label.contains(" to " + $0) },
+            "The week line must end at this week (\(lastWeeks)), got: \(weekLine.label)",
             file: file,
             line: sourceLine
         )
