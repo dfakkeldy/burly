@@ -446,6 +446,14 @@ struct NamingQueueView: View {
             }
             MuscleGroupTagPicker(selection: $muscleGroups, identifierPrefix: "namingQueue.muscleTag")
             Section("Or merge into an existing exercise") {
+                // A filter field in the section rather than `.searchable`:
+                // an active search controller hides this screen's toolbar,
+                // and with it Save.
+                TextField("Search exercises", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .accessibilityIdentifier("namingQueue.mergeSearch")
                 ForEach(mergeTargets) { exercise in
                     Button(exercise.name) { mergeCandidate = exercise }
                         .accessibilityIdentifier("namingQueue.merge.\(exercise.id.uuidString)")
@@ -471,13 +479,6 @@ struct NamingQueueView: View {
                 .accessibilityIdentifier("namingQueue.saveName")
             }
         }
-        // Always shown: on a pushed screen the default placement hides the
-        // field until the list is pulled down, and the merge list is long.
-        .searchable(
-            text: $searchText,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Search exercises to merge into"
-        )
         .confirmationDialog(
             "Merge into \(mergeCandidate?.name ?? "exercise")?",
             isPresented: Binding(get: { mergeCandidate != nil }, set: { if !$0 { mergeCandidate = nil } }),

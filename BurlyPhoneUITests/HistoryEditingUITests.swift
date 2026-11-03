@@ -235,18 +235,16 @@ final class HistoryEditingUITests: XCTestCase {
         XCTAssertTrue(banner.waitForExistence(timeout: 15))
         banner.tap()
 
-        // Unnamed placeholders are not merge targets: searching their shared
-        // name finds neither.
-        let search = app.searchFields["Search exercises to merge into"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
-        search.tap()
-        search.typeText("Custom")
+        // Unnamed placeholders are not merge targets: filtering by their
+        // shared name finds neither.
+        let mergeSearch = scrollToElement(app, identifier: "namingQueue.mergeSearch")
+        mergeSearch.tap()
+        mergeSearch.typeText("Custom\n")
         XCTAssertFalse(app.buttons["namingQueue.merge.\(Self.firstPlaceholderID)"].waitForExistence(timeout: 2))
         XCTAssertFalse(app.buttons["namingQueue.merge.\(Self.secondPlaceholderID)"].exists)
-        closeSearch(in: app)
 
-        let nameField = app.textFields["namingQueue.nameField"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5))
+        let nameField = scrollUpToElement(app, identifier: "namingQueue.nameField")
+        XCTAssertTrue(nameField.exists)
         replaceText(in: nameField, with: "Cable Fly", app: app)
         let saveName = app.buttons["namingQueue.saveName"]
         XCTAssertFalse(saveName.isEnabled, "A name without muscle groups would stay unattributed in Stats")
@@ -262,11 +260,11 @@ final class HistoryEditingUITests: XCTestCase {
         XCTAssertTrue(nameField.waitForExistence(timeout: 5))
         XCTAssertEqual(nameField.value as? String, "Custom exercise", "The next placeholder must open with fresh state")
 
-        let mergeSearch = app.searchFields["Search exercises to merge into"]
-        mergeSearch.tap()
-        mergeSearch.typeText("Barbell Bench")
-        let benchTarget = app.buttons["namingQueue.merge.\(Self.benchPressExerciseID)"]
-        XCTAssertTrue(benchTarget.waitForExistence(timeout: 5))
+        let nextMergeSearch = scrollToElement(app, identifier: "namingQueue.mergeSearch")
+        XCTAssertEqual(editableContents(of: nextMergeSearch), "", "The next placeholder must open with an empty filter")
+        nextMergeSearch.tap()
+        nextMergeSearch.typeText("Barbell Bench\n")
+        let benchTarget = scrollToElement(app, identifier: "namingQueue.merge.\(Self.benchPressExerciseID)")
         benchTarget.tap()
         let confirmMerge = app.buttons.matching(identifier: "namingQueue.confirmMerge").firstMatch
         XCTAssertTrue(confirmMerge.waitForExistence(timeout: 5), "Merging rewrites history, so it asks first")
@@ -391,17 +389,6 @@ final class HistoryEditingUITests: XCTestCase {
         }
     }
 
-    /// Ends an active search via its own control ("close" in the iOS 26
-    /// accessibility tree, as BurlyPhoneUITests notes; "Cancel" before).
-    private func closeSearch(in app: XCUIApplication) {
-        let close = app.buttons["close"]
-        if close.waitForExistence(timeout: 2) {
-            close.tap()
-        } else if app.buttons["Cancel"].exists {
-            app.buttons["Cancel"].tap()
-        }
-    }
-
     private func staticText(containing text: String, in app: XCUIApplication) -> XCUIElement {
         app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }
@@ -430,6 +417,18 @@ final class HistoryEditingUITests: XCTestCase {
             app.swipeUp()
         }
         XCTFail("Expected element \(identifier) after at most 20 upward swipes")
+        return element
+    }
+
+    /// Swipes down through a lazy list until `identifier` is on screen.
+    private func scrollUpToElement(_ app: XCUIApplication, identifier: String) -> XCUIElement {
+        let element = anyElement(app, identifier: identifier)
+        for swipeCount in 0...20 {
+            if element.waitForExistence(timeout: 1), element.isHittable { return element }
+            guard swipeCount < 20 else { break }
+            app.swipeDown()
+        }
+        XCTFail("Expected element \(identifier) after at most 20 downward swipes")
         return element
     }
 
