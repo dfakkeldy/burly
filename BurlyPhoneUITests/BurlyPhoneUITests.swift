@@ -566,6 +566,11 @@ final class BurlyPhoneUITests: XCTestCase {
             in: app
         )
         addedExerciseRemoveButton.tap()
+        // Removing an exercise drops its sets, so it asks first
+        // (HistoryEditingUITests covers the cancel path).
+        let confirmRemove = app.buttons.matching(identifier: "historyDetail.confirmRemoveExercise").firstMatch
+        XCTAssertTrue(confirmRemove.waitForExistence(timeout: 5), "Expected the remove-exercise confirmation")
+        confirmRemove.tap()
         assertRevision(5, in: app)
         XCTAssertFalse(
             sessionExerciseIdentifiersAfterScrolling(app).contains("historyDetail.exercise.\(Self.addableExerciseID)"),
