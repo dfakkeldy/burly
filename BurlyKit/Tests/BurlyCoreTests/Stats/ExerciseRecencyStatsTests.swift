@@ -117,4 +117,22 @@ struct ExerciseRecencyStatsTests {
         ]
         #expect(ExerciseRecencyStats.trainedExerciseIDs(from: slices) == [Self.squat, Self.bench])
     }
+
+    @Test("The picker keeps active exercises and only the archived ones trained in the window")
+    func pickerHidesArchivedExercisesWithoutRecentHistory() {
+        let archivedAt = Self.base
+        let exercises = [
+            ExerciseData(id: Self.bench, name: "Bench", muscleGroups: [.chest], origin: .curated),
+            ExerciseData(id: Self.curl, name: "Curl", muscleGroups: [.biceps], origin: .custom, archivedAt: archivedAt),
+            ExerciseData(id: Self.pullUp, name: "Pull-Up", muscleGroups: [.lats], origin: .curated, archivedAt: archivedAt),
+            ExerciseData(id: Self.squat, name: "Squat", muscleGroups: [.quads], origin: .curated)
+        ]
+
+        let picker = ExerciseRecencyStats.pickerExercises(exercises, trainedIDs: [Self.pullUp, Self.squat])
+
+        // Active exercises stay whether or not they were trained, in the
+        // given order; archived Pull-Up stays only because it was trained.
+        #expect(picker.map(\.id) == [Self.bench, Self.pullUp, Self.squat])
+        #expect(ExerciseRecencyStats.pickerExercises(exercises, trainedIDs: []).map(\.id) == [Self.bench, Self.squat])
+    }
 }

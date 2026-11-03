@@ -39,6 +39,14 @@ public enum ExerciseRecencyStats {
         Set(slices.lazy.filter { !$0.set.isWarmup }.compactMap(\.exerciseID))
     }
 
+    /// What the progression picker offers, in the given order: every active
+    /// exercise, plus archived ones in `trainedIDs`. Archiving takes an
+    /// exercise out of the pickers you plan with, but its recent history is
+    /// still worth charting.
+    public static func pickerExercises(_ exercises: [ExerciseData], trainedIDs: Set<UUID>) -> [ExerciseData] {
+        exercises.filter { $0.archivedAt == nil || trainedIDs.contains($0.id) }
+    }
+
     private static func isInEarlierSession(_ lhs: SetRecordSlice, _ rhs: SetRecordSlice) -> Bool {
         lhs.sessionStartedAt == rhs.sessionStartedAt
             ? lhs.sessionID.uuidString < rhs.sessionID.uuidString
