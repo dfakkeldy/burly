@@ -28,6 +28,12 @@ public final class SessionWorkoutRecorder {
     /// The Burly session the live workout belongs to, if one is running.
     public private(set) var liveSessionID: UUID?
 
+    /// The session whose live start has not answered: still in flight, or
+    /// timed out but possibly finishing later in HealthKit. A takeover in
+    /// that window belongs to this session, though `liveSessionID` is
+    /// never set for it.
+    private var startingSessionID: UUID?
+
     /// Sessions whose live workout another app's workout took over, or
     /// kept from starting (§4), oldest first. Kept in `marks` because
     /// watchOS can end Burly once its workout is gone: a lifter who
@@ -55,8 +61,8 @@ public final class SessionWorkoutRecorder {
         self.marks = marks
         supersededSessionIDs = marks.load()
         controller.onAnotherWorkoutStarted = { [weak self] in
-            guard let self, let liveSessionID = self.liveSessionID else { return }
-            self.markSuperseded(liveSessionID)
+            guard let self, let sessionID = self.liveSessionID ?? self.startingSessionID else { return }
+            self.markSuperseded(sessionID)
         }
     }
 
@@ -73,8 +79,10 @@ public final class SessionWorkoutRecorder {
             }
             guard store.authorizationStatus == .authorized else { return }
             await discardLiveWorkout()
+            startingSessionID = sessionID
             switch await bounded({ [controller] in try await controller.start(at: date) }) {
             case .finished(.success):
+                startingSessionID = nil
                 liveSessionID = sessionID
                 // A takeover that landed between the start finishing and
                 // this line found no live session to mark.
@@ -82,8 +90,13 @@ public final class SessionWorkoutRecorder {
                     markSuperseded(sessionID)
                 }
             case let .finished(.failure(error)) where Self.isAnotherWorkout(error):
+                startingSessionID = nil
                 markSuperseded(sessionID)
-            case .finished(.failure), .timedOut:
+            case .finished(.failure):
+                startingSessionID = nil
+            case .timedOut:
+                // HealthKit may still start it; `startingSessionID` stays,
+                // so a takeover after that is marked for this session.
                 break
             }
         }
@@ -96,7 +109,8 @@ public final class SessionWorkoutRecorder {
     /// saves no workout for the session.
     public func anotherWorkoutTookOver(sessionID: UUID) -> Bool {
         if supersededSessionIDs.contains(sessionID) { return true }
-        return liveSessionID == sessionID && controller.lifecycle == .failed(.anotherWorkoutSessionStarted)
+        return (liveSessionID ?? startingSessionID) == sessionID
+            && controller.lifecycle == .failed(.anotherWorkoutSessionStarted)
     }
 
     /// Saves the session's workout. A live workout for this session runs
@@ -117,6 +131,9 @@ public final class SessionWorkoutRecorder {
     ) async -> WorkoutRecording {
         await enqueue { [self] in
             let metadata = WorkoutMetadata.linking(sessionID: sessionID)
+            defer {
+                if startingSessionID == sessionID { startingSessionID = nil }
+            }
             if anotherWorkoutTookOver(sessionID: sessionID) {
                 markSuperseded(sessionID)
                 if liveSessionID == sessionID {
@@ -231,6 +248,7 @@ public final class SessionWorkoutRecorder {
     /// Discards whatever live workout the controller owns, bounded.
     private func discardLiveWorkout() async {
         liveSessionID = nil
+        startingSessionID = nil
         switch controller.lifecycle {
         case .active, .failed:
             _ = await bounded({ [controller, now] in

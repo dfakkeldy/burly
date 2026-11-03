@@ -180,6 +180,23 @@ struct SessionWorkoutRecorderTests {
         #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
     }
 
+    @Test("a takeover after a live start timed out is still marked, and Finish saves nothing")
+    func takeoverAfterTimedOutStartIsMarked() async {
+        let rig = Rig(status: .authorized, sleep: { _ in await Task.yield() }, beginGate: Gate())
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(rig.recorder.liveSessionID == nil)
+        rig.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(rig.store.durationOnlySaves.isEmpty)
+    }
+
     @Test("a crash between Finish and the store save leaves the next Finish saving nothing too")
     func takeoverFinishIsRepeatable() async {
         let box = MarkBox()
@@ -345,10 +362,11 @@ private final class Rig {
             try await Task.sleep(for: .seconds(3_600))
         },
         finishGate: Gate? = nil,
+        beginGate: Gate? = nil,
         marks: SupersededSessionMarks = .none
     ) {
         store = FakeHealthStore(status: status, grant: grant, gate: authorizationGate)
-        builder = FakeBuilder(log: log, finishGate: finishGate)
+        builder = FakeBuilder(log: log, finishGate: finishGate, beginGate: beginGate)
         resources = LiveWorkoutResources(session: FakeSession(log: log), builder: builder)
         let factory = FakeFactory(resources: resources, failure: factoryFailure)
         recorder = SessionWorkoutRecorder(
@@ -498,15 +516,18 @@ private final class FakeSession: WorkoutSessionProtocol {
 private final class FakeBuilder: LiveWorkoutBuilding {
     private let log: Log
     private let finishGate: Gate?
+    private let beginGate: Gate?
     let savedWorkoutID = UUID()
 
-    init(log: Log, finishGate: Gate?) {
+    init(log: Log, finishGate: Gate?, beginGate: Gate?) {
         self.log = log
         self.finishGate = finishGate
+        self.beginGate = beginGate
     }
 
     func beginCollection(at date: Date) async throws {
         log.calls.append(.beginCollection(date))
+        await beginGate?.wait()
     }
 
     func endCollection(at date: Date) async throws {
