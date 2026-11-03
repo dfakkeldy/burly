@@ -41,7 +41,7 @@ public enum HevyImportError: Error, Sendable, Equatable, LocalizedError {
         case .unrecognizedHeader(let missingColumns):
             return "The file is missing required columns: \(missingColumns.joined(separator: ", "))."
         case .ambiguousWeightUnit:
-            return "The file has more than one weight column (weight_kg and weight_lbs), so Burly can't tell which weights are the real ones. "
+            return "The file has more than one weight column (weight_kg or weight_lbs), so Burly can't tell which weights are the real ones. "
                 + "Export your workouts from Hevy again, without editing the file, and choose that file."
         }
     }
