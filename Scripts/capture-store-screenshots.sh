@@ -81,19 +81,27 @@ log() { echo "store-screenshots: $*" >&2; }
 fail() { echo "store-screenshots: FATAL: $*" >&2; exit 1; }
 
 # acceptance-sim.sh's lock (CI passes its own BURLY_LOCK_DIR); wait up to 45
-# minutes for it. A lock whose owner is dead and 30 minutes old is reclaimed,
-# by the same rule acceptance-sim.sh uses.
+# minutes for it. A lock 30 minutes old whose owner is dead, or that never got
+# an owner file, is reclaimed, by the same rule acceptance-sim.sh uses.
+lock_is_stale() {
+  local owner_pid="" owner_ts="" since
+  read -r owner_pid owner_ts < "$LOCK_DIR/owner" 2> /dev/null
+  if [[ "$owner_pid" =~ ^[0-9]+$ && "$owner_ts" =~ ^[0-9]+$ ]]; then
+    kill -0 "$owner_pid" 2> /dev/null && return 1
+    since=$owner_ts
+  else
+    since="$(stat -f %m "$LOCK_DIR" 2> /dev/null)" || return 1
+  fi
+  (( $(date +%s) - since >= 30 * 60 ))
+}
 for _ in $(seq 1 270); do
   if mkdir "$LOCK_DIR" 2> /dev/null; then
     LOCK_OWNED=1
     echo "$$ $(date +%s)" > "$LOCK_DIR/owner"
     break
   fi
-  owner_pid="" owner_ts=""
-  read -r owner_pid owner_ts < "$LOCK_DIR/owner" 2> /dev/null
-  if [[ "${owner_pid:-}" =~ ^[0-9]+$ && "${owner_ts:-}" =~ ^[0-9]+$ ]] \
-    && (( $(date +%s) - owner_ts >= 30 * 60 )) && ! kill -0 "$owner_pid" 2> /dev/null; then
-    log "reclaiming the stale lock of dead pid $owner_pid"
+  if lock_is_stale; then
+    log "reclaiming the stale simulator lock $LOCK_DIR"
     rm -f "$LOCK_DIR/owner"
     rmdir "$LOCK_DIR" 2> /dev/null
     continue
