@@ -74,10 +74,11 @@ import BurlyCore
 /// `updateApplicationContext`, which refuses a payload over roughly 64 KB,
 /// and a refused digest carries no acks either. The generator
 /// (`SessionDigestGenerator` in BurlyPhoneSync) covers **every exercise in
-/// the watch's working set that has history** — the exercises the current
-/// snapshot carries, the only ones the watch can start or add — and, only
-/// when that would exceed its byte budget, drops the least-used of them.
-/// Exercises outside the working set are never sent.
+/// the watch's working set that has history** — the exercises the watch can
+/// start or add (`WatchWorkingSet.exercises`), not the snapshot's full
+/// catalog, which also names archived unused exercises so the picker can
+/// hide them — and, only when that would exceed its byte budget, drops the
+/// least-used of them. Exercises outside the working set are never sent.
 ///
 /// The consequence that makes this load-bearing: **the absence of an entry
 /// is a claim the watch acts on.** The watch upserts the entries it is

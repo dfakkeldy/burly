@@ -17,10 +17,11 @@
 // history (a multi-year Hevy import) fail every publish, silently and
 // forever: no acks, so no pruning on the watch.
 //
-// 1. **The watch's working set.** Only exercises the current snapshot
-//    carries (`WatchWorkingSet`: the non-archived catalog plus archived
-//    exercises a live routine still uses). The watch cannot start or add
-//    anything else, so it can never show a ghost row for anything else.
+// 1. **The watch's working set.** Only exercises the watch can still
+//    show (`WatchWorkingSet.exercises`: the non-archived catalog plus
+//    archived exercises a live routine still uses). The snapshot also
+//    carries archived unused exercises so the picker can hide them; they
+//    have no ghost row, so the digest skips them.
 // 2. **A byte budget** (`applicationContextByteBudget`). Hevy imports its
 //    exercises non-archived, so step 1 alone still leaves hundreds of
 //    entries. When the encoded envelope would exceed the budget, entries

@@ -139,11 +139,11 @@ public final class PhoneSyncHost {
     /// §5 "on any routine/catalog edit (debounced 5 s)" — and the two
     /// watch-facing Settings rows, which ride the snapshot.
     ///
-    /// The digest is refreshed too: it is bounded to the working set the
-    /// snapshot carries, ranks routine exercises first and reports routine
-    /// dates, so a catalog or routine edit can change what it should hold
-    /// without any history changing. Coalesced and latest-wins, like every
-    /// digest publish.
+    /// The digest is refreshed too: it is bounded to the exercises the
+    /// watch can still show, ranks routine exercises first and reports
+    /// routine dates, so a catalog or routine edit can change what it
+    /// should hold without any history changing. Coalesced and latest-wins,
+    /// like every digest publish.
     public func catalogDidChange() {
         Task { await coordinator.catalogDidChange() }
         historyDidChange()
