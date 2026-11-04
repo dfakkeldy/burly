@@ -1,4 +1,62 @@
-<!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
+<!-- Newest entry first. Dates are local (ADT/AST), matching the commit that adds them. -->
+
+## 2026-11-03 — Release lane archives unsigned; tag push uploads the checked .ipa with altool
+
+#45. Every release run archived with automatic signing on an empty runner,
+so cloud signing minted a new "Apple Development: Created via API"
+certificate each time. On 2026-11-03 the team hit Apple's cap and the dry
+run on `main` failed (dfakkeldy/grok-bots#873).
+
+`Scripts/archive-release.sh` archives BurlyPhone with
+`CODE_SIGNING_ALLOWED=NO` and no Apple contact, then signs the watch app
+and the phone app ad hoc, inside out, with their entitlements files, and
+checks the signatures. An unsigned archive would otherwise lose HealthKit
+at export; ad hoc signing through build settings is refused for the iOS
+SDK. `release.yml` exports that archive once — dry runs and tag pushes
+alike — with the cloud-managed Apple Distribution certificate (which the
+cap does not count) and `teamID` in the export options because the archive
+carries no team. `Scripts/check-exported-ipa.sh` checks that both apps are
+Apple Distribution-signed and kept their declared entitlements. A tag push
+then uploads that same checked `.ipa` with `altool --upload-app` via
+`Scripts/altool-ipa.sh`. It used to run a second `-exportArchive` with
+destination `upload`, which re-signed and uploaded a file nobody had
+checked.
+
+`Scripts/altool-ipa.sh` holds the validate step's former inline logic (the
+`AuthKey_<id>.p8` copy, ID scrubbing, strict error-text and success-line
+matching) for both validate and upload. altool logs each HTTP 5xx it
+retries as an `ERROR:` line. A line in that retry-notice shape with no
+ITMS code on it is a warning when altool also printed its success line,
+and a failure otherwise. Every dry run on 2026-11-03 printed several and
+still ended `VERIFY SUCCEEDED`. The upload mode has not run live against
+Apple yet; the first tag push is its first live run.
+
+The acceptance gate archives through the same script in place of its
+unsigned Release build, so a gated PR proves the archive half. A dry run
+of the #45 branch ([run 41638767996](https://github.com/dfakkeldy/burly/actions/runs/41638767996)),
+with the team at its certificate cap, archived with no certificate, exported,
+and App Store Connect printed `VERIFY SUCCEEDED with no errors`. Nothing
+was uploaded.
+
+Two test assumptions, not app bugs, had kept Simulator acceptance red on
+`main` since 2026-10-31:
+
+- `testStatsRefreshesOnForegroundAndPreservesRange` asserted "This week: 1"
+  then 2, but the seed's newest session is three days old, so on Sunday to
+  Tuesday (UTC) the count starts at 0. It now reads the starting count
+  (0 or 1) and requires exactly one more after foregrounding.
+- `testRestTimerCountsDownAdjustsAndSkips` tapped a countdown that sat
+  mostly below the 46 mm watch's bottom edge. The logging page now scrolls
+  the rest banner into view when a new rest starts (spec §3: visible after
+  logging), and the test asserts the countdown and +15 are fully on screen,
+  with no scrolling of its own, before tapping.
+
+`ci.yml` gives each `main` commit its own concurrency group, so `main` runs
+neither cancel nor replace each other; branch runs still cancel older ones.
+
+The Codex review of #45 also found that dispatches from any branch and tags
+on any commit can reach the API key. That is issue #47; a protected
+environment is Dan's call.
 
 ## 2026-10-31 — The store text describes Apple Health again; acceptance compiles Release
 
@@ -21,13 +79,13 @@ Release since the burly-m0 upload, and three phone previews used a Debug-only
 view model. `#Preview` bodies compile in every configuration, so the v1.0.0
 archive would have failed at the tag. The build is unsigned, so it proves the
 compile only: signing and the HealthKit capability on the App IDs are proven
-by a tagged release run.
+by a tagged release run. (Superseded by 2026-11-03.)
 
 ## 2026-10-30 — App Store listing as code with fastlane deliver; uploads stay on xcodebuild
 
 Burly's builds already reach App Store Connect without fastlane: a release tag
 archives and uploads with `xcodebuild -exportArchive` (release.yml), and that
-stays. What had no home was the store page itself: listing text, screenshots,
+stays. (Superseded by 2026-11-03.) What had no home was the store page itself: listing text, screenshots,
 review notes. It now lives in the repo under `fastlane/` and goes up with
 `fastlane deliver` from the manual Store listing workflow, using the same App
 Store Connect API key secrets. Reviewable text in a public repo beats edits made
