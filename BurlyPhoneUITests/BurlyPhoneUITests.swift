@@ -522,10 +522,21 @@ final class BurlyPhoneUITests: XCTestCase {
         // Warmup is a separate edit and therefore must produce its own
         // one-step revision increment.
         anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").tap()
-        anyElement(app, identifier: "historyDetail.setWarmup").tap()
+        // Tap the switch, not the row's centre: on iOS 26 a centre tap on a
+        // Form toggle does not flip it. That went unnoticed while every Save
+        // bumped the revision; a save that changes nothing no longer does.
+        let warmupToggle = anyElement(app, identifier: "historyDetail.setWarmup")
+        XCTAssertTrue(warmupToggle.waitForExistence(timeout: 5))
+        warmupToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(warmupToggle.value as? String, "1", "Expected the warmup switch to turn on")
         app.buttons["historyDetail.saveSet"].tap()
         assertRevision(3, in: app)
         XCTAssertTrue(app.staticTexts["Warmup"].waitForExistence(timeout: 5), "Expected the set to render as a warmup after saving")
+        // The seeded warmup set already shows "Warmup"; check the edited set.
+        XCTAssertTrue(
+            anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)").label.contains("Warmup"),
+            "Expected the edited working set itself to render as a warmup"
+        )
         assertHealthKitLink(in: app)
 
         // Add and remove an exercise independently; each is a real store
@@ -566,6 +577,11 @@ final class BurlyPhoneUITests: XCTestCase {
             in: app
         )
         addedExerciseRemoveButton.tap()
+        // Removing an exercise drops its sets, so it asks first
+        // (HistoryEditingUITests covers the cancel path).
+        let confirmRemove = app.buttons.matching(identifier: "historyDetail.confirmRemoveExercise").firstMatch
+        XCTAssertTrue(confirmRemove.waitForExistence(timeout: 5), "Expected the remove-exercise confirmation")
+        confirmRemove.tap()
         assertRevision(5, in: app)
         XCTAssertFalse(
             sessionExerciseIdentifiersAfterScrolling(app).contains("historyDetail.exercise.\(Self.addableExerciseID)"),

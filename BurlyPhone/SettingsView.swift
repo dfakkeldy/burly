@@ -183,7 +183,7 @@ struct SettingsView: View {
         } header: {
             Text("Apple Health")
         } footer: {
-            Text("Apple Watch asks the first time you start a workout. If Health access is off, your sets still save in Burly; turn it on in the Health app under Sharing, then Apps, then Burly.")
+            Text("Apple Watch asks the first time you start a workout. iPhone asks only when you delete a workout Burly saved to Health, so it can remove it there too. If Health access is off, your sets still save in Burly; turn it on in the Health app under Sharing, then Apps, then Burly.")
         }
     }
 

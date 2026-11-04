@@ -5,11 +5,19 @@ import SwiftUI
 
 @MainActor
 struct HistorySessionDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     let viewModel: PhoneHomeViewModel
     @State private var session: SessionData
     @State private var pickerPresented = false
     @State private var errorMessage: String?
     @State private var notesDraft: String
+    /// Removing an exercise drops every set under it, so it asks first.
+    @State private var removeCandidate: SessionItemData?
+    @State private var confirmingDelete = false
+    /// A failed Delete Workout, shown under the button rather than in an
+    /// alert: the failure is known inside the confirmation's action, and an
+    /// alert raised while that dialog is still closing can be dropped.
+    @State private var deleteError: String?
     #if DEBUG
     // Exercise the existing error path against a synthetic UI-test store.
     // Never enabled for the real store or included in release builds.
@@ -89,23 +97,37 @@ struct HistorySessionDetailView: View {
                         }
                         .accessibilityIdentifier("historyDetail.addSet.\(item.id.uuidString)")
                     } header: {
+                        // Exercise order moves one step per tap. A List
+                        // gives drag handles to rows, never to Sections, so
+                        // an `.onMove` on this ForEach of Sections was never
+                        // called; explicit buttons, like the routine editor
+                        // uses, are the reorder that actually works.
                         HStack {
                             Text(exerciseName(for: item))
                                 .accessibilityIdentifier("historyDetail.exercise.\(exerciseIdentifier(for: item))")
                             Spacer()
+                            Button {
+                                moveItem(item, by: -1)
+                            } label: {
+                                Image(systemName: "arrow.up")
+                            }
+                            .disabled(isFirst(item))
+                            .accessibilityLabel("Move \(exerciseName(for: item)) up")
+                            .accessibilityIdentifier("historyDetail.moveExerciseUp.\(item.id.uuidString)")
+                            Button {
+                                moveItem(item, by: 1)
+                            } label: {
+                                Image(systemName: "arrow.down")
+                            }
+                            .disabled(isLast(item))
+                            .accessibilityLabel("Move \(exerciseName(for: item)) down")
+                            .accessibilityIdentifier("historyDetail.moveExerciseDown.\(item.id.uuidString)")
                             Button("Remove", role: .destructive) {
-                                mutate { value in value.items.removeAll { $0.id == item.id }; reindexItems(&value) }
+                                removeCandidate = item
                             }
                             .accessibilityIdentifier("historyDetail.removeExercise.\(exerciseIdentifier(for: item))")
                         }
-                    }
-                }
-                .onMove { source, destination in
-                    mutate { value in
-                        var sorted = value.items.sorted { $0.order < $1.order }
-                        sorted.move(fromOffsets: source, toOffset: destination)
-                        value.items = sorted
-                        reindexItems(&value)
+                        .buttonStyle(.borderless)
                     }
                 }
             }
@@ -113,9 +135,26 @@ struct HistorySessionDetailView: View {
                 TextField("Notes", text: $notesDraft, axis: .vertical)
                 .accessibilityIdentifier("historyDetail.notes")
                 Button("Save notes") {
-                    mutate { $0.notes = notesDraft.isEmpty ? nil : notesDraft }
+                    mutate { $0.notes = draftNotes }
                 }
+                // Nothing to save until the text differs from what is
+                // stored: an unchanged save is not an edit (provenance
+                // honesty, §6).
+                .disabled(draftNotes == session.notes)
                 .accessibilityIdentifier("historyDetail.saveNotes")
+            }
+            Section {
+                Button("Delete Workout", role: .destructive) {
+                    deleteError = nil
+                    confirmingDelete = true
+                }
+                .accessibilityIdentifier("historyDetail.deleteSession")
+            } footer: {
+                if let deleteError {
+                    Text("Couldn’t delete this workout. It’s still in your history. \(deleteError)")
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("historyDetail.deleteError")
+                }
             }
         }
         .navigationTitle(session.routineName ?? "Workout")
@@ -123,21 +162,88 @@ struct HistorySessionDetailView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Add exercise", systemImage: "plus") { pickerPresented = true }
                     .accessibilityIdentifier("historyDetail.addExercise")
+                // Edit mode reorders sets within an exercise (their rows'
+                // `.onMove`); exercises move with their header buttons.
                 EditButton()
-                    .accessibilityIdentifier("historyDetail.reorderExercises")
+                    .accessibilityIdentifier("historyDetail.reorderSets")
             }
         }
         .sheet(isPresented: $pickerPresented) {
-            ExercisePicker(exercises: viewModel.historyExercises.filter { $0.archivedAt == nil }) { exercise in
+            ExercisePicker(exercises: viewModel.historyExercises.filter { $0.archivedAt == nil && !$0.needsNaming }) { exercise in
                 mutate { value in
                     value.items.append(SessionItemData(exerciseID: exercise.id, order: value.items.count))
                 }
                 pickerPresented = false
             }
         }
+        .confirmationDialog(
+            "Remove \(removeCandidate.map(exerciseName(for:)) ?? "exercise")?",
+            isPresented: Binding(get: { removeCandidate != nil }, set: { if !$0 { removeCandidate = nil } }),
+            titleVisibility: .visible,
+            presenting: removeCandidate
+        ) { item in
+            Button("Remove Exercise", role: .destructive) {
+                mutate { value in value.items.removeAll { $0.id == item.id }; reindexItems(&value) }
+                removeCandidate = nil
+            }
+            .accessibilityIdentifier("historyDetail.confirmRemoveExercise")
+        } message: { item in
+            Text(removalMessage(for: item))
+        }
+        .confirmationDialog(
+            "Delete this workout?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Workout", role: .destructive) {
+                do {
+                    try viewModel.deleteHistorySession(session)
+                    dismiss()
+                } catch {
+                    deleteError = error.localizedDescription
+                }
+            }
+            .accessibilityIdentifier("historyDetail.confirmDeleteSession")
+        } message: {
+            Text(HistorySessionDeletion.confirmationMessage(for: session))
+        }
         .alert("Couldn’t save edit", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
+    }
+
+    /// The notes field as it would be stored: empty text clears the note.
+    private var draftNotes: String? {
+        notesDraft.isEmpty ? nil : notesDraft
+    }
+
+    private func removalMessage(for item: SessionItemData) -> String {
+        switch item.sets.count {
+        case 0: "It has no sets logged in this workout."
+        case 1: "Its 1 set is removed from this workout."
+        default: "Its \(item.sets.count) sets are removed from this workout."
+        }
+    }
+
+    private func isFirst(_ item: SessionItemData) -> Bool {
+        session.items.min { $0.order < $1.order }?.id == item.id
+    }
+
+    private func isLast(_ item: SessionItemData) -> Bool {
+        session.items.max { $0.order < $1.order }?.id == item.id
+    }
+
+    /// Swaps `item` with its neighbour `offset` (±1) places away, then
+    /// renumbers. The end buttons are disabled, so a move is never a no-op.
+    private func moveItem(_ item: SessionItemData, by offset: Int) {
+        mutate { value in
+            var sorted = value.items.sorted { $0.order < $1.order }
+            guard let source = sorted.firstIndex(where: { $0.id == item.id }),
+                  sorted.indices.contains(source + offset) else { return }
+            sorted.swapAt(source, source + offset)
+            value.items = sorted
+            reindexItems(&value)
+        }
     }
 
     private func exerciseName(for item: SessionItemData) -> String {
@@ -157,6 +263,11 @@ struct HistorySessionDetailView: View {
     private func commitMutation(_ change: (inout SessionData) -> Void) throws {
         var updated = session
         change(&updated)
+        // A save that changes nothing is not an edit: it must not bump the
+        // revision or mark a sensor-true session as edited (§6 provenance
+        // honesty). Checked before the DEBUG failure seam, so an untouched
+        // save never consumes the one injected failure.
+        guard updated != session else { return }
         #if DEBUG
         if failNextSaveForUITest {
             failNextSaveForUITest = false
@@ -279,58 +390,139 @@ private struct HistorySetEditor: View {
     }
 }
 
+/// The confirmation copy for deleting a logged session, shared by the
+/// History row's swipe action and the detail screen's button so both say
+/// the same thing about what happens to the Apple Health copy.
+enum HistorySessionDeletion {
+    static func confirmationMessage(for session: SessionData) -> String {
+        let burly = "This removes the workout and all its sets from Burly's history and stats. This can't be undone."
+        guard session.healthKitWorkoutID != nil else { return burly }
+        return burly + " Burly will also ask Apple Health to delete its copy. If it can't, you can delete it in the Health app."
+    }
+}
+
+extension ExerciseData {
+    /// The catalog browser's search rule (name or muscle tag), for the
+    /// History pickers that list the same ~100-exercise catalog.
+    func matchesExerciseSearch(_ rawQuery: String) -> Bool {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        return name.localizedCaseInsensitiveContains(query)
+            || muscleGroups.contains { $0.displayName.localizedCaseInsensitiveContains(query) }
+    }
+}
+
 private struct ExercisePicker: View {
     @Environment(\.dismiss) private var dismiss
     let exercises: [ExerciseData]
     let select: (ExerciseData) -> Void
+    @State private var searchText = ""
+
     var body: some View {
         NavigationStack {
-            List(exercises) { exercise in
+            List(exercises.filter { $0.matchesExerciseSearch(searchText) }) { exercise in
                 Button(exercise.name) { select(exercise); dismiss() }
                     .accessibilityIdentifier("historyDetail.exercisePicker.\(exercise.id.uuidString)")
             }
             .navigationTitle("Add exercise")
+            .searchable(text: $searchText, prompt: "Search exercises")
         }
     }
 }
 
 @MainActor
 struct NamingQueueView: View {
+    @Environment(\.dismiss) private var dismiss
     let viewModel: PhoneHomeViewModel
     let placeholder: ExerciseData
     @State private var name: String
+    /// Collected with the name: the watch creates placeholders untagged,
+    /// and an untagged exercise counts as unattributed in the muscle split.
+    @State private var muscleGroups: Set<MuscleGroup>
+    @State private var searchText = ""
+    @State private var mergeCandidate: ExerciseData?
     @State private var errorMessage: String?
 
     init(viewModel: PhoneHomeViewModel, placeholder: ExerciseData) {
         self.viewModel = viewModel
         self.placeholder = placeholder
         _name = State(initialValue: placeholder.name)
+        _muscleGroups = State(initialValue: Set(placeholder.muscleGroups))
     }
 
     var body: some View {
         Form {
             Section("Name this exercise") {
                 TextField("Exercise name", text: $name).accessibilityIdentifier("namingQueue.nameField")
-                Button("Save name") {
-                    do { try viewModel.namePlaceholder(placeholder, as: name) }
-                    catch { errorMessage = String(describing: error) }
-                }
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("namingQueue.saveName")
             }
-            Section("Or merge into") {
-                ForEach(viewModel.historyExercises.filter { $0.id != placeholder.id && $0.archivedAt == nil }) { exercise in
-                    Button(exercise.name) {
-                        do { try viewModel.mergePlaceholder(placeholder, into: exercise) }
-                        catch { errorMessage = String(describing: error) }
-                    }
-                    .accessibilityIdentifier("namingQueue.merge.\(exercise.id.uuidString)")
+            MuscleGroupTagPicker(selection: $muscleGroups, identifierPrefix: "namingQueue.muscleTag")
+            Section("Or merge into an existing exercise") {
+                // A filter field in the section rather than `.searchable`:
+                // an active search controller hides this screen's toolbar,
+                // and with it Save.
+                TextField("Search exercises", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .accessibilityIdentifier("namingQueue.mergeSearch")
+                ForEach(mergeTargets) { exercise in
+                    Button(exercise.name) { mergeCandidate = exercise }
+                        .accessibilityIdentifier("namingQueue.merge.\(exercise.id.uuidString)")
                 }
             }
         }
         .navigationTitle("Name exercise")
+        .toolbar {
+            // In the bar rather than under the twelve tags, so it stays in
+            // reach with the keyboard up. Closes on success, so the banner
+            // can offer the next placeholder (its link is keyed by
+            // placeholder id, so the next one opens with fresh state).
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    do {
+                        try viewModel.namePlaceholder(placeholder, as: name, muscleGroups: muscleGroups.inTaxonomyOrder)
+                        dismiss()
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || muscleGroups.isEmpty)
+                .accessibilityIdentifier("namingQueue.saveName")
+            }
+        }
+        .confirmationDialog(
+            "Merge into \(mergeCandidate?.name ?? "exercise")?",
+            isPresented: Binding(get: { mergeCandidate != nil }, set: { if !$0 { mergeCandidate = nil } }),
+            titleVisibility: .visible,
+            presenting: mergeCandidate
+        ) { destination in
+            Button("Merge") {
+                do {
+                    try viewModel.mergePlaceholder(placeholder, into: destination)
+                    mergeCandidate = nil
+                    dismiss()
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+            }
+            .accessibilityIdentifier("namingQueue.confirmMerge")
+        } message: { destination in
+            Text("Every set logged as “\(placeholder.name)” moves to \(destination.name). This can't be undone.")
+        }
         .alert("Couldn’t update exercise", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
+    }
+
+    /// Real, current exercises only: never this placeholder, an archived
+    /// exercise, or another unnamed placeholder (merging into one would
+    /// just move the problem).
+    private var mergeTargets: [ExerciseData] {
+        viewModel.historyExercises.filter { exercise in
+            exercise.id != placeholder.id
+                && exercise.archivedAt == nil
+                && !exercise.needsNaming
+                && exercise.matchesExerciseSearch(searchText)
+        }
     }
 }

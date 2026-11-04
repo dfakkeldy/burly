@@ -637,8 +637,11 @@ final class FaultInjectingStore: BurlyStore {
     /// §6 placeholder resolution is phone-side; the watch never calls these.
     /// They forward untouched, with no `Fault` case, because no watch UI test
     /// has a recovery path to exercise here -- same as `archiveExercise`.
-    func namePlaceholderExercise(id: UUID, name: String) throws {
-        try wrapped.namePlaceholderExercise(id: id, name: name)
+    func namePlaceholderExercise(id: UUID, name: String, muscleGroups: [MuscleGroup]) throws {
+        try wrapped.namePlaceholderExercise(id: id, name: name, muscleGroups: muscleGroups)
+    }
+    func updateExerciseMuscleGroups(id: UUID, muscleGroups: [MuscleGroup]) throws {
+        try wrapped.updateExerciseMuscleGroups(id: id, muscleGroups: muscleGroups)
     }
     func mergePlaceholderExercise(id placeholderID: UUID, into exerciseID: UUID, at date: Date) throws {
         try wrapped.mergePlaceholderExercise(id: placeholderID, into: exerciseID, at: date)
@@ -673,10 +676,16 @@ final class FaultInjectingStore: BurlyStore {
     func sessions() throws -> [SessionData] { try wrapped.sessions() }
     func sessions(state: SessionState) throws -> [SessionData] { try wrapped.sessions(state: state) }
     func loggedSessionCount() throws -> Int { try wrapped.loggedSessionCount() }
+    func sessionWasDeleted(id: UUID) throws -> Bool { try wrapped.sessionWasDeleted(id: id) }
     @discardableResult
     func deleteSession(id: UUID) throws -> UUID? {
         try maybeFail(.deleteSession)
         return try wrapped.deleteSession(id: id)
+    }
+    /// The phone's history delete; the watch never calls it.
+    @discardableResult
+    func deleteLoggedSession(id: UUID) throws -> UUID? {
+        try wrapped.deleteLoggedSession(id: id)
     }
 
     // MARK: - Active session
