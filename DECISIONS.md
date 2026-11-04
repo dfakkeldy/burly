@@ -1,5 +1,48 @@
 <!-- Newest entry first. Dates are local (ADT/AST), matching the commit that adds them. -->
 
+## 2026-11-03 — The phone deletes history; a tombstone keeps it deleted; Health cleanup is best effort and says so
+
+Spec §1/§6 deletion is now wired on the phone. The confirmation comes from a
+History row's swipe action or the detail screen's Delete Workout button.
+`BurlyStore.deleteLoggedSession(id:)` then deletes the session with its items
+and sets and records a `SessionTombstone` in the same save.
+`applyReplicatedSession` treats a tombstoned id with nothing stored as
+settled. It writes nothing, not even the placeholders riding with it, and
+returns, so the sync runtime acks the re-delivery and the watch prunes its
+copy. No machine or coordinator logic changed.
+
+- **Tombstones are never pruned.** The phone forgets acks after 30 days, but
+  a watch offline longer still re-sends. A tombstone is one UUID and a date
+  per user delete.
+- **`deleteSession` stays the raw cascade** for the watch's Discard paths.
+  **A Hevy re-import skips tombstoned ids** and counts them as "Deleted in
+  Burly"; `createSession` itself ignores tombstones.
+- **`SessionTombstone` is a V2 model** (see the schema entry of the same
+  date).
+- **Health is second and best effort.** Only for a session with a linked
+  workout, the phone asks HealthKit to delete workouts whose external UUID
+  is the session id. It requests permission at that moment, only while
+  undetermined, and only to share workouts. Every call except the prompt is
+  bounded at 10 s. Anything short of a confirmed delete shows a per-workout
+  row at the top of History saying the Health copy may remain and how to
+  delete it in the Health app. Whether the iPhone app can delete a workout
+  the watch app saved is unverified on a device. If the phone can't, the
+  real fix is a phone→watch delete signal, which is a §5 wire change and
+  needs its own entry.
+- **Muscle tags:** `namePlaceholderExercise(id:name:muscleGroups:)` names
+  and tags in one save, and needs at least one tag.
+  `updateExerciseMuscleGroups(id:muscleGroups:)` retags custom and
+  Hevy-imported exercises from the catalog. Curated tags stay read-only in
+  the UI; the store does not police origin.
+- **Session editor:** exercises reorder with explicit up and down buttons,
+  because a List never gives a ForEach of Sections drag handles. Edit mode
+  reorders sets only. A save that changes nothing is dropped, so it neither
+  bumps the revision nor marks the row edited. Removing an exercise asks
+  first.
+
+This supersedes the 2026-10-29 HealthKit entry's "delete propagation is not
+wired".
+
 ## 2026-11-03 — Release lane archives unsigned; tag push uploads the checked .ipa with altool
 
 #45. Every release run archived with automatic signing on an empty runner,
@@ -278,9 +321,9 @@ Both app targets carry the HealthKit entitlement and the two purpose strings; th
 watch also declares the `workout-processing` background mode. The phone links no
 HealthKit code yet. `HealthKitWorkoutStore.deleteWorkouts(linkedTo:)` is the §4
 delete-propagation helper, but the phone has no session-delete action to call it
-from, so delete propagation is not wired. The phone Settings row now describes
-what the watch does; it still reads no authorization status, for the reason in
-the HealthKit Settings entry below.
+from, so delete propagation is not wired. (Superseded by 2026-11-03.)
+The phone Settings row now describes what the watch does; it still reads no
+authorization status, for the reason in the HealthKit Settings entry below.
 
 ## 2026-10-29 — Sync is wired into both apps; the snapshot carries the unit and rest default
 
