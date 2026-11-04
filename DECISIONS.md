@@ -1,5 +1,39 @@
 <!-- Newest entry first. Dates are local (ADT/AST), matching the commit that adds them. -->
 
+## 2026-11-03 — Watch session: no back exit, recents-first picker, §4 prompts on the logging screen
+
+#54. The logging screen, the swap/add picker, and the §4 prompts.
+
+- **The logging screen hides the system back button.** A stray tap or
+  edge swipe used to pop a running workout, which dropped the view model
+  and stopped the tick and the rest haptics. The ways out are the
+  actions menu (End workout, Discard) and the summary's Done.
+- **The swap/add picker lists recents first.** The order is this
+  session's exercises, then digest recents newest first (8 at most
+  between them), then curated, then customs and imports, each group by
+  name. Unnamed `needsNaming` placeholders are left out, and a swap
+  leaves out the exercise it would replace. This supersedes the "flat
+  list, sectioning deferred" note that lived only in the
+  `ExercisePickerView` comment.
+- **The §4 stale guard also runs on the logging screen**, whenever the
+  scene becomes active, but not when the screen appears. An answer
+  (opening the screen, or Keep going) counts as activity, so the guard
+  asks again only after another quiet hour, not on every wrist raise.
+  End workout ends the session at its last set, as the home gate does.
+- **After another app's workout takes over, Health gets nothing from
+  Burly for that session.** A live or duration-only workout would
+  overlap the other app's. The lifter sees "Another workout is running"
+  with End workout, Keep logging or Discard, and the summary says the
+  workout was not saved to Health. The mark is stored in UserDefaults
+  and lasts until the store has saved the session as logged, so a crash
+  or a relaunch in between cannot bring back the overlap.
+- **The logging page is compact.** The name takes one line, the set
+  counter and ghost row share a subtitle line, and weight and reps sit
+  side by side, with 44 pt targets kept. This was measured on the 42 mm
+  and 46 mm simulators. While the weight is armed, its -/+ take the
+  reps control's place, so Log set never moves; a rest scrolls the
+  weight and reps row to the top of the screen.
+
 ## 2026-11-03 — The phone deletes history; a tombstone keeps it deleted; Health cleanup is best effort and says so
 
 Spec §1/§6 deletion is now wired on the phone. The confirmation comes from a
@@ -336,14 +370,14 @@ recorder decides whether a session gets a workout and which one.
   `WorkoutController.adopt`), or ends and discards it when the store has none
   (row 3). A finished session with no live workout, Health allowed, gets a
   duration-only workout from the non-live builder with the same metadata, and the
-  summary says it has no sensor data (row 2). Resume never starts a new live
-  workout. An unreadable store leaves HealthKit alone; an orphan is discarded when
-  the next session starts.
+  summary says it has no sensor data (row 2). (Superseded by 2026-11-03.) Resume
+  never starts a new live workout. An unreadable store leaves HealthKit alone; an
+  orphan is discarded when the next session starts.
 - **Stale guard.** The resume gate checks the active session's last logged set
-  (or its start) on every load. Past one hour it asks "Still working out?" and
-  offers "End workout", which opens the usual Finish/Keep going/Discard summary
-  with the session ending at that last set (`SessionEngine.finish(endingAt:)`).
-  Keep going clears that end time.
+  (or its start) on every load. (Superseded by 2026-11-03.) Past one hour it
+  asks "Still working out?" and offers "End workout", which opens the usual
+  Finish/Keep going/Discard summary with the session ending at that last set
+  (`SessionEngine.finish(endingAt:)`). Keep going clears that end time.
 - **Seeded UI-test scenarios run without Health** unless the test sets
   `BURLY_WATCH_UI_TEST_HEALTH=live`, because the system authorization sheet would
   cover the screens the existing suites drive and `simctl privacy` cannot

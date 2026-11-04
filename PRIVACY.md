@@ -33,8 +33,9 @@ Burly asks for Health access on Apple Watch the first time you start a
 workout, and on iPhone only when you delete a workout Burly saved to Health
 (see below). If you allow it:
 
-- Burly **writes** each finished workout to Health, so other apps you allow
-  can see it.
+- Burly **writes** a finished workout to Health, so other apps you allow
+  can see it. If another app's workout takes over Burly's live workout,
+  Burly writes none for that session.
 - Burly **reads** heart rate and active energy from your watch's sensors
   during a workout, to record them with that workout.
 
