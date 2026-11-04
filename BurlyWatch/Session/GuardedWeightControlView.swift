@@ -44,9 +44,13 @@ struct GuardedWeightControlView: View {
     /// stand in for the reps control beside this one while armed (see
     /// `ExercisePageView`).
     ///
-    /// No numeric content transition on the number: no weight change runs
-    /// in an animation, so it never animated, and the 42 mm armed weight
-    /// truncated ("10…") with it rather than shrinking to fit.
+    /// On 42 mm a locked 100.0 already draws at a bit under 0.6 of its
+    /// size, so the scale may go to 0.4: a six-character weight (1102.5 lb,
+    /// 1000.0 lb) needs about 0.46 there. At 0.6, the old floor, the open
+    /// lock's extra width was enough to truncate an armed 100.0 to "10…",
+    /// and at 0.5 a 1102.5 lb still truncated. No numeric content
+    /// transition: no weight change runs in an animation, so it never
+    /// animated.
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: isArmed ? "lock.open.fill" : "lock.fill")
@@ -58,7 +62,7 @@ struct GuardedWeightControlView: View {
                 Text(numberText)
                     .font(.system(.title2, design: .rounded, weight: .semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.5)
+                    .minimumScaleFactor(0.4)
                 Text(settings.displayUnit.symbol)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
