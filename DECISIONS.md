@@ -196,6 +196,39 @@ had already sent snapshots, the watch ignores the restarted snapshot
 versions until they pass the last one it applied. The wire protocol still
 has no epoch.
 
+## 2026-11-03 — The digest is bounded and carries routine dates; no schema bump
+
+#51. The §5 digest rides `updateApplicationContext`, which refuses payloads
+over roughly 64 KB. A multi-year Hevy import (hundreds of non-archived
+exercises) made every publish fail, which silently stopped acks and pruning.
+
+The generator now sends entries only for the exercises the watch can show
+(`WatchWorkingSet.exercises`: the non-archived catalog plus archived
+exercises a live routine uses, not the snapshot's full catalog) and trims
+them to a 48 KB envelope. It keeps, in order: exercises whose latest
+session the digest acknowledges, routine exercises, then the most recently
+performed. If an acknowledged session's numbers cannot fit, that ack is
+held back rather than letting the watch prune without them. This is a
+deliberate layering exception: the generator removes an ID from the ack
+set that `PhoneSyncMachine` owns, for that one digest only, and leaves the
+machine's state untouched. Acks are otherwise complete; the 30-day
+retention bounds them. "Absence is an assertion" now reads "absence means
+no update". The watch never deletes ghost rows.
+
+The digest also carries each stored routine's last-performed date, archived
+routines included, as an additive `routineLastPerformed` key within schema
+2. An absent key (an older phone) leaves the watch's dates alone. Bumping
+the schema would have made every older watch hold every digest. The watch
+keeps the dates in its sync journal, in the same commit as the prune, and
+folds each pruned session's start into them.
+
+Digest generation reads only each exercise's latest session
+(`latestLoggedSetSlices(forExercises:)`), with one tie rule shared with
+the generator. This replaces the full-history read from #24. The
+2026-10-29 Hevy note that "the phone app does not own a
+`PhoneSyncCoordinator` yet" is out of date: `PhoneAppModel` owns a
+`PhoneSyncHost`.
+
 ## 2026-11-03 — Schema V1 is frozen at TestFlight 0.9.1; V2 adds SessionTombstone
 
 TestFlight 0.9.1 (burly-rc1, 37ea85e) shipped today, so every tester's phone
@@ -409,7 +442,8 @@ cancelling lands on History.
 The phone app does not own a `PhoneSyncCoordinator` yet, so an import, like every
 other phone-side history edit today, refreshes local state only.
 `PhoneHomeViewModel.refreshAfterHevyImport` names where `historyDidChange()` and
-`catalogDidChange()` belong once that wiring exists.
+`catalogDidChange()` belong once that wiring exists. (Superseded by 2026-11-03:
+`PhoneAppModel` owns a `PhoneSyncHost`, and that refresh now calls both.)
 
 ## 2026-10-29 — Phone Settings ships the display unit phone-only and the rest default read-only
 
