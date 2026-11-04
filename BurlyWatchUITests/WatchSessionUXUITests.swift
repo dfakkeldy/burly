@@ -236,6 +236,41 @@ final class WatchSessionUXUITests: XCTestCase {
         }
     }
 
+    /// An armed weight that gains a digit (997.5 -> 1000.0 lb) shrinks again
+    /// to fit rather than truncating. The screenshots are the check, as
+    /// above.
+    func testArmedWeightShrinksToFitWhenItGetsLonger() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.squatWeightKey] = "997.5 lb"
+        app.launchEnvironment[Self.armIdleKey] = "30"
+        app.launch()
+
+        let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
+        XCTAssertTrue(legDayRow.waitForExistence(timeout: 15))
+        legDayRow.tap()
+        let weightControl = anyElement(app, identifier: "weightControl")
+        XCTAssertTrue(
+            waitFor(timeout: 10) { (weightControl.value as? String) == "997.5 lb, locked" },
+            "Expected 997.5 lb, locked; got \(String(describing: weightControl.value))"
+        )
+        attachScreenshot(from: app, name: "BurlyWatch-weight-997_5lb-locked")
+
+        weightControl.press(forDuration: 0.6)
+        XCTAssertTrue(
+            waitFor { (weightControl.value as? String)?.contains("armed") == true },
+            "Expected the long press to arm the weight control"
+        )
+        let increase = app.buttons["Increase weight"]
+        XCTAssertTrue(increase.waitForExistence(timeout: 5))
+        increase.tap()
+        XCTAssertTrue(
+            waitFor { (weightControl.value as? String) == "1000.0 lb, armed" },
+            "Expected + to step 997.5 lb to 1000.0 lb; got \(String(describing: weightControl.value))"
+        )
+        attachScreenshot(from: app, name: "BurlyWatch-weight-1000_0lb-armed")
+    }
+
     /// §3: once a set is logged the countdown comes into view, and the
     /// controls stay clear of the clock and the ellipsis button: scrolling
     /// the banner's bottom into view used to put reps + under the ellipsis,
