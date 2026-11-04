@@ -18,6 +18,12 @@ public final class WorkoutController {
     /// `finish` or `discard` so the caller can clean it up.
     public private(set) var lifecycle: WorkoutLifecycle = .idle
 
+    /// Called when HealthKit reports that another app's workout took over
+    /// the live one (§4 `anotherWorkoutSessionStarted`), as it arrives, so
+    /// the owner can record it even if the app is suspended before any UI
+    /// looks at `lifecycle`.
+    public var onAnotherWorkoutStarted: (@MainActor () -> Void)?
+
     private enum CollectionState {
         case notStarted
         case starting
@@ -332,6 +338,9 @@ public final class WorkoutController {
             }
             resumeCollectionWaiter(throwing: mappedError)
             resumeStoppedWaiter(throwing: mappedError)
+            if mappedError == .anotherWorkoutSessionStarted {
+                onAnotherWorkoutStarted?()
+            }
         case .notStarted, .prepared, .running, .paused, .ended:
             break
         }

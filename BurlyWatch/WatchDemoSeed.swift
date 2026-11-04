@@ -35,7 +35,8 @@ enum WatchDemoSeed {
 
     /// Set to `live` to keep the real HealthKit path (spec §4) in a seeded
     /// scenario, or `noLiveSensors` for real HealthKit whose live workout
-    /// never starts (recovery matrix row 2: the duration-only workout).
+    /// never starts (recovery matrix row 2: the duration-only workout), or
+    /// `slowFinish` for a fake Health whose Finish takes several seconds.
     /// Seeded scenarios otherwise run without Health, so the system
     /// authorization sheet never covers the screens the existing suites
     /// drive (BurlyWatchApp.swift).
@@ -51,6 +52,41 @@ enum WatchDemoSeed {
 
     static var wantsNoLiveSensors: Bool {
         ProcessInfo.processInfo.environment[healthEnvironmentKey] == "noLiveSensors"
+    }
+
+    static var wantsSlowHealth: Bool {
+        ProcessInfo.processInfo.environment[healthEnvironmentKey] == "slowFinish"
+    }
+
+    /// Optional, for the routines-based scenarios: Back Squat's first
+    /// seeded set as "<number> kg" or "<number> lb" (for example
+    /// "1102.5 lb"), with the watch showing weights in that unit, so a UI
+    /// test can look at a long weight in either unit. An unreadable value
+    /// is ignored, like an unknown fault name.
+    static let squatWeightEnvironmentKey = "BURLY_WATCH_UI_TEST_SQUAT_WEIGHT"
+
+    static var squatWeightOverride: (weight: Weight, unit: WeightUnit)? {
+        guard let raw = ProcessInfo.processInfo.environment[squatWeightEnvironmentKey] else { return nil }
+        let parts = raw.split(separator: " ")
+        guard parts.count == 2,
+              let unit = WeightUnit(rawValue: String(parts[1])),
+              let weight = unit.parse(String(parts[0]))
+        else { return nil }
+        return (weight, unit)
+    }
+
+    /// Optional: seconds an armed weight stays armed while idle, instead of
+    /// §2's 3. For UI tests that read an armed weight: on the hosted
+    /// simulator one accessibility read can take 2-5 s, so a 3 s arm
+    /// lapsed before the test could see it. A test of the lapse itself
+    /// leaves this unset.
+    static let armIdleEnvironmentKey = "BURLY_WATCH_UI_TEST_ARM_IDLE_SECONDS"
+
+    static var armIdleTimeoutOverride: TimeInterval? {
+        guard let raw = ProcessInfo.processInfo.environment[armIdleEnvironmentKey],
+              let seconds = TimeInterval(raw), seconds > 0
+        else { return nil }
+        return seconds
     }
     /// How many of the faulting method's calls succeed before failures
     /// start (e.g. 1 lets Start's own `saveActiveSession` through so the
@@ -406,7 +442,7 @@ enum WatchDemoSeed {
                     exerciseID: squatID,
                     performedAt: threeDaysAgo,
                     sets: [
-                        SetSnapshot(weight: Weight(kg: 100), reps: 8),
+                        SetSnapshot(weight: squatWeightOverride?.weight ?? Weight(kg: 100), reps: 8),
                         SetSnapshot(weight: Weight(kg: 102.5), reps: 7),
                         SetSnapshot(weight: Weight(kg: 105), reps: 6)
                     ]

@@ -48,6 +48,14 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
             }
         }
     }
+
+    /// watchOS relaunches the app here after it died mid-workout, possibly
+    /// with no scene on screen. Reattach now rather than waiting for the UI
+    /// (spec §4 recovery matrix); `RootView` makes the same call when it
+    /// appears, and whichever comes second does nothing.
+    func handleActiveWorkoutRecovery() {
+        model.reconcileWorkoutOnce()
+    }
 }
 
 /// The watch's one store, its sync host, and the session-level HealthKit
@@ -70,6 +78,7 @@ final class WatchAppModel {
     let storeResult: Result<BurlyStore, Error>
     let sync: WatchSyncHost?
     let workoutRecorder: SessionWorkoutRecorder?
+    private var didReconcileWorkout = false
 
     init() {
         workoutRecorder = Self.makeWorkoutRecorder()
@@ -93,6 +102,27 @@ final class WatchAppModel {
         }
     }
 
+    /// Spec §4 recovery matrix at launch: a workout HealthKit kept running
+    /// is reattached to the store's active session, or discarded when the
+    /// store has none. An unreadable store leaves HealthKit alone; the
+    /// orphan, if any, is discarded when the next session starts.
+    ///
+    /// Called from both `WatchAppDelegate.handleActiveWorkoutRecovery()`
+    /// (a relaunch after a mid-workout crash, maybe with no UI) and
+    /// `RootView`'s task; it runs once per launch, for whichever is first.
+    /// A store read that fails is not counted, so the other caller tries.
+    func reconcileWorkoutOnce() {
+        guard !didReconcileWorkout, let workoutRecorder, case .success(let store) = storeResult else { return }
+        let active: ActiveSession?
+        do {
+            active = try store.resumableActiveSession()
+        } catch {
+            return
+        }
+        didReconcileWorkout = true
+        workoutRecorder.reconcile(activeSessionID: active?.id)
+    }
+
     /// A store that opened but whose sync state could not be read still
     /// runs the app: workouts log locally and stay in the outbox until a
     /// later launch can send them. WCSession is then never activated, so the
@@ -113,6 +143,13 @@ final class WatchAppModel {
     /// existing suites drive.
     private static func makeWorkoutRecorder() -> SessionWorkoutRecorder? {
         #if DEBUG
+        if WatchDemoSeed.wantsSlowHealth {
+            return SessionWorkoutRecorder(
+                store: SlowHealthStore(),
+                controller: WorkoutController(factory: NoLiveWorkoutFactory()),
+                marks: .none
+            )
+        }
         if WatchDemoSeed.isScenarioRequested, !WatchDemoSeed.wantsLiveHealth {
             return nil
         }
@@ -126,7 +163,8 @@ final class WatchAppModel {
         #endif
         return SessionWorkoutRecorder(
             store: health,
-            controller: WorkoutController(factory: factory)
+            controller: WorkoutController(factory: factory),
+            marks: .userDefaults()
         )
     }
 }
@@ -142,7 +180,7 @@ private struct RootView: View {
                 .environment(\.watchSettings, settings)
                 .environment(\.sessionLogged, { [sync = model.sync] id in sync?.sessionLogged(id: id) })
                 .environment(\.workoutRecorder, model.workoutRecorder)
-                .task { reconcileWorkout(with: store) }
+                .task { model.reconcileWorkoutOnce() }
         case .failure(let error):
             StoreUnavailableView(message: String(describing: error))
         }
@@ -151,23 +189,19 @@ private struct RootView: View {
     /// Read in `body`, so a newly applied snapshot re-renders with the
     /// phone's new unit and rest default.
     private var settings: WatchSyncedSettings {
-        guard let sync = model.sync else { return WatchSyncedSettings() }
-        return WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
-    }
-
-    /// Spec §4 recovery matrix at launch: a workout HealthKit kept running
-    /// is reattached to the store's active session, or discarded when the
-    /// store has none. An unreadable store leaves HealthKit alone; the
-    /// orphan, if any, is discarded when the next session starts.
-    private func reconcileWorkout(with store: BurlyStore) {
-        guard let workoutRecorder = model.workoutRecorder else { return }
-        let active: ActiveSession?
-        do {
-            active = try store.resumableActiveSession()
-        } catch {
-            return
+        var result = WatchSyncedSettings()
+        if let sync = model.sync {
+            result = WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
         }
-        workoutRecorder.reconcile(activeSessionID: active?.id)
+        #if DEBUG
+        if let override = WatchDemoSeed.squatWeightOverride {
+            result.displayUnit = override.unit
+        }
+        if let idle = WatchDemoSeed.armIdleTimeoutOverride {
+            result.weightIdleTimeout = idle
+        }
+        #endif
+        return result
     }
 }
 
@@ -179,5 +213,33 @@ private final class NoLiveWorkoutFactory: WorkoutSessionCreating {
     func makeLiveWorkout(configuration _: WorkoutConfiguration) throws -> LiveWorkoutResources {
         throw WorkoutHealthError.operationFailed("UI test: no live sensors")
     }
+}
+
+/// `BURLY_WATCH_UI_TEST_HEALTH=slowFinish`: Health access granted, no live
+/// workout, and a duration-only save that takes several seconds, so a UI
+/// test can look at a Finish while it waits on HealthKit. No real
+/// HealthKit and no authorization sheet.
+private final class SlowHealthStore: WorkoutHealthStore {
+    /// Each call, just under the recorder's 10 s bound: about 18 s per
+    /// Finish, so a slow test runner still reads the waiting screen.
+    private static let delay: Duration = .seconds(9)
+
+    var authorizationStatus: WorkoutAuthorizationStatus { .authorized }
+
+    func requestAuthorization() async throws {}
+
+    func recoverLiveWorkout() async throws -> LiveWorkoutResources? { nil }
+
+    func workoutCount(linkedTo _: UUID) async throws -> Int {
+        try await Task.sleep(for: Self.delay)
+        return 0
+    }
+
+    func saveDurationOnlyWorkout(start _: Date, end _: Date, metadata _: WorkoutMetadata) async throws -> UUID? {
+        try await Task.sleep(for: Self.delay)
+        return UUID()
+    }
+
+    func deleteWorkouts(linkedTo _: UUID) async throws -> Int { 0 }
 }
 #endif

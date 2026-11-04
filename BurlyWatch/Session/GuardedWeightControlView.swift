@@ -9,9 +9,9 @@
 // guard).
 //
 // Weight is displayed in the phone's unit (sync snapshot schema 2, via the
-// `watchSettings` environment) through `WeightUnit.formatted`, one decimal
-// place, display only -- the engine's `Weight` stays canonical kg and is
-// never re-parsed from this text.
+// `watchSettings` environment) through `WeightUnit.formattedNumber` and
+// its symbol, one decimal place, display only -- the engine's `Weight`
+// stays canonical kg and is never re-parsed from this text.
 //
 // `isUnset` (m2-03 review finding 3): true when the §2 prefill ladder came
 // back `.empty` and the lifter has not armed-and-adjusted a real value yet.
@@ -32,46 +32,45 @@ struct GuardedWeightControlView: View {
 
     @State private var crownRotation: Double = 0
     @Environment(\.watchSettings) private var settings
+    /// One width for both lock glyphs: `lock.open.fill` is about 5 pt wider
+    /// than `lock.fill` at this size, and arming used to take those points
+    /// from the number. Leading-aligned, so the lock's body stays put and
+    /// only the shackle opens.
+    @ScaledMetric(relativeTo: .caption) private var lockWidth: CGFloat = 15
 
+    /// The number big, its unit small underneath, so the control fits
+    /// beside reps on a 42 mm screen; the number shrinks before it would
+    /// truncate. The ±micro-buttons are `GuardedWeightAdjustButtons`, which
+    /// stand in for the reps control beside this one while armed (see
+    /// `ExercisePageView`).
+    ///
+    /// No numeric content transition on the number: no weight change runs
+    /// in an animation, so it never animated, and the 42 mm armed weight
+    /// truncated ("10…") with it rather than shrinking to fit.
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: isArmed ? "lock.open.fill" : "lock.fill")
-                    .foregroundStyle(isArmed ? Color.accentColor : .secondary)
-                    .accessibilityHidden(true)
-                Text(weightText)
+        HStack(spacing: 4) {
+            Image(systemName: isArmed ? "lock.open.fill" : "lock.fill")
+                .font(.caption)
+                .foregroundStyle(isArmed ? Color.accentColor : .secondary)
+                .frame(width: lockWidth, alignment: .leading)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(numberText)
                     .font(.system(.title2, design: .rounded, weight: .semibold))
-                    .foregroundStyle(isArmed ? Color.accentColor : .primary)
-                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                Text(settings.displayUnit.symbol)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
-
-            if isArmed {
-                HStack(spacing: 20) {
-                    Button { onAdjustSteps(-1) } label: {
-                        Image(systemName: "minus")
-                            // m2-03 review finding 11: explicit minimum hit
-                            // region, visual glyph size unchanged.
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("Decrease weight")
-                    Button { onAdjustSteps(1) } label: {
-                        Image(systemName: "plus")
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("Increase weight")
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-            }
+            .foregroundStyle(isArmed ? Color.accentColor : .primary)
         }
-        .padding(.vertical, 4)
         // m2-03 review finding 11: the long-press-to-arm gesture's parent
         // only had 4 points of vertical padding above; an explicit minimum
         // frame gives the arm gesture a real 44×44 hit region without
-        // changing how the control looks.
-        .frame(minHeight: 44)
+        // changing how the control looks. It also takes the whole column
+        // beside reps, so the long press lands anywhere in it.
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .contentShape(Rectangle())
         // §2: "Arm: long-press (≈0.5 s) the weight value."
         .onLongPressGesture(minimumDuration: 0.5) {
@@ -119,11 +118,11 @@ struct GuardedWeightControlView: View {
     /// 3) -- once armed, the control is showing a real, editable number
     /// (0 lb by default, same as any other weight), so the dash only
     /// applies to the locked, never-yet-armed state.
-    private var weightText: String {
+    private var numberText: String {
         guard isUnset, !isArmed else {
-            return settings.displayUnit.formatted(weight)
+            return settings.displayUnit.formattedNumber(weight)
         }
-        return "– \(settings.displayUnit.symbol)"
+        return "–"
     }
 
     private var accessibilityValueText: String {
@@ -132,6 +131,44 @@ struct GuardedWeightControlView: View {
             return "\(settings.displayUnit.formatted(weight)), \(lockWord)"
         }
         return "not set, \(lockWord)"
+    }
+}
+
+/// §2 "Armed: ... +/− micro-buttons appear": one step of the configured
+/// increment per tap. Shown only while the weight is armed, in the reps
+/// control's place, in the armed weight's accent colour; the engine
+/// refuses an adjustment while locked anyway. Two 44 pt buttons at the
+/// ends of whatever width they are given (`ExercisePageView` gives them
+/// the reps control's), so − and + sit where reps' − and + were.
+struct GuardedWeightAdjustButtons: View {
+    let onAdjustSteps: (Int) -> Void
+
+    /// Their width with no reps control to match: two 44 pt buttons 28 pt
+    /// apart, about the reps control's own.
+    static let fallbackWidth: CGFloat = 116
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button { onAdjustSteps(-1) } label: {
+                Image(systemName: "minus.circle.fill")
+                    .font(.title3)
+                    // m2-03 review finding 11: explicit minimum hit
+                    // region, visual glyph size unchanged.
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Decrease weight")
+            Spacer(minLength: 28)
+            Button { onAdjustSteps(1) } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Increase weight")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.accentColor)
     }
 }
 

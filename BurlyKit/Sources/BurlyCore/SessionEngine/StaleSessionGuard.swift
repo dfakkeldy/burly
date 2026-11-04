@@ -18,4 +18,13 @@ public enum StaleSessionGuard {
     public static func isStale(_ session: ActiveSession, now: Date) -> Bool {
         now.timeIntervalSince(lastActivity(of: session)) > threshold
     }
+
+    /// The logging screen's form: `answeredAt` is when the lifter last
+    /// answered for this session (opened it, or chose "Keep going"), and
+    /// counts as activity, so a lifter who resumed or kept going is asked
+    /// again only after another full hour with nothing logged.
+    public static func isStale(_ session: ActiveSession, now: Date, answeredAt: Date) -> Bool {
+        let reference = max(lastActivity(of: session), answeredAt)
+        return now.timeIntervalSince(reference) > threshold
+    }
 }

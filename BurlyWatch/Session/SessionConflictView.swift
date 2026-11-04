@@ -13,8 +13,24 @@
 // fresh `Start` can proceed: Finish records the existing session as-is
 // (spec §4's "another workout is running" choice), Discard drops it
 // entirely. Either way, `SessionEntryView.start()` runs again afterward.
+//
+// Finish and Discard tell the HealthKit recorder exactly as the logging
+// screen's do (spec §4, `SessionViewModel`'s file doc): Finish saves the
+// session's workout before the store save so its UUID lands in the same
+// write, and Discard ends the live workout without saving it. Before this,
+// a Finish here wrote no workout at all, and the next Start then discarded
+// the one still running.
+//
+// While Finish waits on HealthKit (up to about 20 s), Discard is disabled
+// and the back button hidden: a discard in that window was undone by the
+// store save that followed (it recreates a missing session), and leaving
+// let `onResolved` start a session from a screen no longer on show. If the
+// screen goes anyway, the Finish still saves, and only `onResolved` is
+// skipped; a screen that was only covered calls it when it appears again,
+// rather than coming back stuck on "Saving…".
 import SwiftUI
 import BurlyCore
+import BurlyHealth
 import BurlyPersistence
 
 struct SessionConflictView: View {
@@ -24,9 +40,15 @@ struct SessionConflictView: View {
 
     @Environment(\.watchSettings) private var settings
     @Environment(\.sessionLogged) private var sessionLogged
+    @Environment(\.workoutRecorder) private var workoutRecorder
     @State private var isFinishing = false
     @State private var isShowingDiscardConfirm = false
     @State private var errorMessage: String?
+    /// The finished, workout-linked session once HealthKit has answered, so
+    /// a retry after a failed store save repeats only that save and never
+    /// asks HealthKit for a second workout.
+    @State private var finishedEngine: SessionEngine?
+    @State private var presence = ScreenPresence()
 
     var body: some View {
         ScrollView {
@@ -52,19 +74,41 @@ struct SessionConflictView: View {
                         .accessibilityIdentifier("sessionConflict.error")
                 }
 
-                Button("Finish it", action: finish)
+                // The button reads "Saving…" while Finish waits: it is the
+                // part of this screen still in view after the tap, and the
+                // spinner below it can sit under the bottom edge.
+                Button(isFinishing ? "Saving…" : "Finish it", action: finish)
                     .buttonStyle(.borderedProminent)
                     .disabled(isFinishing)
                     .accessibilityIdentifier("sessionConflict.finishButton")
 
+                if isFinishing {
+                    ProgressView("Saving…")
+                        .font(.caption2)
+                        .accessibilityIdentifier("sessionConflict.saving")
+                }
+
                 Button("Discard it", role: .destructive) {
                     isShowingDiscardConfirm = true
                 }
+                .disabled(isFinishing)
                 .accessibilityIdentifier("sessionConflict.discardButton")
             }
             .padding()
             .frame(maxWidth: .infinity)
         }
+        .navigationBarBackButtonHidden(isFinishing)
+        .onAppear {
+            presence.isOnScreen = true
+            // Covered rather than gone while its Finish saved: carry on
+            // with the Start that Finish cleared the way for, as it would
+            // have on screen.
+            if presence.resolvedWhileHidden {
+                presence.resolvedWhileHidden = false
+                onResolved()
+            }
+        }
+        .onDisappear { presence.isOnScreen = false }
         .confirmationDialog(
             "Discard this workout?",
             isPresented: $isShowingDiscardConfirm,
@@ -78,16 +122,75 @@ struct SessionConflictView: View {
     /// Records the existing session exactly as it stands -- spec §4's
     /// "another workout is running" choice offers finish, not silent
     /// discard, as the non-destructive option.
+    ///
+    /// A session past the §4 stale guard ends at its last activity, the
+    /// same original-timestamps rule the Resume gate applies.
     private func finish() {
         guard !isFinishing else { return }
         isFinishing = true
         errorMessage = nil
+        // A tap means the screen is on show, whatever an earlier
+        // presentation over it reported.
+        presence.isOnScreen = true
+        let done = FinishDependencies(
+            store: store,
+            workoutRecorder: workoutRecorder,
+            sessionLogged: sessionLogged,
+            presence: presence,
+            onResolved: onResolved
+        )
+        if let finishedEngine {
+            persist(finishedEngine, done)
+            return
+        }
+        var engine = settings.engine(for: existing)
         do {
-            var engine = settings.engine(for: existing)
-            _ = try engine.finish()
-            try store.saveActiveSession(engine.session)
-            sessionLogged(engine.session.id)
-            onResolved()
+            if StaleSessionGuard.isStale(existing, now: Date()) {
+                _ = try engine.finish(endingAt: StaleSessionGuard.lastActivity(of: existing))
+            } else {
+                _ = try engine.finish()
+            }
+        } catch {
+            errorMessage = String(describing: error)
+            isFinishing = false
+            return
+        }
+        guard let workoutRecorder else {
+            finishedEngine = engine
+            persist(engine, done)
+            return
+        }
+        let finished = engine
+        Task {
+            let session = finished.session.session
+            let recording = await workoutRecorder.sessionDidFinish(
+                sessionID: session.id,
+                startedAt: session.startedAt,
+                endedAt: session.endedAt ?? Date()
+            )
+            var linked = finished
+            linked.linkHealthKitWorkout(recording.workoutID)
+            finishedEngine = linked
+            persist(linked, done)
+        }
+    }
+
+    /// Saves through what `finish()` captured when it was tapped, not this
+    /// view's environment, which a screen no longer on show reads as its
+    /// defaults.
+    private func persist(_ engine: SessionEngine, _ done: FinishDependencies) {
+        do {
+            try done.store.saveActiveSession(engine.session)
+            done.workoutRecorder?.sessionWasLogged(sessionID: engine.session.id)
+            done.sessionLogged(engine.session.id)
+            guard done.presence.isOnScreen else {
+                // Not on show: `onAppear` resolves if the screen comes
+                // back, and nothing is left saying "Saving…" meanwhile.
+                done.presence.resolvedWhileHidden = true
+                isFinishing = false
+                return
+            }
+            done.onResolved()
         } catch {
             errorMessage = String(describing: error)
             isFinishing = false
@@ -98,9 +201,32 @@ struct SessionConflictView: View {
         errorMessage = nil
         do {
             _ = try store.deleteSession(id: existing.session.id)
+            workoutRecorder?.sessionDidDiscard(sessionID: existing.session.id)
             onResolved()
         } catch {
             errorMessage = String(describing: error)
         }
     }
+}
+
+/// Whether `SessionConflictView` is still the screen on show. A reference,
+/// so a Finish that waited on HealthKit reads the current value rather
+/// than the one its closure captured.
+@MainActor
+private final class ScreenPresence {
+    var isOnScreen = true
+    /// A Finish saved while the screen was hidden, so it skipped
+    /// `onResolved`. A screen that was only covered calls it when it
+    /// appears again; one that is gone never does.
+    var resolvedWhileHidden = false
+}
+
+/// What a Finish needs once HealthKit answers, captured at the tap.
+@MainActor
+private struct FinishDependencies {
+    let store: BurlyStore
+    let workoutRecorder: SessionWorkoutRecorder?
+    let sessionLogged: @MainActor @Sendable (UUID) -> Void
+    let presence: ScreenPresence
+    let onResolved: () -> Void
 }

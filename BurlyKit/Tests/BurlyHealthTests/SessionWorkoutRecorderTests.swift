@@ -154,6 +154,138 @@ struct SessionWorkoutRecorderTests {
         #expect(recording == .retrospective(workoutID: rig.store.savedWorkoutID))
     }
 
+    @Test("another app's workout taking over is reported, and Finish saves no overlapping workout")
+    func takeoverSavesNothing() async {
+        let rig = Rig(status: .authorized)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+        rig.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: UUID()))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(recording.workoutID == nil)
+        #expect(rig.log.calls.contains(.discardWorkout))
+        #expect(!rig.log.calls.contains { if case .finishWorkout = $0 { true } else { false } })
+        #expect(rig.store.durationOnlySaves.isEmpty)
+        #expect(rig.recorder.liveSessionID == nil)
+        // The mark outlives Finish until the store has saved the session.
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+        rig.recorder.sessionWasLogged(sessionID: sessionID)
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+    }
+
+    @Test("a takeover after a live start timed out is still marked, and Finish saves nothing")
+    func takeoverAfterTimedOutStartIsMarked() async {
+        let rig = Rig(status: .authorized, sleep: { _ in await Task.yield() }, beginGate: Gate())
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(rig.recorder.liveSessionID == nil)
+        rig.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(rig.store.durationOnlySaves.isEmpty)
+    }
+
+    @Test("a crash between Finish and the store save leaves the next Finish saving nothing too")
+    func takeoverFinishIsRepeatable() async {
+        let box = MarkBox()
+        let rig = Rig(status: .authorized, marks: box.marks)
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        rig.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        _ = await rig.recorder.sessionDidFinish(sessionID: sessionID, startedAt: startedAt, endedAt: endedAt)
+
+        // No sessionWasLogged: the app died before the store save.
+        let relaunched = Rig(status: .authorized, marks: box.marks)
+        let recording = await relaunched.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(relaunched.store.durationOnlySaves.isEmpty)
+        #expect(box.ids == [sessionID])
+    }
+
+    @Test("a live start refused because another workout started saves no duration-only workout")
+    func startRefusedByAnotherWorkoutSavesNothing() async {
+        let rig = Rig(status: .authorized, factoryFailure: .anotherWorkoutSessionStarted)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(rig.store.durationOnlySaves.isEmpty)
+        rig.recorder.sessionWasLogged(sessionID: sessionID)
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+    }
+
+    @Test("a takeover is remembered across a relaunch, so the resumed session's Finish saves nothing")
+    func takeoverSurvivesRelaunch() async {
+        let box = MarkBox()
+        let before = Rig(status: .authorized, marks: box.marks)
+        await before.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        before.resources.session.stateHandler?(.failed(.anotherWorkoutSessionStarted))
+        #expect(box.ids == [sessionID])
+
+        // The relaunch: a fresh recorder and controller, nothing for
+        // HealthKit to recover, the same marks.
+        let after = Rig(status: .authorized, marks: box.marks)
+        await after.recorder.reconcile(activeSessionID: sessionID).value
+        #expect(after.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await after.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording == .supersededByAnotherWorkout)
+        #expect(after.store.durationOnlySaves.isEmpty)
+        after.recorder.sessionWasLogged(sessionID: sessionID)
+        #expect(box.ids.isEmpty)
+    }
+
+    @Test("discard clears a takeover mark")
+    func discardClearsMark() async {
+        let box = MarkBox()
+        let rig = Rig(status: .authorized, factoryFailure: .anotherWorkoutSessionStarted, marks: box.marks)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        #expect(box.ids == [sessionID])
+        await rig.recorder.sessionDidDiscard(sessionID: sessionID).value
+
+        #expect(box.ids.isEmpty)
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+    }
+
+    @Test("a session failure for any other reason still falls back to the duration-only workout")
+    func otherSessionFailureStillFallsBack() async {
+        let rig = Rig(status: .authorized)
+
+        await rig.recorder.sessionDidStart(sessionID: sessionID, at: startedAt).value
+        rig.resources.session.stateHandler?(.failed(.operationFailed("sensor")))
+        #expect(!rig.recorder.anotherWorkoutTookOver(sessionID: sessionID))
+
+        let recording = await rig.recorder.sessionDidFinish(
+            sessionID: sessionID, startedAt: startedAt, endedAt: endedAt
+        )
+
+        #expect(recording != .supersededByAnotherWorkout)
+        #expect(recording != .notSaved)
+    }
+
     @Test("a stuck end sequence times out without a second save")
     func stuckFinishTimesOut() async {
         let rig = Rig(status: .authorized, sleep: { _ in await Task.yield() }, finishGate: Gate())
@@ -229,18 +361,32 @@ private final class Rig {
         sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in
             try await Task.sleep(for: .seconds(3_600))
         },
-        finishGate: Gate? = nil
+        finishGate: Gate? = nil,
+        beginGate: Gate? = nil,
+        marks: SupersededSessionMarks = .none
     ) {
         store = FakeHealthStore(status: status, grant: grant, gate: authorizationGate)
-        builder = FakeBuilder(log: log, finishGate: finishGate)
+        builder = FakeBuilder(log: log, finishGate: finishGate, beginGate: beginGate)
         resources = LiveWorkoutResources(session: FakeSession(log: log), builder: builder)
         let factory = FakeFactory(resources: resources, failure: factoryFailure)
         recorder = SessionWorkoutRecorder(
             store: store,
             controller: WorkoutController(factory: factory),
             sleep: sleep,
-            now: { Date(timeIntervalSince1970: 1_700_007_200) }
+            now: { Date(timeIntervalSince1970: 1_700_007_200) },
+            marks: marks
         )
+    }
+}
+
+/// Marks that outlive one `Rig`, standing in for UserDefaults across a
+/// relaunch.
+@MainActor
+private final class MarkBox {
+    var ids: [UUID] = []
+
+    var marks: SupersededSessionMarks {
+        SupersededSessionMarks(load: { self.ids }, save: { self.ids = $0 })
     }
 }
 
@@ -370,15 +516,18 @@ private final class FakeSession: WorkoutSessionProtocol {
 private final class FakeBuilder: LiveWorkoutBuilding {
     private let log: Log
     private let finishGate: Gate?
+    private let beginGate: Gate?
     let savedWorkoutID = UUID()
 
-    init(log: Log, finishGate: Gate?) {
+    init(log: Log, finishGate: Gate?, beginGate: Gate?) {
         self.log = log
         self.finishGate = finishGate
+        self.beginGate = beginGate
     }
 
     func beginCollection(at date: Date) async throws {
         log.calls.append(.beginCollection(date))
+        await beginGate?.wait()
     }
 
     func endCollection(at date: Date) async throws {
