@@ -595,10 +595,13 @@ public protocol BurlyStore: AnyObject {
     ///
     /// The watch cannot tell the two cases apart; the evidence lives on the
     /// phone. So this is a **trust boundary, enforced upstream**: absence of
-    /// an entry asserts "the phone's history holds nothing for this
-    /// exercise," and the watch believes it. The obligation to make that
+    /// an entry asserts "no update for this exercise" (the phone has no
+    /// history for it, or it lies outside what the digest's bound covers),
+    /// and the watch believes it: it updates nothing for that exercise and
+    /// deletes no existing row. The obligation to make that
     /// true belongs to the digest generator — see `SessionDigestReceipt`,
-    /// which states the contract, and M4, which owns and property-tests it.
+    /// which states the contract and its bound, and M4, which owns and
+    /// property-tests it.
     ///
     /// Pruning tolerates what a real transport produces: an id naming an
     /// `.active` session, or no session at all, is skipped rather than
@@ -799,6 +802,54 @@ public protocol BurlyStore: AnyObject {
     /// re-derives the identical ordering — see `SessionDigestGenerator`).
     func allLoggedSetSlices() throws -> [SetRecordSlice]
 
+    /// The digest generator's narrow read (issue #24): for each exercise in
+    /// `exerciseIDs`, every logged set of that exercise's **latest `.logged`
+    /// session that has any set for it**, and no other slice.
+    ///
+    /// `allLoggedSetSlices()` answers the same question by materialising
+    /// every logged set the phone holds (8.4 s at 50k sets on hosted CI,
+    /// for 12 entries). This reads session-item metadata instead, picks the
+    /// winning session per exercise with `LatestLoggedSession.isLater` (the
+    /// rule the generator also uses), and decodes only the winners' sets.
+    ///
+    /// The contract, case by case:
+    /// - "Latest" is `LatestLoggedSession.isLater`: later `startedAt`, then
+    ///   higher session id on an exact tie.
+    /// - A session whose item for the exercise has no sets does not count:
+    ///   the next-latest session with sets wins, exactly as it does when
+    ///   the answer is derived from set rows.
+    /// - The same exercise twice in one session returns both items' sets.
+    /// - `.active` sessions, items with no exercise, and items detached from
+    ///   a session never contribute.
+    /// - Archive state is irrelevant here: an archived exercise's history is
+    ///   returned when asked for. Which exercises to ask for is the
+    ///   caller's decision.
+    /// - Strict on what it reads: a corrupt stored weight in a winning set
+    ///   throws `BurlyStoreError.corruptedWeight`, the same as every other
+    ///   read of that column, rather than being skipped. Sets of losing
+    ///   sessions are never read, so they cannot fail it.
+    ///
+    /// Equals `LatestLoggedSession.winningSlices(from: allLoggedSetSlices(),
+    /// forExercises:)` (that is the fallback implementation below). No order
+    /// is promised.
+    func latestLoggedSetSlices(forExercises exerciseIDs: Set<UUID>) throws -> [SetRecordSlice]
+
+    /// When each routine was last performed, as far as this store knows,
+    /// keyed by routine id: the `startedAt` of the latest `.logged` session
+    /// whose `routineID` names it. Routines never performed are absent.
+    ///
+    /// A phone store derives this from its full history; it feeds the §5
+    /// digest so the watch can show §2's "last done N days ago". A watch
+    /// store prunes delivered sessions (§1), so on its own it would answer
+    /// "never" for every routine once the phone acknowledged its sessions.
+    /// It therefore also merges `WatchSyncStateData.routineLastPerformedAt`
+    /// (the dates the phone's last digest reported, plus the starts of the
+    /// sessions pruned since), keeping the newer of that date and any
+    /// session it still holds.
+    ///
+    /// Bounded: a flat pass over `Session` rows, never `.items`.
+    func routineLastPerformedDates() throws -> [UUID: Date]
+
     // MARK: - Phone-shell existence/count (m5-01; bounded)
     //
     // The phone shell's appearance must establish "is there anything?" and
@@ -860,5 +911,24 @@ extension BurlyStore {
     /// `session(id:)`). `SwiftDataStore` overrides it.
     public func sessionExists(id: UUID) throws -> Bool {
         try session(id: id) != nil
+    }
+
+    /// Correct but unbounded fallback, by definition: the full-history
+    /// derivation the narrow read must equal. `SwiftDataStore` overrides it.
+    public func latestLoggedSetSlices(forExercises exerciseIDs: Set<UUID>) throws -> [SetRecordSlice] {
+        LatestLoggedSession.winningSlices(from: try allLoggedSetSlices(), forExercises: exerciseIDs)
+    }
+
+    /// Fallback from the sessions this store holds, which is what the watch
+    /// home showed before digests carried routine dates. `SwiftDataStore`
+    /// overrides it (and, on a watch, merges the phone's reported dates).
+    public func routineLastPerformedDates() throws -> [UUID: Date] {
+        var latest: [UUID: Date] = [:]
+        for session in try sessions(state: .logged) {
+            guard let routineID = session.routineID else { continue }
+            if let current = latest[routineID], current >= session.startedAt { continue }
+            latest[routineID] = session.startedAt
+        }
+        return latest
     }
 }

@@ -85,6 +85,7 @@ import BurlyCore
 import BurlyPersistence
 import BurlySync
 import BurlySyncMachine
+import os
 
 @MainActor
 public final class PhoneSyncCoordinator {
@@ -795,13 +796,13 @@ public final class PhoneSyncCoordinator {
         }
     }
 
-    /// Item 6's actual fire: derives the digest from full history, and from
-    /// the machine's current `snapshotVersion`/acked-ids, **at this
+    /// Item 6's actual fire: derives the digest from current history, and
+    /// from the machine's current `snapshotVersion`/acked-ids, **at this
     /// moment** — never from data captured when the burst started (major
-    /// 5) — and publishes it. Errors are swallowed here on purpose — this
-    /// runs from a detached debounce task with no caller left to propagate
-    /// to by the time it fires; a failed derivation just means the next
-    /// history-changed/confirmed event tries again.
+    /// 5) — and publishes it. Errors are logged and otherwise dropped on
+    /// purpose — this runs from a detached debounce task with no caller
+    /// left to propagate to by the time it fires; a failed derivation just
+    /// means the next history-changed/confirmed event tries again.
     private func publishDigestNow() async {
         // Round 3, §1: the digest publisher is a transmission to the watch
         // too (it carries `snapshotVersion`) — gated like the transport.
@@ -815,11 +816,20 @@ public final class PhoneSyncCoordinator {
         // path are covered by `save`'s validation.
         guard snapshotVersion >= 0, snapshotVersion <= maximumPhoneSyncIdentity else { return }
         let ackedSessionIDs = Set(state.ackAge.keys)
-        guard let payload = try? SessionDigestGenerator.generate(
-            from: store,
-            snapshotVersion: snapshotVersion,
-            ackedSessionIDs: ackedSessionIDs
-        ) else { return }
+        let payload: BurlyDigestPayloadDTO
+        do {
+            payload = try SessionDigestGenerator.generate(
+                from: store,
+                snapshotVersion: snapshotVersion,
+                ackedSessionIDs: ackedSessionIDs
+            )
+        } catch {
+            // A corrupt stored weight in a latest session lands here every
+            // time until the row is fixed; silence would hide why the watch
+            // stopped getting acks.
+            PhoneSyncLog.logger.error("digest generation failed: \(String(describing: error), privacy: .public)")
+            return
+        }
         await digestPublisher.publishDigest(payload)
     }
 

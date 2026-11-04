@@ -145,15 +145,17 @@ final class WatchHomeViewModel {
                 return
             }
 
-            let loggedSessions = try store.sessions(state: .logged)
+            // The phone's digest dates merged with sessions not yet
+            // acknowledged: the watch prunes what the phone has (§1), so its
+            // own sessions alone would read "Never done" once sync caught up.
+            let lastPerformed = try store.routineLastPerformedDates()
             let reference = now()
             state = .loaded(routines.map { routine in
                 RoutineRow(
                     id: routine.id,
                     name: routine.name,
                     lastDoneText: Self.lastDoneText(
-                        for: routine.id,
-                        loggedSessions: loggedSessions,
+                        lastPerformed: lastPerformed[routine.id],
                         reference: reference
                     )
                 )
@@ -201,18 +203,17 @@ final class WatchHomeViewModel {
         return !((try? store.exercises(includingArchived: true)) ?? []).isEmpty
     }
 
-    /// `sessions(state:)` is already reverse-chronological (BurlyStore.swift
-    /// doc), so the first match for a routine is its most recent session.
+    /// `lastPerformed` is the routine's latest logged session start, from
+    /// `BurlyStore.routineLastPerformedDates()`.
     private static func lastDoneText(
-        for routineID: UUID,
-        loggedSessions: [SessionData],
+        lastPerformed: Date?,
         reference: Date
     ) -> String {
-        guard let last = loggedSessions.first(where: { $0.routineID == routineID }) else {
+        guard let lastPerformed else {
             return "Never done"
         }
 
-        let days = Calendar.current.dateComponents([.day], from: last.startedAt, to: reference).day ?? 0
+        let days = Calendar.current.dateComponents([.day], from: lastPerformed, to: reference).day ?? 0
         switch days {
         case ..<1: return "Last done today"
         case 1: return "Last done 1 day ago"

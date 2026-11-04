@@ -12,17 +12,18 @@
 //         --filter DigestGenerationBenchmarkTests                 # runs it
 //
 // Why this benchmark exists (the review's own words): `SessionDigestGenerator
-// .generate` reads `BurlyStore.allLoggedSetSlices()` — the FULL current
-// `.logged` history, every time, by contract (see that file's header doc) —
-// and builds an in-memory `[UUID: (sessionID, startedAt)]` winners map plus
-// a `[ExerciseSessionKey: [SetRecordSlice]]` grouping over every slice. That
-// is linear in total `SetRecord` count with no windowing, unlike every §7
-// stats query `StatsQueryBenchmarkTests` already covers. This file's job is
-// only to put a number on that cost at the architecture doc's stated
-// realistic ceiling (~40-50k rows for a decade of lifting) and flag it
-// loudly if it crosses the review's named thresholds (~3s wall, ~250MB
-// high-water RSS) — not to optimize anything. A regression here is a ticket
-// to m8-02 (the device-floor task), not a silent pass.
+// .generate` used to read `BurlyStore.allLoggedSetSlices()` — the FULL
+// current `.logged` history, every time — and group every slice. That was
+// linear in total `SetRecord` count with no windowing, unlike every §7
+// stats query `StatsQueryBenchmarkTests` already covers, and it crossed the
+// threshold below (6.1-8.4 s on hosted CI; issue #24). It now reads only
+// each exercise's latest session (`latestLoggedSetSlices(forExercises:)`),
+// and this benchmark also checks that answer against the full-history
+// derivation at the same scale. This file's job is to put a number on the
+// cost at the architecture doc's stated realistic ceiling (~40-50k rows for
+// a decade of lifting) and flag it loudly if it crosses the review's named
+// thresholds (~3s wall, ~250MB high-water RSS). A regression here is a
+// ticket to m8-02 (the device-floor task), not a silent pass.
 import Foundation
 import Darwin
 import Testing
@@ -87,13 +88,27 @@ struct DigestGenerationBenchmarkTests {
         #expect(payload.snapshotVersion == 42)
         #expect(Set(payload.ackedSessionIDs) == acked)
 
+        // Issue #24: generate() now reads only each exercise's latest
+        // session. Hold it to the full-history derivation it replaced, at
+        // this scale, in another fresh context (after the timed call, so
+        // the timing above never benefits from this read's cache).
+        let referenceStore = try SwiftDataStore(kind: .phone, at: .file(url))
+        let (fullHistory, fullSeconds, _) = try measureDigestBenchmark {
+            SessionDigestGenerator.latestPerformancePerExercise(from: try referenceStore.allLoggedSetSlices())
+        }
+        #expect(payload.lastPerformance == fullHistory)
+        print("""
+        [m4-04 digest benchmark] full-history derivation for comparison: \(fullHistory.count) entries, \
+        \(String(format: "%.4f", fullSeconds))s
+        """)
+
         if seconds > wallTimeThresholdSeconds {
             print("""
             \n\
             ⚠️⚠️⚠️ [m4-04 digest benchmark] WALL TIME REGRESSION: \(String(format: "%.4f", seconds))s \
             exceeds the ~\(String(format: "%.0f", wallTimeThresholdSeconds))s threshold at ~50k SetRecords. \
-            SessionDigestGenerator.generate reads the FULL logged history unconditionally (see that \
-            file's header doc) — this is a real cost-at-scale signal, not a flaky benchmark. \
+            SessionDigestGenerator.generate reads every session item to pick each exercise's latest \
+            session (see that file's header doc) — this is a real cost-at-scale signal, not a flaky benchmark. \
             File/confirm a ticket against m8-02 (device-floor verification) rather than silently \
             accepting this regression. ⚠️⚠️⚠️\n
             """)

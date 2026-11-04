@@ -62,14 +62,47 @@ public enum SnapshotPayloadBuilder {
         from store: any BurlyStore,
         settings: PhoneWatchSettings = PhoneWatchSettings()
     ) throws -> BurlySnapshotPayloadDTO {
-        let routines = try store.routines(includingArchived: false)
-        let exercises = try store.exercises(includingArchived: true)
+        let workingSet = try WatchWorkingSet(from: store)
         return BurlySnapshotPayloadDTO(
             version: version,
-            exercises: exercises,
-            routines: routines,
+            exercises: workingSet.catalog,
+            routines: workingSet.routines,
             displayUnit: settings.displayUnit,
             restDefault: settings.restDefault
         )
+    }
+}
+
+/// What a snapshot built from the store right now would carry, plus the
+/// narrower exercise set the digest may mention.
+///
+/// The snapshot is the full catalog (`catalog`): every exercise, archived
+/// ones included, so an archive reaches the watch picker. The digest is
+/// bounded to exercises the watch can still show (`exercises`: non-archived,
+/// plus archived ones a live routine still uses). An archived exercise no
+/// live routine uses has no ghost row to update, so leaving it out of the
+/// digest is how the 48 KB bound stays about the working set, not retired
+/// names. Routines are the same in both payloads: non-archived only.
+struct WatchWorkingSet {
+    let routines: [RoutineData]
+    /// Every stored exercise, archived included — what the snapshot sends.
+    let catalog: [ExerciseData]
+    /// Exercises the watch can start or add: the digest's working set.
+    let exercises: [ExerciseData]
+
+    @MainActor
+    init(from store: any BurlyStore) throws {
+        routines = try store.routines(includingArchived: false)
+        catalog = try store.exercises(includingArchived: true)
+        let referencedExerciseIDs = Set(routines.flatMap { $0.items.compactMap(\.exerciseID) })
+        exercises = catalog.filter {
+            $0.archivedAt == nil || referencedExerciseIDs.contains($0.id)
+        }
+    }
+
+    /// Exercises a routine on the watch starts with (§2 Start), as opposed
+    /// to ones only reachable through the mid-session catalog picker.
+    var routineExerciseIDs: Set<UUID> {
+        Set(routines.flatMap { $0.items.compactMap(\.exerciseID) })
     }
 }

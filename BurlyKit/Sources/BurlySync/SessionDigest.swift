@@ -63,20 +63,38 @@ import BurlyCore
 ///
 /// ## Generator contract — this is a trust boundary
 ///
-/// `lastPerformance` **must be the complete latest-per-exercise derivation
-/// over the phone's full history at the moment the digest is generated**
-/// (spec §5: the `digest` payload carries "per-exercise last-performance
-/// entries" alongside `ackedSessionIDs`, latest-wins). Not a delta, not the
-/// entries touched by the sessions being acked, not "what changed since
-/// last time" — the whole derivation.
+/// Every `lastPerformance` entry **must be the exact latest-per-exercise
+/// derivation over the phone's full history at the moment the digest is
+/// generated** (spec §5: the `digest` payload carries "per-exercise
+/// last-performance entries" alongside `ackedSessionIDs`, latest-wins). Not
+/// a delta, not the entries touched by the sessions being acked, not "what
+/// changed since last time".
+///
+/// Which exercises get an entry is bounded, because the digest rides
+/// `updateApplicationContext`, which refuses a payload over roughly 64 KB,
+/// and a refused digest carries no acks either. The generator
+/// (`SessionDigestGenerator` in BurlyPhoneSync) covers **every exercise in
+/// the watch's working set that has history** — the exercises the watch can
+/// start or add (`WatchWorkingSet.exercises`), not the snapshot's full
+/// catalog, which also names archived unused exercises so the picker can
+/// hide them — and, only when that would exceed its byte budget, drops
+/// entries from the end of a fixed ranking: exercises whose latest session
+/// this digest acknowledges come first, then exercises a routine starts
+/// with, then the rest by most recent `performedAt`. So what goes first is
+/// the longest-unperformed exercise that is neither. Exercises outside the
+/// working set are never sent.
 ///
 /// The consequence that makes this load-bearing: **the absence of an entry
-/// is itself an assertion.** It says the phone's history holds nothing for
-/// that exercise, and the watch acts on it — pruning an acked session while
-/// keeping whatever ghost rows the payload describes. A generator that
-/// omits an exercise it does in fact have history for silently destroys the
-/// watch's last record of it, and §5's application context is latest-wins,
-/// so nothing redelivers to repair it.
+/// is a claim the watch acts on.** The watch upserts the entries it is
+/// given and never deletes a row for an exercise the digest leaves out, so
+/// absence means "no update": the watch keeps whatever ghost row it had and
+/// prunes the acked session regardless. A generator that omitted an
+/// exercise whose latest numbers were in that session would leave the watch
+/// showing older ones, and §5's application context is latest-wins, so
+/// nothing redelivers to repair it. So the byte budget never drops such an
+/// entry while acknowledging its session: those entries are kept first,
+/// and if even they cannot all fit, the generator holds that session's ack
+/// back for a later digest instead.
 ///
 /// The watch **cannot** verify this, and deliberately does not try (m1-06
 /// review rounds E→F). It looks checkable — the store holds the sessions it
@@ -88,14 +106,17 @@ import BurlyCore
 /// those payloads strands the session on the watch permanently once the
 /// ack ages out. So the watch trusts, and **the generator owes a property
 /// test**: for any history and any ack set, the emitted `lastPerformance`
-/// covers every exercise the phone has any sets for. That test belongs to
-/// M4, with the generator.
+/// equals the full-history derivation for every working-set exercise the
+/// phone has any sets for (`SessionDigestGeneratorTests`), and the byte
+/// budget holds at a heavy-history scale (`DigestPayloadBoundTests`).
 public struct SessionDigestReceipt: Sendable, Equatable {
-    /// The complete latest-per-exercise derivation over full phone history
-    /// (§5) — see the generator contract above; an omission is an assertion
-    /// the watch acts on, not a no-op. Empty is legitimate and means "the
-    /// phone has no history for any exercise", which for a fresh or fully
-    /// cleared phone is simply true.
+    /// Exact latest-per-exercise entries for the watch's working set, as
+    /// bounded above — see the generator contract; an omission is a claim
+    /// the watch acts on, not a no-op. Empty is legitimate, but it does not
+    /// by itself say the phone has no history. It can mean that: for a fresh
+    /// or fully cleared phone it is simply true. It can also mean the byte
+    /// budget was spent on the acks and routine dates alone, so no entry
+    /// fit; the watch then keeps the rows it has.
     public let lastPerformance: [ExerciseLastPerformanceData]
 
     /// IDs of sessions the phone has durably received. Carries no ordering
