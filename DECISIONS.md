@@ -58,6 +58,33 @@ The Codex review of #45 also found that dispatches from any branch and tags
 on any commit can reach the API key. That is issue #47; a protected
 environment is Dan's call.
 
+## 2026-11-03 — Hevy import: pound-unit columns, and timed or distance sets as one drop
+
+#46. A Hevy export used to abort unless the header named `weight_kg`, so a
+file from an account set to pounds was rejected as not a Hevy export. The
+importer now requires exactly one weight column, `weight_kg` or
+`weight_lbs`. Zero is `unrecognizedHeader`, naming `weight_kg (or
+weight_lbs)`. More than one — both units, or one repeated — is
+`HevyImportError.ambiguousWeightUnit` and also aborts, rather than reading
+the first copy. Pounds convert to kilograms with `Weight.kilogramsPerPound`
+at parse time, the same arithmetic as `Weight(pounds:)`. Identity is
+unchanged: IDs never include the unit or the weight, so a pounds export and
+a kilograms export of the same workouts still dedupe against each other.
+
+Cardio detection reads `distance_miles` as well as `distance_km`. Either
+column, if it parses and is above zero, drops the row; there is no distance
+conversion. A positive `duration_seconds` drops it too. Those rows stay in
+one count: cardio, and also timed or distance strength work (planks, hangs,
+carries) that Burly cannot store because a set is weight and reps. The
+phone labels the count "Timed or distance sets". The summary field
+`cardioRowsSkipped` and the `.drop.cardio` accessibility identifiers keep
+their names. The two kinds are not split, because telling them apart would
+need guessing from the exercise name.
+
+The `weight_lbs` and `distance_miles` column names come from two
+third-party Hevy importers, not Hevy documentation, and still need
+confirming against a real export (planning task m7-03).
+
 ## 2026-10-31 — The store text describes Apple Health again; acceptance compiles Release
 
 #13 put HealthKit on the watch, and #39, merged just before it, had
