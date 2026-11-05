@@ -42,10 +42,12 @@ sent a newer schema, "Update Burly" appears on the list and is still
 there after a relaunch. Weights, volume and the crown step follow the
 phone's display unit. Rest uses the exercise's own rest time if it has
 one, otherwise the phone's rest default. The watch asks for Health
-access the first time a workout starts; with access, each finished
-workout is saved to Apple Health, normally with heart rate and active
-energy (a session resumed after the app relaunched may be saved without
-sensor data). If access is declined, sets still save in Burly.
+access the first time a workout starts; with access, a finished workout
+is saved to Apple Health, normally with heart rate and active energy (a
+session resumed after the app relaunched may be saved without sensor
+data). If another app's workout takes over Burly's live workout, Burly
+saves no Health workout for that session. If access is declined, sets
+still save in Burly.
 
 The phone and the watch exchange routines, exercises and finished sessions
 over WatchConnectivity (`PhoneSyncHost` / `WatchSyncHost`). Snapshots carry
