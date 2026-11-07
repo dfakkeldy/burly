@@ -28,7 +28,7 @@ public enum HevyImportError: Error, Sendable, Equatable, LocalizedError {
     /// BurlyImport needs to build anything at all. Lists the missing
     /// column names so a caller can show a specific message rather than a
     /// generic "couldn't read this file." A file with neither weight column
-    /// lists them as one entry, `weight_kg or weight_lbs`.
+    /// lists them as one entry, `weight_kg (or weight_lbs)`.
     case unrecognizedHeader(missingColumns: [String])
     /// The header has more than one weight column: both `weight_kg` and
     /// `weight_lbs`, or either one repeated. Hevy writes exactly one, so a

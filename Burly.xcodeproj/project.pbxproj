@@ -69,6 +69,7 @@
 		164D74CD15B34339B54B7F48 /* SaveFailureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B641EB6C948444B08FDD2331 /* SaveFailureView.swift */; };
 		60FCDFEFC0C645BDA6503182 /* SessionConflictView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22C291D15334F85B094E9BF /* SessionConflictView.swift */; };
 		A723D09FE5094492AB79CEEB /* DiscardConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 254F57FE913F4F9BA160CEB6 /* DiscardConfirmView.swift */; };
+		D77A466D15BB8C898B164083 /* SessionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DB7A145FFC7BF94A3ECE64F /* SessionPromptView.swift */; };
 		20C485F05DE94542A348DE40 /* SessionConflictUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */; };
 		CBDB610B5A1945A8B268F359 /* SaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */; };
 		D8E90E4D6277CB5652B0A304 /* ResumeSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */; };
@@ -77,7 +78,10 @@
 		94A77A6BFFAF15718B081B35 /* UnreadableSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */; };
 		EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */; };
 		AA6F0AEFD24914E844BCDDB4 /* WatchSyncStateUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CB607F492AF9F87F1EB504E /* WatchSyncStateUITests.swift */; };
+		2992CB34B41B7CC534AF2F07 /* WatchSessionUXUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0697857504DD768752EF4AC /* WatchSessionUXUITests.swift */; };
+		F79133F0C5FAD7A07AF00CDA /* SessionActionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C6D2D56A7EFBEC67F27B159 /* SessionActionsUITests.swift */; };
 		B4E29C6C90479A29C93AE4FF /* HevyImportEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */; };
+		0F32DE212DD35EA0C3E8190A /* HistoryWorkoutHealthCleanup.swift in Sources */ = {isa = PBXBuildFile; fileRef = F813953E3332249376F12D6E /* HistoryWorkoutHealthCleanup.swift */; };
 		8E8D9773339EFEEBD416B27D /* HevyImportModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C40E4D9C23E8FDE26CD9DF /* HevyImportModel.swift */; };
 		19663138E26A422B76462B4A /* HevyImportUITestFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D80F5A90E5CE4112E1ED6E3 /* HevyImportUITestFixture.swift */; };
 		5845CF35C913070F9B7DC824 /* HevyImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3977FDEC11E10ABAC071362D /* HevyImportView.swift */; };
@@ -86,6 +90,7 @@
 		7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */; };
 		07C9C62BBED29B2541F5E546 /* StoreScreenshotsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1E5259EB4EAB3D1C9619729 /* StoreScreenshotsUITests.swift */; };
 		5AD05656D13CB1E7DB61FE81 /* StoreScreenshotsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632B1ABB5B10E793CFB48E0B /* StoreScreenshotsUITests.swift */; };
+		FB1A91861BD70EAF11DA4DB3 /* HistoryEditingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8B1F25D50FBC2A5F92465D2 /* HistoryEditingUITests.swift */; };
 		B03EFAC4CE507E8E5A27456F /* BurlyImport in Frameworks */ = {isa = PBXBuildFile; productRef = EE2761409B9545392090D8F1 /* BurlyImport */; };
 		6FFE781D13B074329398E691 /* BurlyPhoneSync in Frameworks */ = {isa = PBXBuildFile; productRef = 22884904E09A66F1F8C220C3 /* BurlyPhoneSync */; };
 		303590180BFFF7874C72D48D /* BurlySyncAdapters in Frameworks */ = {isa = PBXBuildFile; productRef = DFBAB7B67833CCD7540A36D3 /* BurlySyncAdapters */; };
@@ -190,6 +195,7 @@
 		B641EB6C948444B08FDD2331 /* SaveFailureView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SaveFailureView.swift; sourceTree = "<group>"; };
 		F22C291D15334F85B094E9BF /* SessionConflictView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionConflictView.swift; sourceTree = "<group>"; };
 		254F57FE913F4F9BA160CEB6 /* DiscardConfirmView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DiscardConfirmView.swift; sourceTree = "<group>"; };
+		2DB7A145FFC7BF94A3ECE64F /* SessionPromptView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionPromptView.swift; sourceTree = "<group>"; };
 		8F8D72E759104EEFBEC79C3C /* SessionConflictUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionConflictUITests.swift; sourceTree = "<group>"; };
 		8E8B0174C67B4255984BABD9 /* SaveFailureUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SaveFailureUITests.swift; sourceTree = "<group>"; };
 		7F38B111A1756C34C8D94A90 /* ResumeSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResumeSessionView.swift; sourceTree = "<group>"; };
@@ -198,7 +204,10 @@
 		F73E0881F1BFD6F9B842A529 /* UnreadableSessionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = UnreadableSessionView.swift; sourceTree = "<group>"; };
 		0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRecoveryUITests.swift; sourceTree = "<group>"; };
 		9CB607F492AF9F87F1EB504E /* WatchSyncStateUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSyncStateUITests.swift; sourceTree = "<group>"; };
+		E0697857504DD768752EF4AC /* WatchSessionUXUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSessionUXUITests.swift; sourceTree = "<group>"; };
+		0C6D2D56A7EFBEC67F27B159 /* SessionActionsUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionActionsUITests.swift; sourceTree = "<group>"; };
 		B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportEntry.swift; sourceTree = "<group>"; };
+		F813953E3332249376F12D6E /* HistoryWorkoutHealthCleanup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryWorkoutHealthCleanup.swift; sourceTree = "<group>"; };
 		61C40E4D9C23E8FDE26CD9DF /* HevyImportModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportModel.swift; sourceTree = "<group>"; };
 		5D80F5A90E5CE4112E1ED6E3 /* HevyImportUITestFixture.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportUITestFixture.swift; sourceTree = "<group>"; };
 		3977FDEC11E10ABAC071362D /* HevyImportView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HevyImportView.swift; sourceTree = "<group>"; };
@@ -207,6 +216,7 @@
 		E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairedSyncUITests.swift; sourceTree = "<group>"; };
 		C1E5259EB4EAB3D1C9619729 /* StoreScreenshotsUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StoreScreenshotsUITests.swift; sourceTree = "<group>"; };
 		632B1ABB5B10E793CFB48E0B /* StoreScreenshotsUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StoreScreenshotsUITests.swift; sourceTree = "<group>"; };
+		E8B1F25D50FBC2A5F92465D2 /* HistoryEditingUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryEditingUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -296,6 +306,8 @@
 				0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */,
 				9CB607F492AF9F87F1EB504E /* WatchSyncStateUITests.swift */,
 				632B1ABB5B10E793CFB48E0B /* StoreScreenshotsUITests.swift */,
+				E0697857504DD768752EF4AC /* WatchSessionUXUITests.swift */,
+				0C6D2D56A7EFBEC67F27B159 /* SessionActionsUITests.swift */,
 			);
 			name = BurlyWatchUITests;
 			path = BurlyWatchUITests;
@@ -323,6 +335,7 @@
 				387E32F218411F016C5DC66F /* EmptyStateView.swift */,
 				1D6847CCE772834C378273DB /* HistoryTabView.swift */,
 				A1B2C3D4E5F60718293A4B5D /* HistorySessionDetailView.swift */,
+				F813953E3332249376F12D6E /* HistoryWorkoutHealthCleanup.swift */,
 				75C1B4C336761A13E5004C05 /* LicensesView.swift */,
 				B3DEF3FE3D948249B295CE02 /* HevyImportEntry.swift */,
 				61C40E4D9C23E8FDE26CD9DF /* HevyImportModel.swift */,
@@ -363,6 +376,7 @@
 				B93D51444666972BC5B477A8 /* ImportUITests.swift */,
 				E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */,
 				C1E5259EB4EAB3D1C9619729 /* StoreScreenshotsUITests.swift */,
+				E8B1F25D50FBC2A5F92465D2 /* HistoryEditingUITests.swift */,
 			);
 			name = BurlyPhoneUITests;
 			path = BurlyPhoneUITests;
@@ -396,6 +410,7 @@
 				B641EB6C948444B08FDD2331 /* SaveFailureView.swift */,
 				F22C291D15334F85B094E9BF /* SessionConflictView.swift */,
 				254F57FE913F4F9BA160CEB6 /* DiscardConfirmView.swift */,
+				2DB7A145FFC7BF94A3ECE64F /* SessionPromptView.swift */,
 			);
 			path = Session;
 			sourceTree = "<group>";
@@ -609,6 +624,7 @@
 				164D74CD15B34339B54B7F48 /* SaveFailureView.swift in Sources */,
 				60FCDFEFC0C645BDA6503182 /* SessionConflictView.swift in Sources */,
 				A723D09FE5094492AB79CEEB /* DiscardConfirmView.swift in Sources */,
+				D77A466D15BB8C898B164083 /* SessionPromptView.swift in Sources */,
 				D8E90E4D6277CB5652B0A304 /* ResumeSessionView.swift in Sources */,
 				94A77A6BFFAF15718B081B35 /* UnreadableSessionView.swift in Sources */,
 			);
@@ -627,6 +643,8 @@
 				EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */,
 				AA6F0AEFD24914E844BCDDB4 /* WatchSyncStateUITests.swift in Sources */,
 				5AD05656D13CB1E7DB61FE81 /* StoreScreenshotsUITests.swift in Sources */,
+				2992CB34B41B7CC534AF2F07 /* WatchSessionUXUITests.swift in Sources */,
+				F79133F0C5FAD7A07AF00CDA /* SessionActionsUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -640,6 +658,7 @@
 				4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */,
 				7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */,
 				07C9C62BBED29B2541F5E546 /* StoreScreenshotsUITests.swift in Sources */,
+				FB1A91861BD70EAF11DA4DB3 /* HistoryEditingUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -652,6 +671,7 @@
 				E5B86DA8387E32F218411F01 /* EmptyStateView.swift in Sources */,
 				0F3F419C1D6847CCE772834C /* HistoryTabView.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* HistorySessionDetailView.swift in Sources */,
+				0F32DE212DD35EA0C3E8190A /* HistoryWorkoutHealthCleanup.swift in Sources */,
 				B4E29C6C90479A29C93AE4FF /* HevyImportEntry.swift in Sources */,
 				8E8D9773339EFEEBD416B27D /* HevyImportModel.swift in Sources */,
 				19663138E26A422B76462B4A /* HevyImportUITestFixture.swift in Sources */,
@@ -862,8 +882,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Burly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts, and finds the workouts it saved so it can remove one you delete.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout from Apple Watch to Health so other apps, like your health timeline, can see it, and removes it from Health when you delete that workout in Burly.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -898,8 +918,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Burly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout to Health so other apps, like your health timeline, can see it.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Burly reads heart rate and active energy from Apple Watch's sensors during workouts, and finds the workouts it saved so it can remove one you delete.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Burly saves each workout from Apple Watch to Health so other apps, like your health timeline, can see it, and removes it from Health when you delete that workout in Burly.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

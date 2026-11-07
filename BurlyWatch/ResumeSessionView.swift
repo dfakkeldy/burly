@@ -78,7 +78,10 @@ struct ResumeSessionView: View {
     /// summary it opens offers Finish or Discard. Never ends it silently.
     @ViewBuilder
     private func staleActions(lastActivity: Date) -> some View {
-        Text("Last set \(lastActivity, format: .relative(presentation: .named))")
+        // With nothing logged, the guard measures from the start instead.
+        (preview.loggedSetCount == 0
+            ? Text("Started \(lastActivity, format: .relative(presentation: .named))")
+            : Text("Last set \(lastActivity, format: .relative(presentation: .named))"))
             .font(.caption2)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)

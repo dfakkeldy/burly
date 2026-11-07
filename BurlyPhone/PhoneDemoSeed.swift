@@ -35,6 +35,11 @@ enum PhoneDemoSeed {
         /// finding 6): an implementation that hardcodes empty states fails
         /// here.
         case populated
+        /// `populated` plus one newer watch session that used two unnamed
+        /// placeholder exercises (§6 naming queue), for the naming-queue
+        /// UI tests. Its own case so the populated fixture other suites
+        /// assert exactly (exercise sets, Stats shares) stays unchanged.
+        case namingQueue
         /// Deliberately fails during construction (m5-01 review finding 6,
         /// same role as WatchDemoSeed's `.brokenSeed`). Exists so
         /// BurlyPhoneUITests can drive the fail-closed path end to end: a
@@ -85,6 +90,9 @@ enum PhoneDemoSeed {
         static let loggedSessionSquatWorkingSet = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000006")!
         static let addableExercise = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000A")!
         static let loggedSessionHealthKitWorkout = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000B")!
+        static let placeholderSession = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000D")!
+        static let firstPlaceholder = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000E")!
+        static let secondPlaceholder = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000F")!
     }
 
     /// `nil` **only** when the launch-environment key is absent entirely,
@@ -124,8 +132,11 @@ enum PhoneDemoSeed {
             throw SeedError.intentionallyBroken
         }
         let store = try SwiftDataStore(kind: .phone, at: .inMemory)
-        if scenario == .populated {
+        if scenario == .populated || scenario == .namingQueue {
             try seedPopulated(into: store)
+            if scenario == .namingQueue {
+                try seedPlaceholders(into: store)
+            }
         } else if scenario == .storeScreenshots {
             try seedStoreScreenshots(into: store)
         } else {
@@ -212,6 +223,36 @@ enum PhoneDemoSeed {
             routine: legDay,
             progressionIndex: weeksAgo.count,
             includesUnattributedWorkingSet: true
+        ))
+    }
+
+    /// Two placeholders exactly as the watch creates them (SessionMutator:
+    /// the shared name, no tags, `needsNaming`), and the session that used
+    /// them, a day old so it is History's newest row.
+    private static func seedPlaceholders(into store: SwiftDataStore) throws {
+        let placeholderIDs = [SeededIDs.firstPlaceholder, SeededIDs.secondPlaceholder]
+        for id in placeholderIDs {
+            try store.createExercise(ExerciseData(
+                id: id,
+                name: SessionMutator.placeholderExerciseName,
+                muscleGroups: [],
+                origin: .custom,
+                needsNaming: true
+            ))
+        }
+        let startedAt = Calendar.current.date(byAdding: .day, value: -1, to: .now) ?? .now
+        try store.createSession(SessionData(
+            id: SeededIDs.placeholderSession,
+            routineName: "Watch Workout",
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(30 * 60),
+            state: .logged,
+            origin: .live,
+            items: placeholderIDs.enumerated().map { index, id in
+                SessionItemData(exerciseID: id, order: index, sets: [
+                    SetRecordData(order: 0, weight: Weight(kg: 20), reps: 10, completedAt: startedAt.addingTimeInterval(Double(index + 1) * 120))
+                ])
+            }
         ))
     }
 

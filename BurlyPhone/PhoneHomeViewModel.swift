@@ -56,6 +56,11 @@ final class PhoneHomeViewModel {
     // Archived metadata still names past work; pickers filter it out.
     private(set) var historyExercises: [ExerciseData] = []
     private(set) var namingQueue: [ExerciseData] = []
+    /// One per history delete whose Health half did not clearly succeed
+    /// (see HistoryWorkoutHealthCleanup.swift), newest first. History shows
+    /// each at the top of the list until the user dismisses it; a later
+    /// delete adds its own and never clears another's.
+    private(set) var historyNotices: [HistoryNotice] = []
 
     // Stats domain. Unlike the shell's count-only snapshot above, this is
     // loaded only when Stats appears and uses the §7 bounded query surfaces.
@@ -106,10 +111,21 @@ final class PhoneHomeViewModel {
 
     private let store: BurlyStore
     private let sync: PhoneSyncHost?
+    private let healthWorkouts: any HealthWorkoutRemoving
 
-    init(store: BurlyStore, sync: PhoneSyncHost? = nil) {
+    /// `healthWorkouts` defaults to HealthKit, except under a DEBUG UI-test
+    /// scenario, which gets a scripted remover and never reaches HealthKit.
+    init(store: BurlyStore, sync: PhoneSyncHost? = nil, healthWorkouts: (any HealthWorkoutRemoving)? = nil) {
         self.store = store
         self.sync = sync
+        self.healthWorkouts = healthWorkouts ?? Self.defaultHealthWorkoutRemover()
+    }
+
+    private static func defaultHealthWorkoutRemover() -> any HealthWorkoutRemoving {
+        #if DEBUG
+        if let scripted = UITestHealthWorkoutRemover.requested() { return scripted }
+        #endif
+        return HealthKitWorkoutRemover()
     }
 
     // MARK: - Bounded shell snapshot (finding 3)
@@ -323,6 +339,21 @@ final class PhoneHomeViewModel {
         catalogState = .loaded
     }
 
+    /// Retags a custom or imported exercise (the catalog's tag editor). Same
+    /// rule as creation: at least one tag. The muscle split attributes sets
+    /// through these tags, so a loaded Stats dashboard refreshes too.
+    func updateMuscleGroups(of exercise: ExerciseData, to muscleGroups: [MuscleGroup]) throws {
+        guard !muscleGroups.isEmpty else {
+            throw PhoneRoutineError.noMuscleGroups
+        }
+        try store.updateExerciseMuscleGroups(id: exercise.id, muscleGroups: muscleGroups)
+        sync?.catalogDidChange()
+        catalogExercises = try store.exercises(includingArchived: false)
+        catalogState = .loaded
+        historyExercises = try store.exercises(includingArchived: true)
+        refreshStatsIfRequested()
+    }
+
     /// Every routine mutation but create ends here, so this is also where
     /// the watch hears about it.
     private func refreshRoutinesAfterMutation() throws {
@@ -355,7 +386,7 @@ final class PhoneHomeViewModel {
             loggedSessionCount = try store.loggedSessionCount()
             sessionRows = try store.sessions(state: .logged)
             historyExercises = try store.exercises(includingArchived: true)
-            namingQueue = historyExercises.filter { $0.needsNaming && $0.archivedAt == nil }
+            namingQueue = Self.namingQueue(from: historyExercises, usedBy: sessionRows)
             sessionsState = .loaded
         } catch {
             sessionsState = .failed(String(describing: error))
@@ -364,6 +395,9 @@ final class PhoneHomeViewModel {
 
     /// The phone's §6 edit gateway. `applyPhoneEdit` is the persistence
     /// invariant owner: it increments revision and never writes HealthKit.
+    /// Callers pass only real changes (the detail screen drops a save that
+    /// changes nothing), since every call here is an edit the History row
+    /// will mark.
     func saveHistoryEdit(_ session: SessionData) throws -> SessionData {
         let revision = try store.applyPhoneEdit(session)
         sync?.historyDidChange()
@@ -372,13 +406,66 @@ final class PhoneHomeViewModel {
         if let index = sessionRows.firstIndex(where: { $0.id == saved.id }) {
             sessionRows[index] = saved
         }
+        // An edit can remove the last use of a placeholder, as a delete can.
+        namingQueue = Self.namingQueue(from: historyExercises, usedBy: sessionRows)
         return saved
     }
 
-    func namePlaceholder(_ exercise: ExerciseData, as name: String) throws {
-        try store.namePlaceholderExercise(id: exercise.id, name: name)
+    /// §6 delete, both halves. Burly's half is one store save — the session,
+    /// its items and sets, and the tombstone that keeps a re-sent watch
+    /// copy from bringing it back — after which History, the shell count and
+    /// Stats reload and the digest refreshes. The Health half runs after,
+    /// never blocking or undoing the first: when it does not clearly
+    /// succeed, `historyNotices` gains one that says so and how to finish
+    /// the job by hand.
+    func deleteHistorySession(_ session: SessionData) throws {
+        let linkedWorkoutID = try store.deleteLoggedSession(id: session.id)
+        // A retry after a failed swipe delete: that row said the workout
+        // is still in History, which is no longer true.
+        historyNotices.removeAll { $0.id == session.id }
+        sync?.historyDidChange()
+        load()
+        loadSessionsForDisplay()
+        refreshStatsIfRequested()
+        // HealthKit finds the workout by the session id (its external
+        // UUID); the stored link only says whether there is one to find. An
+        // unlinked session (a Hevy import, or Health declined on the watch)
+        // never asks for HealthKit access.
+        guard linkedWorkoutID != nil else { return }
+        let healthWorkouts = healthWorkouts
+        Task { [weak self] in
+            let outcome = await healthWorkouts.removeWorkouts(linkedTo: session.id)
+            guard let self, let notice = HistoryNotice(afterRemoving: outcome, from: session) else { return }
+            historyNotices.removeAll { $0.id == notice.id }
+            historyNotices.insert(notice, at: 0)
+        }
+    }
+
+    /// A swipe delete that failed in the store: reported like a Health
+    /// notice, newest first, replacing an older notice for the same session.
+    func noteHistoryDeleteFailure(_ session: SessionData, error: any Error) {
+        let notice = HistoryNotice(deleteFailedFor: session, error: error)
+        historyNotices.removeAll { $0.id == notice.id }
+        historyNotices.insert(notice, at: 0)
+    }
+
+    func dismissHistoryNotice(id: UUID) {
+        historyNotices.removeAll { $0.id == id }
+    }
+
+    /// Names a watch placeholder and collects its muscle tags in the same
+    /// save, under the custom-creation rules (a trimmed, non-empty name and
+    /// at least one tag), so a named exercise never stays unattributed in
+    /// the muscle split.
+    func namePlaceholder(_ exercise: ExerciseData, as rawName: String, muscleGroups: [MuscleGroup]) throws {
+        let name = try validatedName(rawName, kind: .exercise)
+        guard !muscleGroups.isEmpty else {
+            throw PhoneRoutineError.noMuscleGroups
+        }
+        try store.namePlaceholderExercise(id: exercise.id, name: name, muscleGroups: muscleGroups)
         sync?.catalogDidChange()
         reloadHistoryExercises()
+        refreshStatsIfRequested()
     }
 
     func mergePlaceholder(_ exercise: ExerciseData, into destination: ExerciseData) throws {
@@ -388,13 +475,31 @@ final class PhoneHomeViewModel {
         sync?.catalogDidChange()
         sync?.historyDidChange()
         reloadHistoryExercises()
+        refreshStatsIfRequested()
+    }
+
+    /// Placeholders still waiting for a name, and only those some logged
+    /// session still uses. Deleting the only workout that used one leaves
+    /// the placeholder row behind (the store archives exercises, never
+    /// deletes them), and a prompt to name an exercise with no history
+    /// would be noise. If a later session arrives using it, it comes back.
+    private static func namingQueue(from exercises: [ExerciseData], usedBy sessions: [SessionData]) -> [ExerciseData] {
+        var used = Set<UUID>()
+        for session in sessions {
+            for item in session.items {
+                if let exerciseID = item.exerciseID { used.insert(exerciseID) }
+            }
+        }
+        return exercises.filter { (exercise: ExerciseData) -> Bool in
+            exercise.needsNaming && exercise.archivedAt == nil && used.contains(exercise.id)
+        }
     }
 
     private func reloadHistoryExercises() {
         do {
             historyExercises = try store.exercises(includingArchived: true)
-            namingQueue = historyExercises.filter { $0.needsNaming && $0.archivedAt == nil }
             sessionRows = try store.sessions(state: .logged)
+            namingQueue = Self.namingQueue(from: historyExercises, usedBy: sessionRows)
         } catch {
             sessionsState = .failed(String(describing: error))
         }
@@ -404,22 +509,19 @@ final class PhoneHomeViewModel {
 
     /// Plans a parsed Hevy export against the store as it stands right now.
     /// Probes only the file's own session IDs, each with a bounded count
-    /// (`sessionExists`, never a session graph: m7-02 review), not the
-    /// whole history; exercises come from the bounded catalog read,
-    /// archived rows included because they still exist.
+    /// (`sessionExists`, then `sessionWasDeleted`; never a session graph:
+    /// m7-02 review), not the whole history. A workout deleted in History
+    /// is skipped, not re-imported. Exercises come from the bounded catalog
+    /// read, archived rows included because they still exist.
     func planHevyImport(_ result: HevyImportResult, catalog: CatalogSeed) throws -> HevyImportPlan {
-        var existingSessionIDs = Set<UUID>()
-        for session in result.sessions {
-            if try store.sessionExists(id: session.id) {
-                existingSessionIDs.insert(session.id)
-            }
-        }
         let existingExerciseIDs = Set(try store.exercises(includingArchived: true).map(\.id))
+        let store = store
         return try HevyImportPlan.make(
             result: result,
             catalog: catalog,
-            existingSessionIDs: existingSessionIDs,
-            existingExerciseIDs: existingExerciseIDs
+            existingExerciseIDs: existingExerciseIDs,
+            sessionIsStored: { (id: UUID) throws -> Bool in try store.sessionExists(id: id) },
+            sessionWasDeleted: { (id: UUID) throws -> Bool in try store.sessionWasDeleted(id: id) }
         )
     }
 

@@ -3,8 +3,11 @@
 //
 // ## Why this suite is gated behind an environment variable
 //
-// The spike's v2 (MigrationSpikeSchemaV2.swift) declares entities with the
-// SAME NAMES as the production v1 schema. That is not sloppiness, it is the
+// The spike's v3 (MigrationSpikeSchemaV3.swift) declares entities with the
+// SAME NAMES as the production schema. (Until 2026-11-03 it was a v2 on top
+// of the only real version; a real V2 shipped then, and the spike moved up
+// to v3 on top of it. The account below is from the v2 days and still
+// holds: the spike's `SetRecord` has a column the shipping one lacks.) That is not sloppiness, it is the
 // mechanism: SwiftData matches schemas across versions by entity name and
 // shape, so a v2 whose entities were named differently would not be a
 // migration of v1 at all — it would be a different database.
@@ -48,8 +51,21 @@
 // canonical local test script in Scripts/ to mirror this in; if one is ever
 // added, it must run both.
 //
+// ## The real V1 and V2 are not the same hazard
+//
+// Since 2026-11-03 every production container is V2 built through a plan
+// that also holds V1, so the ungated process realises two shipping shapes
+// under the same entity names too. Both recorded failures were shape
+// mismatches — a column one definition had and the other did not — and
+// the real V2 changes no shared entity: its copies of V1's ten entities are
+// identical (MigrationPlanTests.v2CopiesV1Verbatim), and its one addition,
+// `SessionTombstone`, has no V1 namesake to collide with. That is what a
+// 0.9.1 → 1.0 device does on its first launch, so the ungated pass is where
+// ShippedStoreMigrationTests runs it. The spike's v3 still differs in
+// `SetRecord`, so it still gets its own process.
+//
 // If CI ever fails here *again* with the spike skipped in the main run,
-// then merely linking the v2 model classes into the test binary is enough
+// then merely linking the v3 model classes into the test binary is enough
 // to poison the registry, and the spike has to move out of this package
 // entirely (its own package, built and run separately) rather than being
 // gated at runtime.
@@ -65,27 +81,28 @@ import BurlyCore
     "m1-06 M3 — migration spike (isolated process)",
     .enabled(
         if: migrationSpikeIsEnabled,
-        "set BURLY_RUN_MIGRATION_SPIKE=1 and run this suite on its own — its v2 schema reuses v1's entity names and must not share a process with the production-shape tests"
+        "set BURLY_RUN_MIGRATION_SPIKE=1 and run this suite on its own — its v3 schema reuses the production entity names with a different SetRecord and must not share a process with the production-shape tests"
     ),
     .serialized
 )
 struct MigrationSpikeTests {
 
-    @Test("the spike's v2 exists only in the test target; the shipping ladder is still v1-only")
+    @Test("the spike's v3 exists only in the test target; the shipping ladder is still V1 → V2")
     func theSpikeDoesNotLeakIntoTheShippingLadder() {
-        #expect(BurlyMigrationPlan.schemas.count == 1)
-        #expect(BurlyMigrationPlan.stages.isEmpty)
+        #expect(BurlyMigrationPlan.schemas.count == 2)
+        #expect(BurlyMigrationPlan.stages.count == 1)
 
         // The spike ladder is the shipping one plus exactly one append —
-        // which is what §1 acceptance #5 claims v2 will cost.
-        #expect(MigrationSpikePlan.schemas.count == 2)
+        // which is what §1 acceptance #5 claims each version will cost.
+        #expect(MigrationSpikePlan.schemas.count == 3)
         #expect(MigrationSpikePlan.schemas[0].versionIdentifier == Schema.Version(1, 0, 0))
         #expect(MigrationSpikePlan.schemas[1].versionIdentifier == Schema.Version(2, 0, 0))
-        #expect(MigrationSpikePlan.stages.count == 1)
+        #expect(MigrationSpikePlan.schemas[2].versionIdentifier == Schema.Version(3, 0, 0))
+        #expect(MigrationSpikePlan.stages.count == 2)
     }
 
-    @Test("a v1 store written to disk migrates through a real v1→v2 stage with its data intact")
-    func aV1StoreSurvivesTheV1ToV2Stage() throws {
+    @Test("a v2 store written to disk migrates through a v2→v3 stage with its data intact")
+    func aV2StoreSurvivesTheV2ToV3Stage() throws {
         let url = try makeTemporaryStoreURL()
         defer { removeStoreFiles(at: url) }
 
@@ -93,8 +110,8 @@ struct MigrationSpikeTests {
         let row = Fixture.exercise(name: "Row", muscleGroups: [.upperBack])
         let routine = Fixture.routine(over: [bench, row])
 
-        // 1. Write a v1 store through the *shipping* stage-free plan — the
-        //    same code path a real user's store is created by.
+        // 1. Write a v2 store through the *shipping* plan — the same code
+        //    path a real user's store is created by.
         let sessionID: UUID
         do {
             let store = try SwiftDataStore(kind: .watch, at: .file(url), clock: TestClock())
@@ -107,7 +124,7 @@ struct MigrationSpikeTests {
             // The set is logged into the in-flight value and persisted by
             // the same `saveActiveSession` that writes the graph and the
             // journal (m1-06 review round D removed the store's own
-            // `logSet`). The v1 store this produces is unchanged in shape —
+            // `logSet`). The v2 store this produces is unchanged in shape —
             // one Session, two SessionItems, one SetRecord, one journal —
             // which is all the migration below cares about.
             try SessionMutator.logSet(
@@ -127,14 +144,16 @@ struct MigrationSpikeTests {
                     sets: [SetSnapshot(weight: Weight(kg: 100), reps: 5)]
                 )
             )
-            // Seed the new v1 entity through the shipping store so the
-            // spike proves the v2 snapshot carries a real journal row.
+            // Seed the watch-sync journal through the shipping store so the
+            // spike proves the v3 snapshot carries a real journal row.
             try store.applyDigest(lastPerformance: [], ackedSessionIDs: [])
         }
 
         // 2. Open that same file through a ladder that *does* have a
-        //    v1 → v2 stage. If v1 were not a frozen, nameable snapshot this
-        //    is the step that could not be written at all.
+        //    v2 → v3 stage. If v2 were not a frozen, nameable snapshot this
+        //    is the step that could not be written at all. Only that stage
+        //    runs: the file is already at v2, so the shipping V1 → V2 stage
+        //    is skipped.
         //
         //    Everything that container vends — the container itself, its
         //    contexts, and every model object fetched from them — is
@@ -152,49 +171,50 @@ struct MigrationSpikeTests {
             let context = ModelContext(migrated)
 
             // The stage really ran, exactly once, and each half saw the
-            // shape SwiftData promises it: v1 named from `willMigrate`, v2
+            // shape SwiftData promises it: v2 named from `willMigrate`, v3
             // from `didMigrate`. Both are only writable because each
             // version owns its model types.
             #expect(spikeMigrationTrace.withLock(\.stageRuns) == 1)
-            #expect(spikeMigrationTrace.withLock(\.setRecordsSeenAsV1) == 1)
             #expect(spikeMigrationTrace.withLock(\.setRecordsSeenAsV2) == 1)
+            #expect(spikeMigrationTrace.withLock(\.setRecordsSeenAsV3) == 1)
 
             // Row counts: nothing dropped, nothing duplicated.
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Exercise>()) == 2)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Routine>()) == 1)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.RoutineItem>()) == 2)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.Session>()) == 1)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.SessionItem>()) == 2)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()) == 1)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ActiveSessionJournal>()) == 1)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.ExerciseLastPerformance>()) == 1)
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.WatchSyncJournal>()) == 1)
-            // Never seeded in this test — the entity migrates even so.
-            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV2.CatalogSeedState>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.Exercise>()) == 2)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.Routine>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.RoutineItem>()) == 2)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.Session>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.SessionItem>()) == 2)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.SetRecord>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.ActiveSessionJournal>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.ExerciseLastPerformance>()) == 1)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.WatchSyncJournal>()) == 1)
+            // Never seeded in this test — the entities migrate even so.
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.CatalogSeedState>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<MigrationSpikeSchemaV3.SessionTombstone>()) == 0)
 
             // Spot values: the set row came through byte-for-byte, including
             // the kg canonicalisation (§1 acceptance #4)…
             let set = try #require(
-                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()).first
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV3.SetRecord>()).first
             )
             #expect(set.weightKg == 102.5)
             #expect(set.reps == 5)
             #expect(set.completedAt == Fixture.epoch)
             #expect(set.isWarmup == false)
-            // …the new v2 column is present and empty on migrated rows…
+            // …the new v3 column is present and empty on migrated rows…
             #expect(set.rpe == nil)
             // …and the relationships still resolve across the migration.
             #expect(set.sessionItem?.session?.id == sessionID)
             #expect(set.sessionItem?.exercise?.name == "Bench Press")
 
             let digest = try #require(
-                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.ExerciseLastPerformance>()).first
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV3.ExerciseLastPerformance>()).first
             )
             #expect(digest.exerciseID == bench.id)
             #expect(digest.sets.map(\.weightKg) == [100])
 
             let journal = try #require(
-                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.ActiveSessionJournal>()).first
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV3.ActiveSessionJournal>()).first
             )
             #expect(journal.sessionID == sessionID)
             let scaffolding = try JSONDecoder().decode(
@@ -204,12 +224,12 @@ struct MigrationSpikeTests {
             #expect(scaffolding.restTimer?.duration == 90)
 
             let watchSyncJournal = try #require(
-                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV2.WatchSyncJournal>()).first
+                try context.fetch(FetchDescriptor<MigrationSpikeSchemaV3.WatchSyncJournal>()).first
             )
             #expect(watchSyncJournal.key == "watchSync")
             #expect(!watchSyncJournal.payload.isEmpty)
 
-            // 3. The migrated store is a working v2 store, not just a
+            // 3. The migrated store is a working v3 store, not just a
             //    readable one: write the new column, commit it, and prove
             //    the commit left the context — a second context on the same
             //    container has to see it, or the value is still only
@@ -220,7 +240,7 @@ struct MigrationSpikeTests {
             let sameContainer = ModelContext(migrated)
             #expect(
                 try sameContainer.fetch(
-                    FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()
+                    FetchDescriptor<MigrationSpikeSchemaV3.SetRecord>()
                 ).first?.rpe == 8.5
             )
         }
@@ -230,13 +250,13 @@ struct MigrationSpikeTests {
         try autoreleasepool {
             let reopened = ModelContext(try openThroughSpikeLadder(.watch, at: url))
             let reread = try #require(
-                try reopened.fetch(FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()).first
+                try reopened.fetch(FetchDescriptor<MigrationSpikeSchemaV3.SetRecord>()).first
             )
             #expect(reread.rpe == 8.5)
             #expect(reread.weightKg == 102.5)
         }
 
-        // Reopening a store that is already at v2 runs no stage — the
+        // Reopening a store that is already at v3 runs no stage — the
         // migration happened once, not once per open. If this ever reads 2,
         // the store is not recording its version and a *re-run* migration,
         // not the save, is what discarded the post-migration write.

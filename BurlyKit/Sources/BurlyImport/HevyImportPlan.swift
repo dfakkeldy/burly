@@ -39,6 +39,13 @@ public struct HevyImportPreview: Sendable, Equatable {
     /// Workouts in the file whose deterministic ID is already stored — a
     /// re-import or an overlapping export. Skipped, never duplicated.
     public let alreadyImportedWorkoutCount: Int
+    /// Workouts in the file the user has since deleted in Burly's History.
+    /// Skipped too: the same deterministic ID comes back with every
+    /// re-import and every newer export, and bringing a deleted workout
+    /// back is not what someone importing to pick up new workouts asked
+    /// for. Counted apart from `alreadyImportedWorkoutCount`, because they
+    /// are not in Burly.
+    public let deletedInBurlyWorkoutCount: Int
     /// Earliest to latest start across every workout in the file, so the
     /// user can check the time-zone assumption against dates they recognize
     /// even when nothing is new. `nil` only for a file with no workouts.
@@ -58,7 +65,10 @@ public struct HevyImportPreview: Sendable, Equatable {
     public let setCount: Int
 
     public var newCustomExerciseCount: Int { newCustomExerciseNames.count }
-    /// True when the store already holds every workout in the file.
+    /// True when the commit would add no workout: each one in the file is
+    /// already stored or was deleted in History (or the file has none).
+    /// Not "everything is in Burly": `deletedInBurlyWorkoutCount` says
+    /// how many are not.
     public var isNothingNew: Bool { newWorkoutCount == 0 }
 }
 
@@ -93,6 +103,10 @@ public struct HevyImportPlan: Sendable, Equatable {
     ///   - existingSessionIDs: The IDs among `result.sessions` that the
     ///     store already holds (a superset is fine — only membership is
     ///     asked).
+    ///   - deletedSessionIDs: The IDs among `result.sessions` the user
+    ///     deleted in History (the store's tombstones). Skipped like the
+    ///     existing ones, counted separately. An id in both sets counts as
+    ///     existing.
     ///   - existingExerciseIDs: Every stored exercise ID, archived included
     ///     (an archived row still exists: `createExercise` would refuse its
     ///     ID, and history may still reference it).
@@ -100,10 +114,16 @@ public struct HevyImportPlan: Sendable, Equatable {
         result: HevyImportResult,
         catalog: CatalogSeed,
         existingSessionIDs: Set<UUID>,
+        deletedSessionIDs: Set<UUID> = [],
         existingExerciseIDs: Set<UUID>
     ) throws -> HevyImportPlan {
+        let deletedInBurly = result.sessions.filter { (session: SessionData) -> Bool in
+            existingSessionIDs.contains(session.id) == false && deletedSessionIDs.contains(session.id)
+        }.count
         let newSessions = result.sessions
-            .filter { existingSessionIDs.contains($0.id) == false }
+            .filter { (session: SessionData) -> Bool in
+                existingSessionIDs.contains(session.id) == false && deletedSessionIDs.contains(session.id) == false
+            }
             .map { session -> SessionData in
                 var planned = session
                 // Spec §8 / acceptance #3: an imported session never links
@@ -164,7 +184,8 @@ public struct HevyImportPlan: Sendable, Equatable {
         let preview = HevyImportPreview(
             workoutsInFile: result.sessions.count,
             newWorkoutCount: newSessions.count,
-            alreadyImportedWorkoutCount: result.sessions.count - newSessions.count,
+            alreadyImportedWorkoutCount: result.sessions.count - newSessions.count - deletedInBurly,
+            deletedInBurlyWorkoutCount: deletedInBurly,
             fileDateRange: dateRange(of: result.sessions),
             newWorkoutDateRange: dateRange(of: newSessions),
             exercisesMatched: matched,
@@ -177,6 +198,39 @@ public struct HevyImportPlan: Sendable, Equatable {
             sessionsToCreate: newSessions,
             preview: preview,
             fileSummary: result.summary
+        )
+    }
+
+    /// `make` against a live store: asks the two probes about the file's
+    /// own session IDs only (each a bounded count, never a session graph:
+    /// m7-02 review), so the app and the tests share one planning path.
+    ///
+    /// - Parameters:
+    ///   - sessionIsStored: Whether the store holds a session with this id.
+    ///   - sessionWasDeleted: Whether the user deleted one with this id in
+    ///     History. Asked only when the first probe says no.
+    public static func make(
+        result: HevyImportResult,
+        catalog: CatalogSeed,
+        existingExerciseIDs: Set<UUID>,
+        sessionIsStored: (UUID) throws -> Bool,
+        sessionWasDeleted: (UUID) throws -> Bool
+    ) throws -> HevyImportPlan {
+        var existing = Set<UUID>()
+        var deleted = Set<UUID>()
+        for session in result.sessions {
+            if try sessionIsStored(session.id) {
+                existing.insert(session.id)
+            } else if try sessionWasDeleted(session.id) {
+                deleted.insert(session.id)
+            }
+        }
+        return try make(
+            result: result,
+            catalog: catalog,
+            existingSessionIDs: existing,
+            deletedSessionIDs: deleted,
+            existingExerciseIDs: existingExerciseIDs
         )
     }
 

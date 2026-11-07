@@ -146,28 +146,65 @@ public struct BurlySessionPayloadDTO: Sendable, Equatable, Codable {
 /// The phone-to-watch latest-wins digest payload.
 ///
 /// `lastPerformance` intentionally reuses `ExerciseLastPerformanceData`.
-/// Its complete-history generator contract is documented at that type's
-/// existing sync seam (`SessionDigestReceipt`); this payload does not duplicate
-/// or weaken that contract.
+/// Its generator contract (exact entries for the exercises the watch can
+/// show, bounded to fit the channel) is documented at that type's existing
+/// sync seam (`SessionDigestReceipt`); this payload does not duplicate or
+/// weaken that contract.
+///
+/// ## Routine dates (additive within schema 2)
+///
+/// `routineLastPerformed` carries each stored routine's latest logged
+/// session start (archived routines included, so a digest that overtakes
+/// the snapshot archiving one cannot blank a row the watch still shows),
+/// so the watch keeps showing §2's "last done N days ago"
+/// after it prunes the sessions the phone acknowledged. It is an additive
+/// key, not a schema bump, on purpose. A schema-2 watch that predates it
+/// ignores the key (this decoder, like every payload decoder here, reads
+/// only the keys it knows). A bump would instead make every older watch
+/// hold every digest, which stops its acks and pruning, for a row of text.
+///
+/// The key's absence is kept distinct from an empty list. A digest without
+/// it comes from a phone that predates it and says nothing about routines,
+/// so the watch must leave the dates it has alone; an empty list says the
+/// phone has no logged session for any live routine.
 public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
     /// The snapshot version from which this latest-wins digest was derived.
     public let snapshotVersion: Int
     public let lastPerformance: [ExerciseLastPerformanceData]
     public let ackedSessionIDs: [UUID]
+    /// When present, complete for the routines the phone stores: one that
+    /// is absent has no logged session on the phone (or was deleted).
+    /// `nil` when the sender predates the key. See the type doc.
+    public let routineLastPerformed: [BurlyRoutineLastPerformedDTO]?
 
     public init(
         snapshotVersion: Int,
         lastPerformance: [ExerciseLastPerformanceData],
         ackedSessionIDs: [UUID]
     ) {
+        self.init(
+            snapshotVersion: snapshotVersion,
+            lastPerformance: lastPerformance,
+            ackedSessionIDs: ackedSessionIDs,
+            routineLastPerformed: nil
+        )
+    }
+
+    public init(
+        snapshotVersion: Int,
+        lastPerformance: [ExerciseLastPerformanceData],
+        ackedSessionIDs: [UUID],
+        routineLastPerformed: [BurlyRoutineLastPerformedDTO]?
+    ) {
         precondition(snapshotVersion >= 0, "Snapshot version must be non-negative.")
         self.snapshotVersion = snapshotVersion
         self.lastPerformance = lastPerformance
         self.ackedSessionIDs = ackedSessionIDs
+        self.routineLastPerformed = routineLastPerformed
     }
 
     private enum CodingKeys: String, CodingKey {
-        case snapshotVersion, lastPerformance, ackedSessionIDs
+        case snapshotVersion, lastPerformance, ackedSessionIDs, routineLastPerformed
     }
 
     /// Fails closed for a negative snapshot version received over the
@@ -195,6 +232,25 @@ public struct BurlyDigestPayloadDTO: Sendable, Equatable, Codable {
         self.snapshotVersion = snapshotVersion
         lastPerformance = try container.decode([ExerciseLastPerformanceData].self, forKey: .lastPerformance)
         ackedSessionIDs = try container.decode([UUID].self, forKey: .ackedSessionIDs)
+        // Absent from an older phone, and kept absent (see the type doc).
+        // When present, each element requires both fields (synthesized
+        // decoding); synthesized encoding omits the key when `nil`.
+        routineLastPerformed = try container.decodeIfPresent(
+            [BurlyRoutineLastPerformedDTO].self,
+            forKey: .routineLastPerformed
+        )
+    }
+}
+
+/// One routine's latest logged session start, as the digest carries it.
+/// Synthesized `Codable`, so both fields are required on the wire.
+public struct BurlyRoutineLastPerformedDTO: Sendable, Equatable, Hashable, Codable {
+    public let routineID: UUID
+    public let performedAt: Date
+
+    public init(routineID: UUID, performedAt: Date) {
+        self.routineID = routineID
+        self.performedAt = performedAt
     }
 }
 

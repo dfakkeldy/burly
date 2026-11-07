@@ -33,8 +33,10 @@ struct LoggingScreenView: View {
     @State private var viewModel: SessionViewModel
     @State private var isShowingActions = false
     @State private var pendingAction: PendingSessionAction?
+    @State private var tickScheduleStart = Date.now
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(\.scenePhase) private var scenePhase
 
     /// - Parameter startInSummary: threaded straight through to
     ///   `SessionViewModel.init` -- see its doc. m2-06's Resume-decline path
@@ -75,6 +77,7 @@ struct LoggingScreenView: View {
                     isFinishing: false,
                     saveError: nil,
                     lacksSensorData: viewModel.workoutRecording?.lacksSensorData == true,
+                    skippedForAnotherWorkout: viewModel.workoutRecording == .supersededByAnotherWorkout,
                     onFinish: {},
                     onRetryFinish: {},
                     onKeepGoing: {},
@@ -93,9 +96,53 @@ struct LoggingScreenView: View {
                     onDiscard: viewModel.requestDiscard,
                     onDone: {}
                 )
+                .background { SessionTicker(onTick: viewModel.tick) }
+            } else if let staleSince = viewModel.staleSince {
+                // §4 stale-session guard, met on the logging screen itself.
+                SessionPromptView(
+                    systemImage: "clock.badge.exclamationmark",
+                    heading: "Still working out?",
+                    detail: viewModel.hasLoggedSets
+                        ? Text("Last set \(staleSince, format: .relative(presentation: .named))")
+                        : Text("Started \(staleSince, format: .relative(presentation: .named))"),
+                    identifier: "staleSession",
+                    primaryTitle: "End workout",
+                    onPrimary: viewModel.endStaleSession,
+                    secondaryTitle: "Keep going",
+                    onSecondary: viewModel.dismissStalePrompt
+                )
+                .background { SessionTicker(onTick: viewModel.tick) }
+            } else if viewModel.isShowingAnotherWorkout {
+                // §4: "another workout is running", finish or discard.
+                SessionPromptView(
+                    systemImage: "exclamationmark.triangle",
+                    heading: "Another workout is running",
+                    detail: Text("Another app started a workout, so Burly stopped recording this one to Health. Your sets are saved."),
+                    identifier: "anotherWorkout",
+                    primaryTitle: "End workout",
+                    onPrimary: viewModel.endAfterAnotherWorkout,
+                    secondaryTitle: "Keep logging",
+                    onSecondary: viewModel.dismissAnotherWorkout,
+                    destructiveTitle: "Discard",
+                    onDestructive: viewModel.discardAfterAnotherWorkout
+                )
+                .background { SessionTicker(onTick: viewModel.tick) }
             } else {
                 loggingBody
             }
+        }
+        // §2 hands-busy test: a stray tap on the back chevron or an edge
+        // swipe used to pop this screen mid-workout, dropping the view
+        // model and with it the 1 Hz tick and the rest haptics. The way
+        // out is the actions menu (End workout, Discard) or the summary's
+        // Done, all of which still dismiss programmatically.
+        .navigationBarBackButtonHidden(true)
+        // §4 stale-session guard "on watch app activation": an active
+        // workout keeps the app frontmost, so a lifter who walked away
+        // comes back here, not to the home gate that checks on load. Not
+        // under the open actions sheet, which would cover the prompt.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active, !isShowingActions { viewModel.checkForStaleSession() }
         }
         .sheet(isPresented: $isShowingActions, onDismiss: applyPendingAction) {
             SessionActionsView(
@@ -127,7 +174,7 @@ struct LoggingScreenView: View {
                 NavigationStack {
                     ExercisePickerView(
                         context: context,
-                        exercises: viewModel.availableExercises(),
+                        exercises: viewModel.availableExercises(for: context),
                         onSelect: { exerciseID in
                             switch context {
                             case .swap(let itemID):
@@ -176,9 +223,15 @@ struct LoggingScreenView: View {
         }
     }
 
+    /// The pager keeps its own 1 Hz `TimelineView`, with the pages built in
+    /// its content closure: the shape `SessionActionsUITests` has run green
+    /// on (a pager moved out of the closure was one of m2-04's suspects).
+    /// The screens that replace the pager tick through `SessionTicker`.
+    /// Both schedules start at a fixed date, so a body that runs again on a
+    /// tick never hands its timeline a new start (`SessionTicker`'s doc).
     @ViewBuilder
     private var loggingBody: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: tickScheduleStart, by: 1)) { context in
             Group {
                 if viewModel.items.isEmpty {
                     emptySessionPlaceholder
@@ -258,5 +311,29 @@ struct LoggingScreenView: View {
             get: { viewModel.isShowingDiscardStepOne || viewModel.isShowingDiscardStepTwo },
             set: { if !$0 { viewModel.cancelDiscard() } }
         )
+    }
+}
+
+/// §2 Always-On's 1 Hz tick for the screens that replace the pager (the
+/// summary preview and the stale and another-workout prompts), drawn as an
+/// empty background: rest haptics and the takeover poll used to stop while
+/// one of them was up, because the only tick lived in the pager. The tick
+/// is the side effect hook, not the render (`SessionViewModel.tick()`'s
+/// doc). The schedule's start is fixed in state because the screen's body
+/// can run again on every tick, and a schedule starting `.now` each time
+/// would hand the timeline a new date at once, tick again and never go
+/// idle.
+private struct SessionTicker: View {
+    let onTick: @MainActor () -> Void
+
+    @State private var scheduleStart = Date.now
+
+    var body: some View {
+        TimelineView(.periodic(from: scheduleStart, by: 1)) { context in
+            Color.clear
+                .onChange(of: context.date) { _, _ in onTick() }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

@@ -15,6 +15,10 @@ import XCTest
 /// compiled app).
 final class LoggingScreenUITests: XCTestCase {
     private static let scenarioKey = "BURLY_WATCH_UI_TEST_SCENARIO"
+    /// Keeps an armed weight armed for 30 s instead of 3 (`WatchDemoSeed`),
+    /// for tests that read the armed state: on the hosted simulator one
+    /// accessibility read can take seconds, and the arm lapsed first.
+    private static let armIdleKey = "BURLY_WATCH_UI_TEST_ARM_IDLE_SECONDS"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -30,6 +34,7 @@ final class LoggingScreenUITests: XCTestCase {
     func testFullSessionFlowLogSwapFinishShowsCorrectTotals() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
+        app.launchEnvironment[Self.armIdleKey] = "30"
         app.launch()
 
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
@@ -66,10 +71,12 @@ final class LoggingScreenUITests: XCTestCase {
 
         // Set 2 of 3 -- digest index 1 (102.5 kg × 7).
         assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "102.5 kg", reps: "7")
+        waitForRestInView(app)
         logButton.tap()
 
         // Set 3 of 3 -- digest index 2 (105 kg × 6).
         assertPrefill(ghost: ghost, weightControl: weightControl, repsControl: repsControl, weightText: "105.0 kg", reps: "6")
+        waitForRestInView(app)
         logButton.tap()
 
         attachScreenshot(from: app, name: "BurlyWatch-loggingScreen-threeSetsLogged")
@@ -206,6 +213,8 @@ final class LoggingScreenUITests: XCTestCase {
     func testSwapExerciseRelocksWeightControl() throws {
         let app = XCUIApplication()
         app.launchEnvironment[Self.scenarioKey] = "routines"
+        // Long enough that only the swap can lock it again.
+        app.launchEnvironment[Self.armIdleKey] = "30"
         app.launch()
 
         let legDayRow = app.staticTexts["routineRow.Leg Day.name"]
@@ -417,6 +426,29 @@ final class LoggingScreenUITests: XCTestCase {
     /// Swipes up on the app's frontmost content until `element` exists (or
     /// gives up after `maxAttempts`) -- for a lazily-rendered `List` row
     /// that isn't in the accessibility tree at the current scroll position.
+    /// After a Log set that starts a rest, waits for the page's reveal to
+    /// finish: the countdown fully on screen and Log set no longer moving.
+    /// The reveal lands a moment after the tap; a tap sent before it lands
+    /// hits whatever has scrolled under it, and on the hosted simulator
+    /// that was the countdown, whose tap skips the rest.
+    private func waitForRestInView(_ app: XCUIApplication, line: UInt = #line) {
+        let screen = screenBounds(app)
+        let remaining = app.staticTexts["restTimer.remaining"]
+        let logButton = app.buttons["logSetButton"]
+        var lastLogFrame = CGRect.null
+        let settled = waitFor(timeout: 10) {
+            guard remaining.exists, screen.contains(remaining.frame) else { return false }
+            let logFrame = logButton.frame
+            defer { lastLogFrame = logFrame }
+            return logFrame == lastLogFrame
+        }
+        XCTAssertTrue(
+            settled,
+            "Expected the rest countdown to come into view after Log set, got \(remaining.frame) in \(screen)",
+            line: line
+        )
+    }
+
     private func scrollUntilExists(_ app: XCUIApplication, _ element: XCUIElement, maxAttempts: Int = 8) -> Bool {
         for _ in 0..<maxAttempts {
             if element.exists { return true }

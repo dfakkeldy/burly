@@ -95,11 +95,16 @@ public enum WorkoutRecording: Sendable, Equatable {
     /// Nothing was written: Health is unavailable or declined, or HealthKit
     /// failed. Never shown to the lifter as an error (§4 acceptance #4).
     case notSaved
+    /// Nothing was written because another app's workout took over the
+    /// live one (§4 `anotherWorkoutSessionStarted`): a live or duration-only
+    /// workout from Burly would overlap that app's in Health. The lifter
+    /// was told when it happened, and the summary says so.
+    case supersededByAnotherWorkout
 
     public var workoutID: UUID? {
         switch self {
         case let .live(id), let .retrospective(id): id
-        case .alreadySaved, .notSaved: nil
+        case .alreadySaved, .notSaved, .supersededByAnotherWorkout: nil
         }
     }
 

@@ -64,6 +64,47 @@ struct SyncHostLoopbackTests {
         #expect(try rig.watch.loggedSessionsAwaitingAck().isEmpty)
     }
 
+    @Test("after the ack prunes a watch session, its routine's last-done date and ghost numbers stay on the watch")
+    func lastDoneSurvivesThePrune() async throws {
+        let rig = try Rig()
+        let bench = ExerciseData(name: "Bench Press", muscleGroups: [.chest], origin: .curated)
+        let routine = RoutineData(
+            name: "Push",
+            orderIndex: 0,
+            items: [RoutineItemData(exerciseID: bench.id, order: 0, defaultSetCount: 3)],
+            updatedAt: .now
+        )
+        try rig.phone.createExercise(bench)
+        try rig.phone.createRoutine(routine)
+        try await rig.activateBoth()
+        await rig.deliverPhoneToWatch()
+
+        let startedAt = Date(timeIntervalSinceReferenceDate: 815_000_000)
+        let session = SessionData(
+            routineID: routine.id,
+            routineName: routine.name,
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(1_800),
+            state: .logged,
+            origin: .live,
+            items: [SessionItemData(
+                exerciseID: bench.id,
+                order: 0,
+                sets: [SetRecordData(order: 0, weight: Weight(kg: 80), reps: 8, completedAt: startedAt)]
+            )]
+        )
+        try rig.watch.createSession(session)
+        rig.watchHost.sessionLogged(id: session.id)
+        await rig.deliverWatchToPhone()
+        await rig.deliverPhoneToWatch()
+
+        #expect(try rig.watch.session(id: session.id) == nil, "the acknowledged session is pruned")
+        // §2 "last done N days ago" now comes from the digest, not the
+        // session the watch no longer holds.
+        #expect(try rig.watch.routineLastPerformedDates()[routine.id] == startedAt)
+        #expect(try rig.watch.lastPerformance(exerciseID: bench.id)?.sets == [SetSnapshot(weight: Weight(kg: 80), reps: 8)])
+    }
+
     @Test("an unacknowledged session is re-sent on app activation unless WatchConnectivity still holds it")
     func outboxRetriesOnActivation() async throws {
         // Logged on an earlier launch and never acknowledged: the host

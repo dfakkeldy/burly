@@ -52,9 +52,10 @@
 //
 // ## Registering it in V1
 //
-// Same reasoning as `CatalogSeedState`: BurlySchemaV1 has not shipped, so
-// adding this model to V1 is an additive completion of the initial schema,
-// not a migration of user data. It is module-internal bookkeeping, not a
+// Same reasoning as `CatalogSeedState`: BurlySchemaV1 had not shipped when
+// this was added, so adding it to V1 was an additive completion of the
+// initial schema, not a migration of user data. V1 is frozen since
+// TestFlight 0.9.1. It is module-internal bookkeeping, not a
 // §1 domain entity, and nothing about it crosses the sync wire. Nested in
 // `BurlySchemaV1` like every other model — see Schema/CurrentSchema.swift.
 

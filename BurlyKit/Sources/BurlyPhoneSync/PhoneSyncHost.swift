@@ -67,6 +67,7 @@ public final class PhoneSyncHost {
 
     public let coordinator: PhoneSyncCoordinator
     private let adapter: WCSessionAdapter
+    private let bridge: PhoneWCSessionBridge
     private let session: any WCSessionTransport
     private let statePersisting: any PhoneSyncStatePersisting
     private let isWatchAppInstalled: @MainActor () -> Bool
@@ -108,6 +109,7 @@ public final class PhoneSyncHost {
         bridge.adapter = adapter
         self.coordinator = coordinator
         self.adapter = adapter
+        self.bridge = bridge
         self.session = session
         self.statePersisting = statePersisting
         self.isWatchAppInstalled = isWatchAppInstalled
@@ -136,8 +138,15 @@ public final class PhoneSyncHost {
 
     /// §5 "on any routine/catalog edit (debounced 5 s)" — and the two
     /// watch-facing Settings rows, which ride the snapshot.
+    ///
+    /// The digest is refreshed too: it is bounded to the exercises the
+    /// watch can still show, ranks routine exercises first and reports
+    /// routine dates, so a catalog or routine edit can change what it
+    /// should hold without any history changing. Coalesced and latest-wins,
+    /// like every digest publish.
     public func catalogDidChange() {
         Task { await coordinator.catalogDidChange() }
+        historyDidChange()
     }
 
     /// §5 "Digest is refreshed whenever history changes".
@@ -258,8 +267,11 @@ public final class PhoneSyncHost {
 
             case let .transportFailed(.publishDigest, error):
                 // Latest-wins: the next history change or launch publishes
-                // a fresh digest derived from store truth.
-                PhoneSyncLog.logger.error("digest publish failed: \(error.description, privacy: .public)")
+                // a fresh digest derived from store truth. The size is the
+                // first thing to know: an oversized payload fails the same
+                // way every time (see `SessionDigestGenerator`'s budget).
+                let size = bridge.lastDigestEnvelopeByteCount.map { "\($0) bytes" } ?? "size unknown"
+                PhoneSyncLog.logger.error("digest publish failed (\(size, privacy: .public)): \(error.description, privacy: .public)")
 
             case .reachabilityChanged, .sessionTransferFinished:
                 break
@@ -295,6 +307,13 @@ public final class PhoneSyncHost {
 @MainActor
 final class PhoneWCSessionBridge: PhoneSyncTransporting, PhoneDigestPublishing {
     weak var adapter: WCSessionAdapter?
+    /// The size of the last digest envelope handed to the adapter. A failed
+    /// `updateApplicationContext` comes back later as an event with no
+    /// payload, so the host reads the size from here to log it. A newer
+    /// publish can land before that event, in which case the logged size is
+    /// the newer digest's; digests are coalesced, so that is rare and the
+    /// two are usually close in size.
+    private(set) var lastDigestEnvelopeByteCount: Int?
 
     func transmitSnapshot(_ payload: BurlySnapshotPayloadDTO, generation: Int) async throws {
         let envelope = try BurlySyncEnvelope(payload: .snapshot(payload)).encodedData()
@@ -314,7 +333,8 @@ final class PhoneWCSessionBridge: PhoneSyncTransporting, PhoneDigestPublishing {
     func publishDigest(_ payload: BurlyDigestPayloadDTO) async {
         do {
             let envelope = try BurlySyncEnvelope(payload: .digest(payload)).encodedData()
-            PhoneSyncLog.logger.info("publishing digest at snapshot v\(payload.snapshotVersion, privacy: .public), \(payload.ackedSessionIDs.count, privacy: .public) acked")
+            lastDigestEnvelopeByteCount = envelope.count
+            PhoneSyncLog.logger.info("publishing digest at snapshot v\(payload.snapshotVersion, privacy: .public), \(payload.ackedSessionIDs.count, privacy: .public) acked, \(payload.lastPerformance.count, privacy: .public) exercises, \(payload.routineLastPerformed?.count ?? 0, privacy: .public) routines, \(envelope.count, privacy: .public) bytes")
             adapter?.execute(.publishDigest(envelope: envelope))
         } catch {
             PhoneSyncLog.logger.error("digest did not encode: \(String(describing: error), privacy: .public)")

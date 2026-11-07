@@ -423,6 +423,7 @@ private struct CatalogBrowserView: View {
 
     @State private var showsCustomCreator = false
     @State private var archiveCandidate: ExerciseData?
+    @State private var tagEditCandidate: ExerciseData?
     @State private var errorMessage: String?
     @State private var searchText = ""
 
@@ -446,7 +447,9 @@ private struct CatalogBrowserView: View {
                             Text(exercise.name)
                                 .font(.headline)
                                 .accessibilityIdentifier("catalog.exerciseName.\(exercise.id.uuidString)")
-                            Text(exercise.muscleGroups.map(\.displayName).joined(separator: " · "))
+                            Text(exercise.muscleGroups.isEmpty
+                                 ? "No muscle groups"
+                                 : exercise.muscleGroups.map(\.displayName).joined(separator: " · "))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .accessibilityIdentifier("catalog.exerciseTags.\(exercise.id.uuidString)")
@@ -456,6 +459,20 @@ private struct CatalogBrowserView: View {
                             Button("Add") { onSelect(exercise) }
                                 .buttonStyle(.bordered)
                                 .accessibilityIdentifier("catalog.addExercise.\(exercise.id.uuidString)")
+                        }
+                        if exercise.origin != .curated {
+                            // Custom and imported exercises can be born
+                            // with no tags (a Hevy import does not guess,
+                            // §8), which leaves their sets unattributed in
+                            // the muscle split. Curated tags are catalog
+                            // truth (§9) and stay read-only.
+                            Button {
+                                tagEditCandidate = exercise
+                            } label: {
+                                Image(systemName: "tag")
+                            }
+                            .accessibilityLabel("Edit muscle groups for \(exercise.name)")
+                            .accessibilityIdentifier("catalog.editTags.\(exercise.id.uuidString)")
                         }
                         Button(role: .destructive) {
                             archiveCandidate = exercise
@@ -503,6 +520,11 @@ private struct CatalogBrowserView: View {
                 } catch {
                     errorMessage = error.localizedDescription
                 }
+            }
+        }
+        .sheet(item: $tagEditCandidate) { exercise in
+            MuscleGroupEditorView(exercise: exercise) { tags in
+                try viewModel.updateMuscleGroups(of: exercise, to: tags)
             }
         }
         .confirmationDialog(
@@ -563,27 +585,7 @@ private struct CustomExerciseCreationView: View {
                         .textInputAutocapitalization(.words)
                         .accessibilityIdentifier("catalog.custom.nameField")
                 }
-                Section("Muscle groups") {
-                    ForEach(MuscleGroup.allCases, id: \.self) { group in
-                        Button {
-                            if selectedGroups.contains(group) {
-                                selectedGroups.remove(group)
-                            } else {
-                                selectedGroups.insert(group)
-                            }
-                        } label: {
-                            HStack {
-                                Text(group.displayName)
-                                Spacer()
-                                if selectedGroups.contains(group) {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                        .accessibilityIdentifier("catalog.custom.muscleTag.\(group.rawValue)")
-                        .accessibilityValue(selectedGroups.contains(group) ? "Selected" : "Not selected")
-                    }
-                }
+                MuscleGroupTagPicker(selection: $selectedGroups, identifierPrefix: "catalog.custom.muscleTag")
             }
             .navigationTitle("Custom Exercise")
             .toolbar {
@@ -593,7 +595,7 @@ private struct CustomExerciseCreationView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
-                        onCreate(name, MuscleGroup.allCases.filter(selectedGroups.contains))
+                        onCreate(name, selectedGroups.inTaxonomyOrder)
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedGroups.isEmpty)
                     .accessibilityIdentifier("catalog.custom.createButton")
@@ -603,7 +605,107 @@ private struct CustomExerciseCreationView: View {
     }
 }
 
-private extension MuscleGroup {
+/// The muscle-tag list custom-exercise creation introduced, shared with the
+/// naming queue and the catalog's tag editor so every place a lifter tags an
+/// exercise offers the same frozen taxonomy (§1) in the same order. It is
+/// one Form section; `identifierPrefix` keeps each screen's identifiers
+/// distinct (`<prefix>.<rawValue>`).
+@MainActor
+struct MuscleGroupTagPicker: View {
+    @Binding var selection: Set<MuscleGroup>
+    let identifierPrefix: String
+
+    var body: some View {
+        Section("Muscle groups") {
+            ForEach(MuscleGroup.allCases, id: \.self) { group in
+                Button {
+                    if selection.contains(group) {
+                        selection.remove(group)
+                    } else {
+                        selection.insert(group)
+                    }
+                } label: {
+                    HStack {
+                        Text(group.displayName)
+                        Spacer()
+                        if selection.contains(group) {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+                .accessibilityIdentifier("\(identifierPrefix).\(group.rawValue)")
+                .accessibilityValue(selection.contains(group) ? "Selected" : "Not selected")
+            }
+        }
+    }
+}
+
+extension Set where Element == MuscleGroup {
+    /// The selection in taxonomy order, the order tags are stored and shown.
+    var inTaxonomyOrder: [MuscleGroup] {
+        MuscleGroup.allCases.filter(contains)
+    }
+}
+
+/// Retags a custom or imported exercise from the catalog. Same rule as
+/// creation: at least one tag, since an untagged exercise is exactly what
+/// this screen exists to fix.
+@MainActor
+private struct MuscleGroupEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    let exercise: ExerciseData
+    let onSave: ([MuscleGroup]) throws -> Void
+    @State private var selection: Set<MuscleGroup>
+    @State private var errorMessage: String?
+
+    init(exercise: ExerciseData, onSave: @escaping ([MuscleGroup]) throws -> Void) {
+        self.exercise = exercise
+        self.onSave = onSave
+        _selection = State(initialValue: Set(exercise.muscleGroups))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(exercise.name)
+                        .font(.headline)
+                }
+                MuscleGroupTagPicker(selection: $selection, identifierPrefix: "catalog.editTags.muscleTag")
+            }
+            .navigationTitle("Muscle Groups")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .accessibilityIdentifier("catalog.editTags.cancelButton")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        do {
+                            try onSave(selection.inTaxonomyOrder)
+                            dismiss()
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
+                    }
+                    .disabled(selection.isEmpty || selection == Set(exercise.muscleGroups))
+                    .accessibilityIdentifier("catalog.editTags.saveButton")
+                }
+            }
+            .alert("Couldn’t save muscle groups", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+    }
+}
+
+extension MuscleGroup {
     var displayName: String {
         switch self {
         case .upperBack: "Upper back"

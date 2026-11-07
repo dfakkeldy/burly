@@ -9,8 +9,9 @@
 // re-querying the store.
 //
 // At accessibility text sizes the charts keep their data and ranges but
-// change how they label it (#30, #37, #38): date axes show only their first
-// and last dates, value axes ask for fewer ticks, units move to their own
+// change how they label it (#30, #37, #38): the progression axis shows only
+// its first and last dates, the weekly charts name their weeks in a line
+// under the plot, value axes ask for fewer ticks, units move to their own
 // line above the plot, and chart height grows by the room the labels need.
 // At the default size the charts look as they did before.
 
@@ -137,7 +138,7 @@ struct StatsTabView: View {
                     .statsYAxisLabel(unit.symbol, isAccessibilitySize: isAccessibilitySize)
                     .chartXAxis {
                         if isAccessibilitySize {
-                            endpointDateMarks(axisDates, weekBars: false)
+                            endpointDateMarks(axisDates)
                         } else {
                             AxisMarks()
                         }
@@ -186,8 +187,14 @@ struct StatsTabView: View {
         return Menu {
             Picker(
                 "Exercise",
+                // The exercise the chart shows, not `selectedExerciseID`:
+                // the view model picks it from `stats.exercises`, so the
+                // selection is always one of the tags below. A picked
+                // exercise can drop out of that list (archived, and not
+                // trained in the last year); the view model then falls
+                // back, and the stale ID would match no tag.
                 selection: Binding(
-                    get: { selectedExerciseID ?? exercise.id },
+                    get: { exercise.id },
                     set: { newID in
                         selectedExerciseID = newID
                         reloadStats()
@@ -263,7 +270,7 @@ struct StatsTabView: View {
     }
 
     private func volumeCard(_ stats: PhoneStatsDashboard) -> some View {
-        let axisDates = endpointDates(stats.volume.map(\.weekStart))
+        let weeks = endpointDates(stats.volume.map(\.weekStart))
         return StatsCard(title: "Weekly volume", subtitle: "Working sets only") {
             rangePicker(
                 selection: $volumeRange,
@@ -284,7 +291,7 @@ struct StatsTabView: View {
                 .statsYAxisLabel(volumeUnitLabel, isAccessibilitySize: isAccessibilitySize)
                 .chartXAxis {
                     if isAccessibilitySize {
-                        endpointDateMarks(axisDates, weekBars: true)
+                        weekEndpointTicks(weeks)
                     } else {
                         AxisMarks(values: .stride(by: .weekOfYear, count: max(1, volumeRange.weekCount / 4)))
                     }
@@ -305,6 +312,8 @@ struct StatsTabView: View {
                 .frame(height: 140 + axisLabelAllowance)
                 .accessibilityIdentifier("statsTab.volume.chart")
                 .accessibilityLabel("Weekly training volume chart")
+
+                weekRangeLine(weeks, identifier: "statsTab.volume.weekRange")
             } else {
                 StatsChartEmptyState(
                     title: "No volume in this range",
@@ -382,7 +391,7 @@ struct StatsTabView: View {
     }
 
     private func consistencyCard(_ stats: PhoneStatsDashboard) -> some View {
-        let axisDates = endpointDates(stats.consistencyWeeks.map(\.weekStart))
+        let weeks = endpointDates(stats.consistencyWeeks.map(\.weekStart))
         return StatsCard(title: "Consistency", subtitle: "Sessions this week vs. a typical week") {
             if stats.consistency.weeks.isEmpty {
                 StatsChartEmptyState(
@@ -413,7 +422,7 @@ struct StatsTabView: View {
                 .statsYAxisLabel("sessions", isAccessibilitySize: isAccessibilitySize)
                 .chartXAxis {
                     if isAccessibilitySize {
-                        endpointDateMarks(axisDates, weekBars: true)
+                        weekEndpointTicks(weeks)
                     } else {
                         AxisMarks()
                     }
@@ -430,6 +439,8 @@ struct StatsTabView: View {
                 .frame(height: 130 + axisLabelAllowance)
                 .accessibilityIdentifier("statsTab.consistency.chart")
                 .accessibilityLabel("Weekly consistency chart")
+
+                weekRangeLine(weeks, identifier: "statsTab.consistency.weekRange")
 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
                     ForEach(stats.calendarDots) { day in
@@ -490,25 +501,21 @@ struct StatsTabView: View {
         return first == last ? [first] : [first, last]
     }
 
-    /// The large-text date axis: only the first and last dates, each
-    /// stacked month over day so it fits under the plot and anchored inward
-    /// so neither runs off the chart. The year is added unless both dates
-    /// are in the current year.
-    ///
-    /// Session points sit on their dates. A weekly bar spans its week, so
-    /// `weekBars` moves each mark to mid-week, under the middle of its bar,
-    /// while the label still names the week's first day. At the band's
-    /// start, an inward-anchored last label sat under the week before it
-    /// (on 8W, "Nov 1" under the bar for Oct 25); anchored outward it ran
-    /// into the value labels and Charts dropped it.
-    private func endpointDateMarks(_ dates: [Date], weekBars: Bool) -> some AxisContent {
+    /// Large-text dates carry their year unless all of them are in the
+    /// current year.
+    private func showsYear(_ dates: [Date]) -> Bool {
         let calendar = Calendar.autoupdatingCurrent
-        let showsYear = dates.contains { !calendar.isDate($0, equalTo: .now, toGranularity: .year) }
-        let positions = weekBars ? dates.map { midWeek(of: $0, calendar: calendar) } : dates
-        return AxisMarks(values: positions) { value in
-            if !weekBars {
-                AxisGridLine()
-            }
+        return dates.contains { !calendar.isDate($0, equalTo: .now, toGranularity: .year) }
+    }
+
+    /// The large-text progression axis: only the first and last session
+    /// dates, each stacked month over day so it fits under the plot and
+    /// anchored inward so neither runs off the chart. A session point sits
+    /// on its date, so the label still starts or ends at its point.
+    private func endpointDateMarks(_ dates: [Date]) -> some AxisContent {
+        let withYear = showsYear(dates)
+        return AxisMarks(values: dates) { value in
+            AxisGridLine()
             AxisTick()
             if dates.indices.contains(value.index) {
                 let date = dates[value.index]
@@ -518,7 +525,7 @@ struct StatsTabView: View {
                     VStack(alignment: isFirst ? .leading : (isLast ? .trailing : .center), spacing: 0) {
                         Text(date, format: .dateTime.month(.abbreviated))
                         Text(date, format: .dateTime.day())
-                        if showsYear {
+                        if withYear {
                             Text(date, format: .dateTime.year())
                         }
                     }
@@ -526,6 +533,52 @@ struct StatsTabView: View {
                 }
             }
         }
+    }
+
+    /// The large-text weekly axis: a tick under the middle of the first and
+    /// last weeks' bars, and no dates. A date that large is wider than a
+    /// bar, so an inward label always spilled under the neighbouring week,
+    /// and while the end week was empty (this week, until its first
+    /// workout) it read as the wrong bar's ("Nov 1" under Oct 25's).
+    /// `weekRangeLine` names the two weeks under the chart instead.
+    private func weekEndpointTicks(_ weeks: [Date]) -> some AxisContent {
+        let calendar = Calendar.autoupdatingCurrent
+        let positions: [Date] = weeks.map { midWeek(of: $0, calendar: calendar) }
+        return AxisMarks(values: positions) { _ in
+            AxisTick()
+        }
+    }
+
+    /// "Weeks of Sep 13 – Nov 1" under a weekly chart at accessibility
+    /// sizes, where its axis has no dates. Nothing at other sizes, whose
+    /// axes label their own weeks.
+    @ViewBuilder
+    private func weekRangeLine(_ weeks: [Date], identifier: String) -> some View {
+        if isAccessibilitySize, let first = weeks.first, let last = weeks.last {
+            let withYear = showsYear(weeks)
+            Text(weekRangeText(from: first, to: last, month: .abbreviated, withYear: withYear, separator: " – "))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(weekRangeText(from: first, to: last, month: .wide, withYear: withYear, separator: " to "))
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private func weekRangeText(
+        from first: Date,
+        to last: Date,
+        month: Date.FormatStyle.Symbol.Month,
+        withYear: Bool,
+        separator: String
+    ) -> String {
+        var style: Date.FormatStyle = .dateTime.month(month).day()
+        if withYear {
+            style = style.year()
+        }
+        let firstText: String = first.formatted(style)
+        guard first != last else { return "Week of " + firstText }
+        let lastText: String = last.formatted(style)
+        return "Weeks of " + firstText + separator + lastText
     }
 
     private func midWeek(of weekStart: Date, calendar: Calendar) -> Date {
