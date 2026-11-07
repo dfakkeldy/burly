@@ -127,7 +127,14 @@ let package = Package(
             // stats-query benchmark can seed 50k SetRecords from
             // `WorkoutHistoryGenerator` instead of hand-rolling a second
             // synthetic-history generator.
-            dependencies: ["BurlyPersistence", "BurlySync", "BurlyFixtures"]
+            dependencies: ["BurlyPersistence", "BurlySync", "BurlyFixtures"],
+            // Stores written by the TestFlight 0.9.1 code (burly-rc1), opened
+            // through the current migration plan by
+            // ShippedStoreMigrationTests. Copied, never processed: they are
+            // SQLite files and must stay byte-for-byte what that build wrote.
+            resources: [
+                .copy("Fixtures/ShippedV1")
+            ]
         ),
         .testTarget(
             name: "BurlySyncTests",

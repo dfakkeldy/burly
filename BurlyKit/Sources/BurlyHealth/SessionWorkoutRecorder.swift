@@ -28,18 +28,42 @@ public final class SessionWorkoutRecorder {
     /// The Burly session the live workout belongs to, if one is running.
     public private(set) var liveSessionID: UUID?
 
+    /// The session whose live start has not answered: still in flight, or
+    /// timed out but possibly finishing later in HealthKit. A takeover in
+    /// that window belongs to this session, though `liveSessionID` is
+    /// never set for it.
+    private var startingSessionID: UUID?
+
+    /// Sessions whose live workout another app's workout took over, or
+    /// kept from starting (§4), oldest first. Kept in `marks` because
+    /// watchOS can end Burly once its workout is gone: a lifter who
+    /// reopens it and finishes must still get no overlapping workout.
+    private var supersededSessionIDs: [UUID]
+    private let marks: SupersededSessionMarks
+
+    /// Enough for any realistic run of interrupted sessions; the oldest
+    /// marks go first, since Finish or Discard normally clears each one.
+    private static let markLimit = 16
+
     public init(
         store: any WorkoutHealthStore,
         controller: WorkoutController,
         timeout: Duration = .seconds(10),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        marks: SupersededSessionMarks = .none
     ) {
         self.store = store
         self.controller = controller
         self.timeout = timeout
         self.sleep = sleep
         self.now = now
+        self.marks = marks
+        supersededSessionIDs = marks.load()
+        controller.onAnotherWorkoutStarted = { [weak self] in
+            guard let self, let sessionID = self.liveSessionID ?? self.startingSessionID else { return }
+            self.markSuperseded(sessionID)
+        }
     }
 
     // MARK: - Session events
@@ -55,11 +79,38 @@ public final class SessionWorkoutRecorder {
             }
             guard store.authorizationStatus == .authorized else { return }
             await discardLiveWorkout()
-            guard case .finished(.success) = await bounded({ [controller] in
-                try await controller.start(at: date)
-            }) else { return }
-            liveSessionID = sessionID
+            startingSessionID = sessionID
+            switch await bounded({ [controller] in try await controller.start(at: date) }) {
+            case .finished(.success):
+                startingSessionID = nil
+                liveSessionID = sessionID
+                // A takeover that landed between the start finishing and
+                // this line found no live session to mark.
+                if controller.lifecycle == .failed(.anotherWorkoutSessionStarted) {
+                    markSuperseded(sessionID)
+                }
+            case let .finished(.failure(error)) where Self.isAnotherWorkout(error):
+                startingSessionID = nil
+                markSuperseded(sessionID)
+            case .finished(.failure):
+                startingSessionID = nil
+            case .timedOut:
+                // HealthKit may still start it; `startingSessionID` stays,
+                // so a takeover after that is marked for this session.
+                break
+            }
         }
+    }
+
+    /// §4: true once another app's workout has taken over this session's
+    /// live workout, or kept it from starting, in this launch or an
+    /// earlier one. The logging screen polls this to offer "another
+    /// workout is running" with finish-or-discard; `sessionDidFinish` then
+    /// saves no workout for the session.
+    public func anotherWorkoutTookOver(sessionID: UUID) -> Bool {
+        if supersededSessionIDs.contains(sessionID) { return true }
+        return (liveSessionID ?? startingSessionID) == sessionID
+            && controller.lifecycle == .failed(.anotherWorkoutSessionStarted)
     }
 
     /// Saves the session's workout. A live workout for this session runs
@@ -67,6 +118,12 @@ public final class SessionWorkoutRecorder {
     /// duration-only workout is saved unless one is already linked
     /// (recovery matrix row 2, and the guard against a second write after a
     /// crash between the HealthKit save and the store save).
+    ///
+    /// When another app's workout took over (§4), nothing is saved: that
+    /// app has its own workout for the same time, and a second one from
+    /// Burly, live or duration-only, would overlap it in Health. The mark
+    /// stays until `sessionWasLogged(sessionID:)`, so a crash before the
+    /// store save leaves the next Finish saving nothing too.
     public func sessionDidFinish(
         sessionID: UUID,
         startedAt: Date,
@@ -74,6 +131,16 @@ public final class SessionWorkoutRecorder {
     ) async -> WorkoutRecording {
         await enqueue { [self] in
             let metadata = WorkoutMetadata.linking(sessionID: sessionID)
+            defer {
+                if startingSessionID == sessionID { startingSessionID = nil }
+            }
+            if anotherWorkoutTookOver(sessionID: sessionID) {
+                markSuperseded(sessionID)
+                if liveSessionID == sessionID {
+                    await discardLiveWorkout()
+                }
+                return .supersededByAnotherWorkout
+            }
             if liveSessionID == sessionID {
                 switch await bounded({ [controller] in
                     try await controller.finish(at: endedAt, metadata: metadata)
@@ -81,11 +148,18 @@ public final class SessionWorkoutRecorder {
                 case let .finished(.success(workoutID)):
                     liveSessionID = nil
                     return .live(workoutID: workoutID)
-                case .finished(.failure):
+                case let .finished(.failure(error)):
                     // Clean up what is left, then fall through to the
                     // duration-only save; the linked-workout check below
-                    // keeps a half-finished save from being doubled.
+                    // keeps a half-finished save from being doubled. A
+                    // takeover during the end sequence saves nothing.
+                    let tookOver = Self.isAnotherWorkout(error)
+                        || controller.lifecycle == .failed(.anotherWorkoutSessionStarted)
                     await discardLiveWorkout()
+                    if tookOver {
+                        markSuperseded(sessionID)
+                        return .supersededByAnotherWorkout
+                    }
                 case .timedOut:
                     // The end sequence may still complete on its own, so a
                     // second save here could duplicate it.
@@ -111,10 +185,17 @@ public final class SessionWorkoutRecorder {
         }
     }
 
+    /// The store has saved the session as logged: it can never finish
+    /// again, so its another-workout mark, if any, goes.
+    public func sessionWasLogged(sessionID: UUID) {
+        clearMark(sessionID)
+    }
+
     /// Spec §4: the discard path never persists an HKWorkout.
     @discardableResult
     public func sessionDidDiscard(sessionID: UUID) -> Task<Void, Never> {
         enqueue { [self] in
+            clearMark(sessionID)
             guard liveSessionID == sessionID else { return }
             await discardLiveWorkout()
         }
@@ -147,9 +228,27 @@ public final class SessionWorkoutRecorder {
 
     // MARK: - Internals
 
+    private static func isAnotherWorkout(_ error: any Error) -> Bool {
+        (error as? WorkoutControllerError) == .anotherWorkoutSessionStarted
+    }
+
+    private func markSuperseded(_ sessionID: UUID) {
+        guard !supersededSessionIDs.contains(sessionID) else { return }
+        supersededSessionIDs.append(sessionID)
+        supersededSessionIDs = Array(supersededSessionIDs.suffix(Self.markLimit))
+        marks.save(supersededSessionIDs)
+    }
+
+    private func clearMark(_ sessionID: UUID) {
+        guard let index = supersededSessionIDs.firstIndex(of: sessionID) else { return }
+        supersededSessionIDs.remove(at: index)
+        marks.save(supersededSessionIDs)
+    }
+
     /// Discards whatever live workout the controller owns, bounded.
     private func discardLiveWorkout() async {
         liveSessionID = nil
+        startingSessionID = nil
         switch controller.lifecycle {
         case .active, .failed:
             _ = await bounded({ [controller, now] in
@@ -197,6 +296,35 @@ public final class SessionWorkoutRecorder {
                 }
             }
         }
+    }
+}
+
+/// Where `SessionWorkoutRecorder` keeps the sessions another app's workout
+/// took over, so the mark outlives the process.
+public struct SupersededSessionMarks {
+    public var load: @MainActor () -> [UUID]
+    public var save: @MainActor ([UUID]) -> Void
+
+    public init(load: @escaping @MainActor () -> [UUID], save: @escaping @MainActor ([UUID]) -> Void) {
+        self.load = load
+        self.save = save
+    }
+
+    /// Nothing survives the process. For tests and previews.
+    public static var none: SupersededSessionMarks {
+        SupersededSessionMarks(load: { [] }, save: { _ in })
+    }
+
+    /// The watch app's: one string array in `defaults`.
+    @MainActor
+    public static func userDefaults(
+        _ defaults: UserDefaults = .standard,
+        key: String = "com.burly.health.supersededSessionIDs"
+    ) -> SupersededSessionMarks {
+        SupersededSessionMarks(
+            load: { (defaults.stringArray(forKey: key) ?? []).compactMap(UUID.init(uuidString:)) },
+            save: { defaults.set($0.map(\.uuidString), forKey: key) }
+        )
     }
 }
 

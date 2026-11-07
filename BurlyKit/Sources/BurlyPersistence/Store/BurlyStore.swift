@@ -98,8 +98,20 @@ public protocol BurlyStore: AnyObject {
     func archiveExercise(id: UUID, at date: Date) throws
     /// Resolves a watch-created naming placeholder without changing its
     /// identity, so every existing history reference continues to point to
-    /// the now-named exercise.
-    func namePlaceholderExercise(id: UUID, name: String) throws
+    /// the now-named exercise. The name and the muscle tags land in one
+    /// save: the watch creates placeholders with no tags (§2 cannot ask
+    /// for them on the wrist), and this is where the phone collects them,
+    /// so a named exercise is never left counting as unattributed in the
+    /// §7 muscle split for want of a second write.
+    func namePlaceholderExercise(id: UUID, name: String, muscleGroups: [MuscleGroup]) throws
+    /// Replaces an exercise's muscle tags, and nothing else about it. Exists
+    /// for the exercises born without tags: a Hevy import's unmatched
+    /// customs (§8 deliberately does not guess) and placeholders named
+    /// before tags were collected. The store does not police which origins
+    /// may be retagged; the phone offers it for custom and imported
+    /// exercises only, since curated tags are catalog truth (§9). Throws
+    /// `.notFound` for an unknown id.
+    func updateExerciseMuscleGroups(id: UUID, muscleGroups: [MuscleGroup]) throws
     /// Resolves a placeholder by moving its history references to an existing
     /// exercise, then archiving the placeholder. This deliberately changes no
     /// Session fields other than the item exercise references, so revisions
@@ -226,8 +238,30 @@ public protocol BurlyStore: AnyObject {
     /// Cascades to items and sets. Returns the linked `healthKitWorkoutID`
     /// if there was one, so the caller can delete the HKWorkout too (§1
     /// deletion rule) — BurlyPersistence does not import HealthKit.
+    ///
+    /// The raw removal: it leaves no trace, so a §5 re-delivery of the same
+    /// id afterwards is an ordinary create. That is right for the watch's
+    /// Discard paths (the session never left the device). A user deleting
+    /// history on the phone wants `deleteLoggedSession(id:)` instead.
     @discardableResult
     func deleteSession(id: UUID) throws -> UUID?
+    /// §1/§6 "delete session (phone)": `deleteSession`'s cascade plus a
+    /// tombstone for `id`, in **one** save, returning the linked
+    /// `healthKitWorkoutID` the same way.
+    ///
+    /// The tombstone is what makes the delete stick. The watch keeps a
+    /// finished session until a digest acks it and re-sends it until then,
+    /// so a session deleted here may arrive again; `applyReplicatedSession`
+    /// treats a tombstoned id with nothing stored as already settled —
+    /// nothing is written and the caller acks as usual, so the watch prunes
+    /// its copy instead of resurrecting the workout. Tombstones are never
+    /// pruned (see `Models/SessionTombstone.swift` for why).
+    ///
+    /// `createSession` deliberately ignores tombstones: a strict create is
+    /// a local, explicit act (a Hevy re-import the user chose to run), not
+    /// a replica arriving uninvited. Throws `.notFound` for an unknown id.
+    @discardableResult
+    func deleteLoggedSession(id: UUID) throws -> UUID?
 
     // MARK: - The in-flight session (§2/§3; watch-authored)
     //
@@ -421,6 +455,15 @@ public protocol BurlyStore: AnyObject {
     ///   read further, nothing is mutated, nothing is saved. Returns the
     ///   unchanged stored revision. This is the §5 "drop silently" rule,
     ///   realized as a store guarantee rather than a caller convention.
+    /// - Nothing stored, and the id carries a `deleteLoggedSession`
+    ///   tombstone → **no-op**, decided beside the existing-row check and
+    ///   before the `.active` guard (the same major-8 ordering, for the same
+    ///   reason): the user deleted this session, and a re-delivery must
+    ///   not bring it back. Nothing is written — not the session, not the
+    ///   placeholders riding with it (an orphan placeholder would only
+    ///   queue a naming prompt for history that no longer exists) — and the
+    ///   incoming revision is returned, so the sync runtime confirms and
+    ///   acks the delivery exactly as it does an honest duplicate.
     /// - Nothing stored, or incoming revision **>** stored revision →
     ///   creates or replaces the graph wholesale (same reconciliation
     ///   `applyPhoneEdit` uses) and **overwrites the stored revision with
@@ -552,10 +595,13 @@ public protocol BurlyStore: AnyObject {
     ///
     /// The watch cannot tell the two cases apart; the evidence lives on the
     /// phone. So this is a **trust boundary, enforced upstream**: absence of
-    /// an entry asserts "the phone's history holds nothing for this
-    /// exercise," and the watch believes it. The obligation to make that
+    /// an entry asserts "no update for this exercise" (the phone has no
+    /// history for it, or it lies outside what the digest's bound covers),
+    /// and the watch believes it: it updates nothing for that exercise and
+    /// deletes no existing row. The obligation to make that
     /// true belongs to the digest generator — see `SessionDigestReceipt`,
-    /// which states the contract, and M4, which owns and property-tests it.
+    /// which states the contract and its bound, and M4, which owns and
+    /// property-tests it.
     ///
     /// Pruning tolerates what a real transport produces: an id naming an
     /// `.active` session, or no session at all, is skipped rather than
@@ -756,6 +802,54 @@ public protocol BurlyStore: AnyObject {
     /// re-derives the identical ordering — see `SessionDigestGenerator`).
     func allLoggedSetSlices() throws -> [SetRecordSlice]
 
+    /// The digest generator's narrow read (issue #24): for each exercise in
+    /// `exerciseIDs`, every logged set of that exercise's **latest `.logged`
+    /// session that has any set for it**, and no other slice.
+    ///
+    /// `allLoggedSetSlices()` answers the same question by materialising
+    /// every logged set the phone holds (8.4 s at 50k sets on hosted CI,
+    /// for 12 entries). This reads session-item metadata instead, picks the
+    /// winning session per exercise with `LatestLoggedSession.isLater` (the
+    /// rule the generator also uses), and decodes only the winners' sets.
+    ///
+    /// The contract, case by case:
+    /// - "Latest" is `LatestLoggedSession.isLater`: later `startedAt`, then
+    ///   higher session id on an exact tie.
+    /// - A session whose item for the exercise has no sets does not count:
+    ///   the next-latest session with sets wins, exactly as it does when
+    ///   the answer is derived from set rows.
+    /// - The same exercise twice in one session returns both items' sets.
+    /// - `.active` sessions, items with no exercise, and items detached from
+    ///   a session never contribute.
+    /// - Archive state is irrelevant here: an archived exercise's history is
+    ///   returned when asked for. Which exercises to ask for is the
+    ///   caller's decision.
+    /// - Strict on what it reads: a corrupt stored weight in a winning set
+    ///   throws `BurlyStoreError.corruptedWeight`, the same as every other
+    ///   read of that column, rather than being skipped. Sets of losing
+    ///   sessions are never read, so they cannot fail it.
+    ///
+    /// Equals `LatestLoggedSession.winningSlices(from: allLoggedSetSlices(),
+    /// forExercises:)` (that is the fallback implementation below). No order
+    /// is promised.
+    func latestLoggedSetSlices(forExercises exerciseIDs: Set<UUID>) throws -> [SetRecordSlice]
+
+    /// When each routine was last performed, as far as this store knows,
+    /// keyed by routine id: the `startedAt` of the latest `.logged` session
+    /// whose `routineID` names it. Routines never performed are absent.
+    ///
+    /// A phone store derives this from its full history; it feeds the §5
+    /// digest so the watch can show §2's "last done N days ago". A watch
+    /// store prunes delivered sessions (§1), so on its own it would answer
+    /// "never" for every routine once the phone acknowledged its sessions.
+    /// It therefore also merges `WatchSyncStateData.routineLastPerformedAt`
+    /// (the dates the phone's last digest reported, plus the starts of the
+    /// sessions pruned since), keeping the newer of that date and any
+    /// session it still holds.
+    ///
+    /// Bounded: a flat pass over `Session` rows, never `.items`.
+    func routineLastPerformedDates() throws -> [UUID: Date]
+
     // MARK: - Phone-shell existence/count (m5-01; bounded)
     //
     // The phone shell's appearance must establish "is there anything?" and
@@ -800,6 +894,15 @@ public protocol BurlyStore: AnyObject {
     /// workout in a multi-year export never materializes a session graph
     /// the way `session(id:) != nil` does.
     func sessionExists(id: UUID) throws -> Bool
+
+    /// Whether `deleteLoggedSession` removed a session with `id` — the
+    /// import planner's second probe. Hevy session ids are deterministic,
+    /// so a re-import (or a newer, overlapping export) carries the ids of
+    /// workouts the user deleted in History; this is what lets the planner
+    /// skip them rather than quietly undo the delete. Bounded the same way:
+    /// a `fetchCount` on the tombstone's unique `sessionID`. `deleteSession`
+    /// (the watch's Discard) leaves no tombstone, so it answers `false`.
+    func sessionWasDeleted(id: UUID) throws -> Bool
 }
 
 extension BurlyStore {
@@ -808,5 +911,24 @@ extension BurlyStore {
     /// `session(id:)`). `SwiftDataStore` overrides it.
     public func sessionExists(id: UUID) throws -> Bool {
         try session(id: id) != nil
+    }
+
+    /// Correct but unbounded fallback, by definition: the full-history
+    /// derivation the narrow read must equal. `SwiftDataStore` overrides it.
+    public func latestLoggedSetSlices(forExercises exerciseIDs: Set<UUID>) throws -> [SetRecordSlice] {
+        LatestLoggedSession.winningSlices(from: try allLoggedSetSlices(), forExercises: exerciseIDs)
+    }
+
+    /// Fallback from the sessions this store holds, which is what the watch
+    /// home showed before digests carried routine dates. `SwiftDataStore`
+    /// overrides it (and, on a watch, merges the phone's reported dates).
+    public func routineLastPerformedDates() throws -> [UUID: Date] {
+        var latest: [UUID: Date] = [:]
+        for session in try sessions(state: .logged) {
+            guard let routineID = session.routineID else { continue }
+            if let current = latest[routineID], current >= session.startedAt { continue }
+            latest[routineID] = session.startedAt
+        }
+        return latest
     }
 }

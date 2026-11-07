@@ -193,6 +193,59 @@ struct SessionMutatorTests {
         #expect(active.isWellFormed)
     }
 
+    @Test("skipping a middle item keeps pager ordinals dense and advances to the next visible item")
+    func skippingMiddleItemKeepsPagerOrderAndAdvances() throws {
+        var active = try startedSession().session
+        let first = active.items[0].id
+        let middle = active.items[1].id
+        let last = active.items[2].id
+
+        try SessionMutator.skipExercise(itemID: middle, in: &active)
+
+        #expect(active.unskippedItemIndex(of: first) == 0)
+        #expect(active.unskippedItemIndex(of: middle) == nil)
+        #expect(active.unskippedItemIndex(of: last) == 1)
+        #expect(active.nextUnskippedItemID(after: middle) == last)
+        #expect(active.nextUnskippedItemID(after: last) == first)
+    }
+
+    @Test("skipping the first item routes to the second, not back to the start")
+    func skippingFirstItemRoutesToSecond() throws {
+        var active = try startedSession().session
+        let first = active.items[0].id
+        let second = active.items[1].id
+
+        try SessionMutator.skipExercise(itemID: first, in: &active)
+
+        #expect(active.nextUnskippedItemID(after: first) == second)
+    }
+
+    @Test("skipping the final visible item wraps to the first visible item, not a skipped item")
+    func skippingFinalVisibleItemWrapsToFirstVisibleItem() throws {
+        var active = try startedSession().session
+        let skippedFirst = active.items[0].id
+        let firstVisible = active.items[1].id
+        let finalVisible = active.items[2].id
+
+        try SessionMutator.skipExercise(itemID: skippedFirst, in: &active)
+        try SessionMutator.skipExercise(itemID: finalVisible, in: &active)
+
+        #expect(active.nextUnskippedItemID(after: finalVisible) == firstVisible)
+    }
+
+    @Test("skipping every item leaves no next visible item")
+    func skippingEveryItemLeavesNoNextVisibleItem() throws {
+        var active = try startedSession().session
+        let itemIDs = active.items.map(\.id)
+
+        for itemID in itemIDs {
+            try SessionMutator.skipExercise(itemID: itemID, in: &active)
+        }
+
+        #expect(active.nextUnskippedItemID(after: itemIDs.last!) == nil)
+        #expect(active.unskippedItems.isEmpty)
+    }
+
     // MARK: - Swap
 
     @Test("swap with nothing logged yet replaces the exercise in place")

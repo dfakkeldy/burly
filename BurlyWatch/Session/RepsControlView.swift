@@ -20,8 +20,11 @@ struct RepsControlView: View {
 
     @State private var crownRotation: Double = 0
 
+    /// Compact enough to sit beside the weight on a 42 mm screen: the two
+    /// 44 pt buttons touch the number, and "reps" sits under it the way
+    /// the unit sits under the weight.
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 0) {
             Button(action: onDecrement) {
                 Image(systemName: "minus.circle.fill")
                     .font(.title3)
@@ -30,10 +33,16 @@ struct RepsControlView: View {
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
-            Text(repsText)
-                .font(.system(.title3, design: .rounded, weight: .semibold))
-                .contentTransition(.numericText())
-                .frame(minWidth: 32)
+            VStack(spacing: 0) {
+                Text(repsText)
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .lineLimit(1)
+                    .contentTransition(.numericText())
+                Text("reps")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minWidth: 28)
             Button(action: onIncrement) {
                 Image(systemName: "plus.circle.fill")
                     .font(.title3)

@@ -14,7 +14,7 @@
 // `import SwiftData`).
 //
 // Both device configurations are built through `BurlyMigrationPlan`
-// (§1 acceptance #5). They share one `BurlySchemaV1`; what differs is the
+// (§1 acceptance #5). They share one `BurlySchemaV2`; what differs is the
 // store file and the content policy each device applies on top of it
 // (§1 store shape: the phone keeps full history, the watch keeps a working
 // set and prunes acked sessions — §5).
@@ -81,7 +81,7 @@ enum BurlyContainer {
         _ kind: BurlyStoreKind,
         at location: BurlyStoreLocation = .applicationDefault
     ) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: BurlySchemaV1.self)
+        let schema = Schema(versionedSchema: BurlySchemaV2.self)
         let configuration: ModelConfiguration
 
         switch location {

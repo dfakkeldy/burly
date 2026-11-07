@@ -44,6 +44,7 @@ final class ImportUITests: XCTestCase {
     private static let scenarioEmpty = "empty"
     private static let fixtureKey = "BURLY_PHONE_UI_TEST_HEVY_FIXTURE"
     private static let fixtureSynthetic = "synthetic"
+    private static let fixtureTwoWeightColumns = "twoWeightColumns"
 
     func testLargestTextImportConfirmationCompletes() throws {
         continueAfterFailure = false
@@ -67,11 +68,13 @@ final class ImportUITests: XCTestCase {
         }
         XCTAssertTrue(choose.isHittable)
         choose.tap()
+        // Hittable is not enough before the containment check below: a
+        // whole swipe can stop with the button's centre on screen and its
+        // bottom edge past it. Since #46 lengthened the preview that
+        // happened on about half the hosted runs (main 41675472130 and
+        // 41675603227, PR 58's first attempt).
         let action = app.buttons["hevyImport.importButton"]
-        for _ in 0..<24 {
-            if action.exists && action.isHittable { break }
-            app.swipeUp()
-        }
+        scrollFullyIntoView(action, in: app)
         XCTAssertTrue(action.isHittable)
         XCTAssertEqual(action.label, "Import 3 Workouts")
         attachScreenshot(from: app, name: "BurlyPhone-largestTextImportAction")
@@ -198,6 +201,33 @@ final class ImportUITests: XCTestCase {
         XCTAssertEqual(distinctIdentifiers(sessionRows), 3, "Expected the re-import to leave History unchanged")
     }
 
+    /// A file naming both weight units read fine, so its refusal is the
+    /// header-problem screen, not "Couldn't read that file".
+    func testTwoWeightColumnsShowHeaderProblemNotReadError() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment[Self.scenarioKey] = Self.scenarioEmpty
+        app.launchEnvironment[Self.fixtureKey] = Self.fixtureTwoWeightColumns
+        app.launchArguments += ["-burly-skip-welcome"]
+        app.launch()
+        app.tabBars.buttons["Settings"].tap()
+        let importRow = element(app, "settingsTab.importRow")
+        XCTAssertTrue(importRow.waitForExistence(timeout: 10))
+        importRow.tap()
+        let choose = app.buttons["hevyImport.chooseFileButton"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 15))
+        choose.tap()
+
+        let heading = app.staticTexts["hevyImport.headerError.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 15), "Expected the header-problem screen")
+        XCTAssertEqual(heading.label, "This file has more than one weight column")
+        let message = app.staticTexts["hevyImport.headerError.message"]
+        XCTAssertTrue(message.label.contains("weight_kg or weight_lbs"), "Got: \(message.label)")
+        XCTAssertTrue(message.label.contains("nothing was imported"), "Got: \(message.label)")
+        XCTAssertFalse(app.staticTexts["hevyImport.readError.heading"].exists)
+        XCTAssertTrue(app.buttons["hevyImport.chooseAnotherButton"].exists)
+    }
+
     /// Backing out of the welcome's import lands in the tab shell, and the
     /// welcome does not come back.
     func testCancellingWelcomeImportLandsInTabs() throws {
@@ -255,6 +285,56 @@ final class ImportUITests: XCTestCase {
             swipes += 1
         }
         return target
+    }
+
+    /// The strip of screen the import flow is readable in: below the
+    /// navigation bar and above the tab bar, where each is showing.
+    private func visibleBand(in app: XCUIApplication) -> ClosedRange<CGFloat> {
+        let navigationBar = app.navigationBars.firstMatch
+        let tabBar = app.tabBars.firstMatch
+        let top = navigationBar.exists ? navigationBar.frame.maxY : app.frame.minY
+        let bottom = tabBar.exists ? min(tabBar.frame.minY, app.frame.maxY) : app.frame.maxY
+        return top...max(top, bottom)
+    }
+
+    /// Drags slowly and without momentum until `element` sits wholly inside
+    /// `visibleBand`, the way StatsLargeTextUITests does. Each drag moves at
+    /// most about 40% of the screen, so a tall element is not skipped past,
+    /// and an overshoot is dragged back.
+    private func scrollFullyIntoView(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let height = app.frame.height
+        for _ in 0..<30 {
+            let band = visibleBand(in: app)
+            var offset: CGFloat
+            if element.exists {
+                let frame = element.frame
+                if frame.minY >= band.lowerBound && frame.maxY <= band.upperBound { return }
+                guard frame.height <= band.upperBound - band.lowerBound else {
+                    XCTFail("\(element.identifier) is \(frame.height) pt tall, taller than the visible \(band)", file: file, line: line)
+                    return
+                }
+                // Positive drags the content up (to reveal what is below).
+                offset = frame.maxY > band.upperBound ? frame.maxY - band.upperBound + 12 : -(band.lowerBound - frame.minY + 12)
+            } else {
+                offset = height * 0.4
+            }
+            offset = min(max(offset, -height * 0.4), height * 0.4)
+            // At least 40 pt, so the drag clears the scroll view's touch
+            // slop. It starts on the side away from the element (low when
+            // revealing what is below, high when dragging back), so a short
+            // drag never begins on the Import button and taps it.
+            if abs(offset) < 40 { offset = offset < 0 ? -40 : 40 }
+            let startY: CGFloat = offset > 0 ? 0.7 : 0.3
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY - offset / height))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTFail("Could not scroll \(element.identifier) wholly into view: \(element.frame) vs \(visibleBand(in: app))", file: file, line: line)
     }
 
     private func assertCount(

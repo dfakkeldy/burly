@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// SessionTombstone — the phone's record that the user deleted a session.
+//
+// ## Why a deleted session needs a row at all
+//
+// The watch keeps every finished session until it sees that session's id
+// in a digest's `ackedSessionIDs` (§5 outbox), and it re-sends on every
+// activation until then. A session the user deletes on the phone may still
+// be sitting in that outbox — the watch was off, out of range, or simply
+// had not received the newest digest yet — so the phone can receive the
+// same session again *after* the delete. §5's apply rule treats "nothing
+// stored" as "create", so without a record of the delete that re-delivery
+// would put the deleted workout straight back into History and Stats.
+//
+// A tombstone is that record: `deleteLoggedSession(id:)` writes one in the
+// same save that deletes the session, and the replicated apply refuses to
+// re-create any id that has one. The delivery is still acknowledged, so
+// the watch prunes its copy and stops re-sending.
+//
+// ## Never pruned
+//
+// The phone forgets acks after 30 days (§5), but a watch that was offline
+// for longer still holds the session and will re-deliver it. The ack is
+// re-earned then; the tombstone is what keeps the session from coming back
+// with it. A tombstone is a UUID and a date, and only a deliberate user
+// delete writes one, so keeping them for good costs nothing worth saving.
+//
+// ## Why it is a V2 model
+//
+// It is the one thing BurlySchemaV2 adds. V1 shipped in TestFlight 0.9.1,
+// and a V1 store from that build has no tombstone table; editing V1 to
+// include one would leave that store matching no known version. So the
+// tombstone lives in V2 and arrives on an existing store through the
+// lightweight V1 → V2 stage in `BurlyMigrationPlan` (an added, empty
+// table). It is module-internal bookkeeping, not a §1 domain entity, and
+// nothing about it crosses the sync wire. The watch store carries the
+// table too, empty, because one schema serves both devices.
+
+import Foundation
+import SwiftData
+
+extension BurlySchemaV2 {
+    @Model
+    final class SessionTombstone {
+        /// The deleted `Session`'s id. Unique: a session is deleted once.
+        @Attribute(.unique) var sessionID: UUID
+
+        /// Store-owned (the store's clock at delete time). Diagnostic only:
+        /// nothing reads it to decide anything.
+        var deletedAt: Date
+
+        init(sessionID: UUID, deletedAt: Date) {
+            self.sessionID = sessionID
+            self.deletedAt = deletedAt
+        }
+    }
+}

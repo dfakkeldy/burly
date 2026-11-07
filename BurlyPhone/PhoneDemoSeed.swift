@@ -35,12 +35,22 @@ enum PhoneDemoSeed {
         /// finding 6): an implementation that hardcodes empty states fails
         /// here.
         case populated
+        /// `populated` plus one newer watch session that used two unnamed
+        /// placeholder exercises (§6 naming queue), for the naming-queue
+        /// UI tests. Its own case so the populated fixture other suites
+        /// assert exactly (exercise sets, Stats shares) stays unchanged.
+        case namingQueue
         /// Deliberately fails during construction (m5-01 review finding 6,
         /// same role as WatchDemoSeed's `.brokenSeed`). Exists so
         /// BurlyPhoneUITests can drive the fail-closed path end to end: a
         /// recognized scenario whose seed cannot be built must surface as
         /// an error state, not fall through to the on-device store.
         case brokenSeed
+        /// Twelve weeks of a synthetic push/pull/legs program, for the App
+        /// Store screenshots (StoreScreenshotsUITests). Store-quality rather
+        /// than assertion-friendly: no unattributed or bodyweight work, and
+        /// no debug rows in the session detail (`isStoreScreenshots`).
+        case storeScreenshots
     }
 
     /// Thrown by a recognized scenario's seed construction. Never converted
@@ -80,6 +90,9 @@ enum PhoneDemoSeed {
         static let loggedSessionSquatWorkingSet = UUID(uuidString: "6F4E2C1A-0000-4000-8000-000000000006")!
         static let addableExercise = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000A")!
         static let loggedSessionHealthKitWorkout = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000B")!
+        static let placeholderSession = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000D")!
+        static let firstPlaceholder = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000E")!
+        static let secondPlaceholder = UUID(uuidString: "6F4E2C1A-0000-4000-8000-00000000000F")!
     }
 
     /// `nil` **only** when the launch-environment key is absent entirely,
@@ -119,8 +132,13 @@ enum PhoneDemoSeed {
             throw SeedError.intentionallyBroken
         }
         let store = try SwiftDataStore(kind: .phone, at: .inMemory)
-        if scenario == .populated {
+        if scenario == .populated || scenario == .namingQueue {
             try seedPopulated(into: store)
+            if scenario == .namingQueue {
+                try seedPlaceholders(into: store)
+            }
+        } else if scenario == .storeScreenshots {
+            try seedStoreScreenshots(into: store)
         } else {
             // The routine-builder's empty scenario still needs the real
             // curated catalog. "Empty" means no user routines or history,
@@ -208,6 +226,36 @@ enum PhoneDemoSeed {
         ))
     }
 
+    /// Two placeholders exactly as the watch creates them (SessionMutator:
+    /// the shared name, no tags, `needsNaming`), and the session that used
+    /// them, a day old so it is History's newest row.
+    private static func seedPlaceholders(into store: SwiftDataStore) throws {
+        let placeholderIDs = [SeededIDs.firstPlaceholder, SeededIDs.secondPlaceholder]
+        for id in placeholderIDs {
+            try store.createExercise(ExerciseData(
+                id: id,
+                name: SessionMutator.placeholderExerciseName,
+                muscleGroups: [],
+                origin: .custom,
+                needsNaming: true
+            ))
+        }
+        let startedAt = Calendar.current.date(byAdding: .day, value: -1, to: .now) ?? .now
+        try store.createSession(SessionData(
+            id: SeededIDs.placeholderSession,
+            routineName: "Watch Workout",
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(30 * 60),
+            state: .logged,
+            origin: .live,
+            items: placeholderIDs.enumerated().map { index, id in
+                SessionItemData(exerciseID: id, order: index, sets: [
+                    SetRecordData(order: 0, weight: Weight(kg: 20), reps: 10, completedAt: startedAt.addingTimeInterval(Double(index + 1) * 120))
+                ])
+            }
+        ))
+    }
+
     private static func makeLoggedSession(
         id: UUID,
         startedAt: Date,
@@ -270,6 +318,154 @@ enum PhoneDemoSeed {
             origin: .live,
             items: items
         )
+    }
+}
+
+// MARK: - App Store screenshots
+
+extension PhoneDemoSeed {
+    /// Fixed ids for the rows StoreScreenshotsUITests opens, repeated
+    /// literally there (the UI test target cannot import the app).
+    enum StoreScreenshotIDs {
+        static let pushRoutine = UUID(uuidString: "6F4E2C1A-0000-4000-8000-0000000000A1")!
+        static let pullRoutine = UUID(uuidString: "6F4E2C1A-0000-4000-8000-0000000000A2")!
+        static let legsRoutine = UUID(uuidString: "6F4E2C1A-0000-4000-8000-0000000000A3")!
+        static let newestSession = UUID(uuidString: "6F4E2C1A-0000-4000-8000-0000000000A4")!
+    }
+
+    /// The session detail's DEBUG revision and HealthKit rows exist for UI
+    /// assertions; a store screenshot must not show them.
+    static var isStoreScreenshots: Bool {
+        ProcessInfo.processInfo.environment[environmentKey] == Scenario.storeScreenshots.rawValue
+    }
+
+    /// One lift of the synthetic program, in pounds because the en-US
+    /// screenshots are taken in pounds (whole-pound numbers then render
+    /// exactly). `sets` working sets of `reps`, adding `step` every `every`
+    /// sessions of its routine: main lifts climb every second week,
+    /// accessories every fourth. A session between steps repeats the last
+    /// one exactly, which ties rather than beats it, so only about half the
+    /// History rows carry a PR badge. Back Squat's 5 x 5 makes it the newest
+    /// session's biggest-volume lift, the one Stats opens on.
+    private struct StoreLift {
+        let name: String
+        var sets = 3
+        let reps: Int
+        let start: Double
+        let step: Double
+        let every: Int
+        let rest: TimeInterval
+        var warmup: Double?
+
+        func pounds(inSession index: Int) -> Double {
+            start + step * Double((index + 1) / every)
+        }
+    }
+
+    private struct StoreRoutine {
+        let id: UUID
+        let name: String
+        let lifts: [StoreLift]
+    }
+
+    private static let storeProgram = [
+        StoreRoutine(id: StoreScreenshotIDs.pushRoutine, name: "Push", lifts: [
+            StoreLift(name: "Barbell Bench Press", reps: 5, start: 155, step: 5, every: 2, rest: 120, warmup: 95),
+            StoreLift(name: "Barbell Overhead Press", reps: 8, start: 95, step: 5, every: 4, rest: 120),
+            StoreLift(name: "Incline Dumbbell Bench Press", reps: 10, start: 50, step: 5, every: 4, rest: 90),
+            StoreLift(name: "Dumbbell Lateral Raise", reps: 12, start: 15, step: 2.5, every: 4, rest: 60),
+            StoreLift(name: "Cable Triceps Pushdown", reps: 12, start: 50, step: 5, every: 4, rest: 60)
+        ]),
+        StoreRoutine(id: StoreScreenshotIDs.pullRoutine, name: "Pull", lifts: [
+            StoreLift(name: "Conventional Deadlift", reps: 5, start: 245, step: 10, every: 2, rest: 180, warmup: 135),
+            StoreLift(name: "Lat Pulldown", reps: 10, start: 120, step: 10, every: 4, rest: 90),
+            StoreLift(name: "Seated Cable Row", reps: 10, start: 110, step: 10, every: 4, rest: 90),
+            StoreLift(name: "Face Pull", reps: 15, start: 35, step: 5, every: 4, rest: 60),
+            StoreLift(name: "Hammer Curl", reps: 10, start: 25, step: 5, every: 4, rest: 60)
+        ]),
+        StoreRoutine(id: StoreScreenshotIDs.legsRoutine, name: "Legs", lifts: [
+            StoreLift(name: "Back Squat", sets: 5, reps: 5, start: 205, step: 10, every: 2, rest: 180, warmup: 135),
+            StoreLift(name: "Romanian Deadlift", reps: 8, start: 155, step: 10, every: 4, rest: 120),
+            StoreLift(name: "Bulgarian Split Squat", reps: 10, start: 30, step: 5, every: 4, rest: 90),
+            StoreLift(name: "Lying Leg Curl", reps: 12, start: 70, step: 5, every: 4, rest: 60),
+            StoreLift(name: "Standing Calf Raise", reps: 12, start: 135, step: 10, every: 4, rest: 60)
+        ])
+    ]
+
+    /// Start times, minutes after midnight, cycled so the History rows read
+    /// like a real lifter's evenings, lunches and early mornings.
+    private static let storeStartMinutes = [1065, 1090, 380, 1050, 735, 1120, 425]
+
+    private static func seedStoreScreenshots(into store: SwiftDataStore) throws {
+        let seed = try SeedLoader.applyBundled(to: store)
+        func exerciseID(named name: String) throws -> UUID {
+            guard let id = seed.exercises.first(where: { $0.name == name })?.id else {
+                throw SeedError.catalogMissingExercise(name: name)
+            }
+            return id
+        }
+
+        var routines: [(data: RoutineData, lifts: [StoreLift], exerciseIDs: [UUID])] = []
+        for (index, routine) in storeProgram.enumerated() {
+            let exerciseIDs = try routine.lifts.map { try exerciseID(named: $0.name) }
+            let data = RoutineData(
+                id: routine.id,
+                name: routine.name,
+                orderIndex: index,
+                items: routine.lifts.indices.map { order in
+                    RoutineItemData(
+                        exerciseID: exerciseIDs[order],
+                        order: order,
+                        defaultSetCount: routine.lifts[order].sets,
+                        restOverride: routine.lifts[order].rest
+                    )
+                },
+                updatedAt: .now
+            )
+            try store.createRoutine(data)
+            routines.append((data: data, lifts: routine.lifts, exerciseIDs: exerciseIDs))
+        }
+
+        // Twelve weeks of Push, Pull, Legs in turn, newest first: Legs
+        // yesterday, then a session every two or three days back from it.
+        let calendar = Calendar.current
+        let now = Date.now
+        let weeks = 12
+        for back in 0..<(weeks * 3) {
+            let routine = routines[2 - back % 3]
+            let sessionIndex = weeks - 1 - back / 3
+            let daysAgo = 1 + back * 7 / 3
+            let day = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -daysAgo, to: now) ?? now)
+            let startedAt = day.addingTimeInterval(TimeInterval(storeStartMinutes[back % storeStartMinutes.count] * 60))
+            var setTime = startedAt.addingTimeInterval(4 * 60)
+            func nextSetTime() -> Date {
+                setTime = setTime.addingTimeInterval(135)
+                return setTime
+            }
+
+            let items = routine.lifts.indices.map { order -> SessionItemData in
+                let lift = routine.lifts[order]
+                var sets: [SetRecordData] = []
+                if let warmup = lift.warmup {
+                    sets.append(SetRecordData(order: 0, weight: Weight(pounds: warmup), reps: 5, isWarmup: true, completedAt: nextSetTime()))
+                }
+                let weight = Weight(pounds: lift.pounds(inSession: sessionIndex))
+                for _ in 0..<lift.sets {
+                    sets.append(SetRecordData(order: sets.count, weight: weight, reps: lift.reps, completedAt: nextSetTime()))
+                }
+                return SessionItemData(exerciseID: routine.exerciseIDs[order], order: order, sets: sets)
+            }
+            try store.createSession(SessionData(
+                id: back == 0 ? StoreScreenshotIDs.newestSession : UUID(),
+                routineID: routine.data.id,
+                routineName: routine.data.name,
+                startedAt: startedAt,
+                endedAt: startedAt.addingTimeInterval(TimeInterval((46 + back * 7 % 15) * 60)),
+                state: .logged,
+                origin: .live,
+                items: items
+            ))
+        }
     }
 }
 #endif

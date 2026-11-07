@@ -65,6 +65,7 @@ final class ResumeUITests: XCTestCase {
         // so both taps here log real, non-invented values.
         logButton.tap()
         XCTAssertTrue(waitFor { setCounter.exists && setCounter.label == "Set 2 of 3" })
+        waitForRestInView(app)
 
         // Set 2 of 3. Every log restarts the rest timer (§3: "logging the
         // next set cancels any running timer and starts a fresh one"), so
@@ -212,6 +213,37 @@ final class ResumeUITests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// After a Log set that starts a rest, waits for the page's reveal to
+    /// finish: the countdown fully on screen and Log set no longer moving.
+    /// The reveal lands a moment after the tap; a tap sent before it lands
+    /// hits whatever has scrolled under it, and on the hosted simulator
+    /// that was the countdown, whose tap skips the rest.
+    private func waitForRestInView(_ app: XCUIApplication, line: UInt = #line) {
+        let screen = screenBounds(app)
+        let remaining = app.staticTexts["restTimer.remaining"]
+        let logButton = app.buttons["logSetButton"]
+        var lastLogFrame = CGRect.null
+        let settled = waitFor(timeout: 10) {
+            guard remaining.exists, screen.contains(remaining.frame) else { return false }
+            let logFrame = logButton.frame
+            defer { lastLogFrame = logFrame }
+            return logFrame == lastLogFrame
+        }
+        XCTAssertTrue(
+            settled,
+            "Expected the rest countdown to come into view after Log set, got \(remaining.frame) in \(screen)",
+            line: line
+        )
+    }
+
+    /// The visible screen: the app's window, or the application element's
+    /// own frame if watchOS reports no window.
+    private func screenBounds(_ app: XCUIApplication) -> CGRect {
+        let window = app.windows.firstMatch
+        if window.exists, !window.frame.isEmpty { return window.frame }
+        return app.frame
+    }
 
     private func waitFor(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)

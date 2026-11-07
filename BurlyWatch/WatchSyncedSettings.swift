@@ -11,6 +11,10 @@ import BurlyCore
 struct WatchSyncedSettings: Equatable {
     var displayUnit: WeightUnit = .kilograms
     var restDefault: TimeInterval = RestDuration.globalDefault
+    /// §2's 3 s auto-lock for an armed weight. Not synced: only a DEBUG
+    /// UI-test launch key changes it (`WatchDemoSeed`), so tests that
+    /// look at an armed weight are not outrun by slow accessibility reads.
+    var weightIdleTimeout: TimeInterval = GuardedWeightEditMachine.Configuration().idleTimeout
 
     /// §2: "crown adjusts in configurable increments (default 2.5 lb /
     /// 1.25 kg equivalent)". The step follows the unit so the numbers a
@@ -29,7 +33,10 @@ struct WatchSyncedSettings: Equatable {
         SessionEngine(
             session: session,
             restConfiguration: RestTimerConfiguration(globalDefault: restDefault),
-            weightEditConfiguration: GuardedWeightEditMachine.Configuration(increment: weightIncrement)
+            weightEditConfiguration: GuardedWeightEditMachine.Configuration(
+                idleTimeout: weightIdleTimeout,
+                increment: weightIncrement
+            )
         )
     }
 }

@@ -1,4 +1,302 @@
-<!-- Newest entry first. Dates are local (ADT), matching the commit that adds them. -->
+<!-- Newest entry first. Dates are local (ADT/AST), matching the commit that adds them. -->
+
+## 2026-11-03 — Watch session: no back exit, recents-first picker, §4 prompts on the logging screen
+
+#54. The logging screen, the swap/add picker, and the §4 prompts.
+
+- **The logging screen hides the system back button.** A stray tap or
+  edge swipe used to pop a running workout, which dropped the view model
+  and stopped the tick and the rest haptics. The ways out are the
+  actions menu (End workout, Discard) and the summary's Done.
+- **The swap/add picker lists recents first.** The order is this
+  session's exercises, then digest recents newest first (8 at most
+  between them), then curated, then customs and imports, each group by
+  name. Unnamed `needsNaming` placeholders are left out, and a swap
+  leaves out the exercise it would replace. This supersedes the "flat
+  list, sectioning deferred" note that lived only in the
+  `ExercisePickerView` comment.
+- **The §4 stale guard also runs on the logging screen**, whenever the
+  scene becomes active, but not when the screen appears. An answer
+  (opening the screen, or Keep going) counts as activity, so the guard
+  asks again only after another quiet hour, not on every wrist raise.
+  End workout ends the session at its last set, as the home gate does.
+- **After another app's workout takes over, Health gets nothing from
+  Burly for that session.** A live or duration-only workout would
+  overlap the other app's. The lifter sees "Another workout is running"
+  with End workout, Keep logging or Discard, and the summary says the
+  workout was not saved to Health. The mark is stored in UserDefaults
+  and lasts until the store has saved the session as logged, so a crash
+  or a relaunch in between cannot bring back the overlap.
+- **The logging page is compact.** The name takes one line, the set
+  counter and ghost row share a subtitle line, and weight and reps sit
+  side by side, with 44 pt targets kept. This was measured on the 42 mm
+  and 46 mm simulators. While the weight is armed, its -/+ take the
+  reps control's place, so Log set never moves; a rest scrolls the
+  weight and reps row to the top of the screen.
+
+## 2026-11-03 — The phone deletes history; a tombstone keeps it deleted; Health cleanup is best effort and says so
+
+Spec §1/§6 deletion is now wired on the phone. The confirmation comes from a
+History row's swipe action or the detail screen's Delete Workout button.
+`BurlyStore.deleteLoggedSession(id:)` then deletes the session with its items
+and sets and records a `SessionTombstone` in the same save.
+`applyReplicatedSession` treats a tombstoned id with nothing stored as
+settled. It writes nothing, not even the placeholders riding with it, and
+returns, so the sync runtime acks the re-delivery and the watch prunes its
+copy. No machine or coordinator logic changed.
+
+- **Tombstones are never pruned.** The phone forgets acks after 30 days, but
+  a watch offline longer still re-sends. A tombstone is one UUID and a date
+  per user delete.
+- **`deleteSession` stays the raw cascade** for the watch's Discard paths.
+  **A Hevy re-import skips tombstoned ids** and counts them as "Deleted in
+  Burly"; `createSession` itself ignores tombstones.
+- **`SessionTombstone` is a V2 model** (see the schema entry of the same
+  date).
+- **Health is second and best effort.** Only for a session with a linked
+  workout, the phone asks HealthKit to delete workouts whose external UUID
+  is the session id. It requests permission at that moment, only while
+  undetermined, and only to share workouts. Every call except the prompt is
+  bounded at 10 s. Anything short of a confirmed delete shows a per-workout
+  row at the top of History saying the Health copy may remain and how to
+  delete it in the Health app. Whether the iPhone app can delete a workout
+  the watch app saved is unverified on a device. If the phone can't, the
+  real fix is a phone→watch delete signal, which is a §5 wire change and
+  needs its own entry.
+- **Muscle tags:** `namePlaceholderExercise(id:name:muscleGroups:)` names
+  and tags in one save, and needs at least one tag.
+  `updateExerciseMuscleGroups(id:muscleGroups:)` retags custom and
+  Hevy-imported exercises from the catalog. Curated tags stay read-only in
+  the UI; the store does not police origin.
+- **Session editor:** exercises reorder with explicit up and down buttons,
+  because a List never gives a ForEach of Sections drag handles. Edit mode
+  reorders sets only. A save that changes nothing is dropped, so it neither
+  bumps the revision nor marks the row edited. Removing an exercise asks
+  first.
+
+This supersedes the 2026-10-29 HealthKit entry's "delete propagation is not
+wired".
+
+## 2026-11-03 — Release lane archives unsigned; tag push uploads the checked .ipa with altool
+
+#45. Every release run archived with automatic signing on an empty runner,
+so cloud signing minted a new "Apple Development: Created via API"
+certificate each time. On 2026-11-03 the team hit Apple's cap and the dry
+run on `main` failed (dfakkeldy/grok-bots#873).
+
+`Scripts/archive-release.sh` archives BurlyPhone with
+`CODE_SIGNING_ALLOWED=NO` and no Apple contact, then signs the watch app
+and the phone app ad hoc, inside out, with their entitlements files, and
+checks the signatures. An unsigned archive would otherwise lose HealthKit
+at export; ad hoc signing through build settings is refused for the iOS
+SDK. `release.yml` exports that archive once — dry runs and tag pushes
+alike — with the cloud-managed Apple Distribution certificate (which the
+cap does not count) and `teamID` in the export options because the archive
+carries no team. `Scripts/check-exported-ipa.sh` checks that both apps are
+Apple Distribution-signed and kept their declared entitlements. A tag push
+then uploads that same checked `.ipa` with `altool --upload-app` via
+`Scripts/altool-ipa.sh`. It used to run a second `-exportArchive` with
+destination `upload`, which re-signed and uploaded a file nobody had
+checked.
+
+`Scripts/altool-ipa.sh` holds the validate step's former inline logic (the
+`AuthKey_<id>.p8` copy, ID scrubbing, strict error-text and success-line
+matching) for both validate and upload. altool logs each HTTP 5xx it
+retries as an `ERROR:` line. A line in that retry-notice shape with no
+ITMS code on it is a warning when altool also printed its success line,
+and a failure otherwise. Every dry run on 2026-11-03 printed several and
+still ended `VERIFY SUCCEEDED`. The upload mode has not run live against
+Apple yet; the first tag push is its first live run.
+
+The acceptance gate archives through the same script in place of its
+unsigned Release build, so a gated PR proves the archive half. A dry run
+of the #45 branch ([run 41638767996](https://github.com/dfakkeldy/burly/actions/runs/41638767996)),
+with the team at its certificate cap, archived with no certificate, exported,
+and App Store Connect printed `VERIFY SUCCEEDED with no errors`. Nothing
+was uploaded.
+
+Two test assumptions, not app bugs, had kept Simulator acceptance red on
+`main` since 2026-10-31:
+
+- `testStatsRefreshesOnForegroundAndPreservesRange` asserted "This week: 1"
+  then 2, but the seed's newest session is three days old, so on Sunday to
+  Tuesday (UTC) the count starts at 0. It now reads the starting count
+  (0 or 1) and requires exactly one more after foregrounding.
+- `testRestTimerCountsDownAdjustsAndSkips` tapped a countdown that sat
+  mostly below the 46 mm watch's bottom edge. The logging page now scrolls
+  the rest banner into view when a new rest starts (spec §3: visible after
+  logging), and the test asserts the countdown and +15 are fully on screen,
+  with no scrolling of its own, before tapping.
+
+`ci.yml` gives each `main` commit its own concurrency group, so `main` runs
+neither cancel nor replace each other; branch runs still cancel older ones.
+
+The Codex review of #45 also found that dispatches from any branch and tags
+on any commit can reach the API key. That is issue #47; a protected
+environment is Dan's call.
+
+## 2026-11-03 — Hevy import: pound-unit columns, and timed or distance sets as one drop
+
+#46. A Hevy export used to abort unless the header named `weight_kg`, so a
+file from an account set to pounds was rejected as not a Hevy export. The
+importer now requires exactly one weight column, `weight_kg` or
+`weight_lbs`. Zero is `unrecognizedHeader`, naming `weight_kg (or
+weight_lbs)`. More than one — both units, or one repeated — is
+`HevyImportError.ambiguousWeightUnit` and also aborts, rather than reading
+the first copy. Pounds convert to kilograms with `Weight.kilogramsPerPound`
+at parse time, the same arithmetic as `Weight(pounds:)`. Identity is
+unchanged: IDs never include the unit or the weight, so a pounds export and
+a kilograms export of the same workouts still dedupe against each other.
+
+Cardio detection reads `distance_miles` as well as `distance_km`. Either
+column, if it parses and is above zero, drops the row; there is no distance
+conversion. A positive `duration_seconds` drops it too. Those rows stay in
+one count: cardio, and also timed or distance strength work (planks, hangs,
+carries) that Burly cannot store because a set is weight and reps. The
+phone labels the count "Timed or distance sets". The summary field
+`cardioRowsSkipped` and the `.drop.cardio` accessibility identifiers keep
+their names. The two kinds are not split, because telling them apart would
+need guessing from the exercise name.
+
+The `weight_lbs` and `distance_miles` column names come from two
+third-party Hevy importers, not Hevy documentation, and still need
+confirming against a real export (planning task m7-03).
+
+## 2026-11-03 — Stats opens progression on the latest session's highest-volume exercise; the picker hides archived exercises not trained in that window
+
+#48. Spec §7 #1 names the progression chart's ranges but no default
+exercise. Opening on Back Squat showed an empty chart to anyone who
+doesn't squat, even when the other Stats cards had data. The card now
+opens on the main exercise of the latest session in the last 52 weeks
+(the longest §7 window, so the all-exercise stats queries stay
+window-bounded): among working sets that name an exercise, the session
+with the latest start, then the exercise with the most volume
+(Σ weight × reps) in it. Warmups and unnamed sets do not count. Set
+times can't settle it, because a Hevy import stamps every set with the
+workout's start; volume also passes over bodyweight accessories, whose
+chart would be a flat line at 0 kg. Equal volume goes to the exercise
+trained first in that session. Back Squat remains the fallback when
+nothing was trained in the window.
+
+The picker lists exercises trained in that window first, and leaves out
+archived exercises unless they were trained in it. Archiving takes an
+exercise out of the pickers you plan with, but its recent history is
+still worth charting; an archived exercise last trained more than 52
+weeks ago is no longer reachable from Stats. Muscle-tag attribution
+still uses the whole catalog. The rule is `ExerciseRecencyStats` in
+BurlyCore; the phone reuses the 52-week volume fetch when that range is
+already showing. Recorded because m6-03 left the archived listing as an
+open product call.
+
+## 2026-11-03 — Watch snapshots carry the full catalog; background tasks wait for the apply
+
+#49. The snapshot now carries every exercise, archived ones included with
+their `archivedAt`. The watch already copies `archivedAt` on apply, so an
+archive or a naming-queue merge on the phone hides the exercise from the
+watch picker. Archiving by absence was rejected: a placeholder the watch
+created and the phone has not ingested yet is in no snapshot and must
+survive it. The phone cannot delete an exercise, so every exercise the
+watch was sent appears in every later snapshot. Archived routines are
+still left out.
+
+"Waiting for iPhone" now means no snapshot has been applied, not "no
+routines". After the first snapshot the watch shows its routine list even
+when it is empty, with Empty session. The newer-schema "Update Burly"
+notice is kept in `UserDefaults` (`burly.sync.heldSchemaVersion`) and
+shown on the routine list too, because the only code between the sync
+host and the list is `ContentView`, which another package owns. Only a
+readable snapshot newer than the held one clears it, or the watch app
+updating.
+
+A Watch Connectivity background task now completes only after three
+gates: WCSession is activated, `hasContentPending` is false, and
+`hasUndeliveredContent` is false (content events counted until the sink
+has handled them: received and held envelopes, plus activation
+completion). WCSession clears `hasContentPending` once the delegate
+received the content, not once the app wrote it. `SystemWCSessionTransport`
+hops to the main dispatch queue in callback order, so the adapter counts
+the content before it sees the cleared flag. That WCSession ordering is
+an assumption from the documented background-task pattern; it has not
+been observed on hardware. On activation, the adapter re-reads
+`WCSession.receivedApplicationContext` and delivers it as a digest
+before it reports activation, so a digest lost to suspension is applied
+and its acks prune the outbox before the outbox retry runs.
+
+An unrecoverable phone sync journal is reset from `PhoneSyncHost` at the
+first foreground (`sceneDidBecomeActive()`), if it is still unrecoverable
+then, and never at launch: a read blocked by data protection before first
+unlock looks the same at launch. The reset's known cost: if the journal
+had already sent snapshots, the watch ignores the restarted snapshot
+versions until they pass the last one it applied. The wire protocol still
+has no epoch.
+
+## 2026-11-03 — The digest is bounded and carries routine dates; no schema bump
+
+#51. The §5 digest rides `updateApplicationContext`, which refuses payloads
+over roughly 64 KB. A multi-year Hevy import (hundreds of non-archived
+exercises) made every publish fail, which silently stopped acks and pruning.
+
+The generator now sends entries only for the exercises the watch can show
+(`WatchWorkingSet.exercises`: the non-archived catalog plus archived
+exercises a live routine uses, not the snapshot's full catalog) and trims
+them to a 48 KB envelope. It keeps, in order: exercises whose latest
+session the digest acknowledges, routine exercises, then the most recently
+performed. If an acknowledged session's numbers cannot fit, that ack is
+held back rather than letting the watch prune without them. This is a
+deliberate layering exception: the generator removes an ID from the ack
+set that `PhoneSyncMachine` owns, for that one digest only, and leaves the
+machine's state untouched. Acks are otherwise complete; the 30-day
+retention bounds them. "Absence is an assertion" now reads "absence means
+no update". The watch never deletes ghost rows.
+
+The digest also carries each stored routine's last-performed date, archived
+routines included, as an additive `routineLastPerformed` key within schema
+2. An absent key (an older phone) leaves the watch's dates alone. Bumping
+the schema would have made every older watch hold every digest. The watch
+keeps the dates in its sync journal, in the same commit as the prune, and
+folds each pruned session's start into them.
+
+Digest generation reads only each exercise's latest session
+(`latestLoggedSetSlices(forExercises:)`), with one tie rule shared with
+the generator. This replaces the full-history read from #24. The
+2026-10-29 Hevy note that "the phone app does not own a
+`PhoneSyncCoordinator` yet" is out of date: `PhoneAppModel` owns a
+`PhoneSyncHost`.
+
+## 2026-11-03 — Schema V1 is frozen at TestFlight 0.9.1; V2 adds SessionTombstone
+
+TestFlight 0.9.1 (burly-rc1, 37ea85e) shipped today, so every tester's phone
+and watch now holds a store with `BurlySchemaV1`'s exact shape. #52 first
+added `SessionTombstone` to V1 in place, under the old "V1 has not shipped"
+rule. A 0.9.1 store would then match no version in `BurlyMigrationPlan`,
+SwiftData would refuse to open it, and the tester's history would be lost.
+So V1 is frozen as main had it, and the tombstone arrives in a V2, following
+the procedure in `Schema/CurrentSchema.swift`:
+
+- `Schema/BurlySchemaV2.swift` holds verbatim copies of V1's ten models,
+  never references to them; `SessionTombstone` is V2's only addition.
+  `MigrationPlanTests.v2CopiesV1Verbatim` compares the two schemas entity by
+  entity.
+- `BurlyMigrationPlan` is `[V1, V2]` with one `.lightweight` stage: a new,
+  empty table and no changed entity, so there is nothing to transform.
+  `BurlyContainer` builds V2, and the typealiases point at V2.
+- Evidence: `Fixtures/ShippedV1/` holds a phone and a watch store written by
+  the burly-rc1 BurlyKit sources (routines, sessions of each origin with
+  sets, a naming placeholder; on the watch an unacked session, an in-flight
+  one with its journal, a digest and the watch-sync journal).
+  `ShippedStoreMigrationTests` opens them through the production container,
+  checks the data, then deletes with a tombstone and cold-reopens.
+- CI's two-process split stays. The migration spike moves to a test-only
+  V3 on top of the real V2, still in its own process: its `SetRecord` has a
+  column the shipping one lacks, the shape mismatch behind the macOS 26
+  SwiftData failures that forced the split. Real V1 and V2 share entity
+  names but no shared entity differs in shape, and opening a 0.9.1 store
+  realises both exactly as a device will, so `ShippedStoreMigrationTests`
+  runs in the ordinary pass. First hosted evidence: CI run 41681740096
+  (Xcode 26.6, macos-26) passed both processes, 927 tests in the ordinary
+  pass and the spike alone; #52 lists the reruns.
+
+V2 is frozen in turn once 1.0 ships; the next change is a V3.
 
 ## 2026-10-31 — The store text describes Apple Health again; acceptance compiles Release
 
@@ -21,13 +319,13 @@ Release since the burly-m0 upload, and three phone previews used a Debug-only
 view model. `#Preview` bodies compile in every configuration, so the v1.0.0
 archive would have failed at the tag. The build is unsigned, so it proves the
 compile only: signing and the HealthKit capability on the App IDs are proven
-by a tagged release run.
+by a tagged release run. (Superseded by 2026-11-03.)
 
 ## 2026-10-30 — App Store listing as code with fastlane deliver; uploads stay on xcodebuild
 
 Burly's builds already reach App Store Connect without fastlane: a release tag
 archives and uploads with `xcodebuild -exportArchive` (release.yml), and that
-stays. What had no home was the store page itself: listing text, screenshots,
+stays. (Superseded by 2026-11-03.) What had no home was the store page itself: listing text, screenshots,
 review notes. It now lives in the repo under `fastlane/` and goes up with
 `fastlane deliver` from the manual Store listing workflow, using the same App
 Store Connect API key secrets. Reviewable text in a public repo beats edits made
@@ -72,14 +370,14 @@ recorder decides whether a session gets a workout and which one.
   `WorkoutController.adopt`), or ends and discards it when the store has none
   (row 3). A finished session with no live workout, Health allowed, gets a
   duration-only workout from the non-live builder with the same metadata, and the
-  summary says it has no sensor data (row 2). Resume never starts a new live
-  workout. An unreadable store leaves HealthKit alone; an orphan is discarded when
-  the next session starts.
+  summary says it has no sensor data (row 2). (Superseded by 2026-11-03.) Resume
+  never starts a new live workout. An unreadable store leaves HealthKit alone; an
+  orphan is discarded when the next session starts.
 - **Stale guard.** The resume gate checks the active session's last logged set
-  (or its start) on every load. Past one hour it asks "Still working out?" and
-  offers "End workout", which opens the usual Finish/Keep going/Discard summary
-  with the session ending at that last set (`SessionEngine.finish(endingAt:)`).
-  Keep going clears that end time.
+  (or its start) on every load. (Superseded by 2026-11-03.) Past one hour it
+  asks "Still working out?" and offers "End workout", which opens the usual
+  Finish/Keep going/Discard summary with the session ending at that last set
+  (`SessionEngine.finish(endingAt:)`). Keep going clears that end time.
 - **Seeded UI-test scenarios run without Health** unless the test sets
   `BURLY_WATCH_UI_TEST_HEALTH=live`, because the system authorization sheet would
   cover the screens the existing suites drive and `simctl privacy` cannot
@@ -90,9 +388,9 @@ Both app targets carry the HealthKit entitlement and the two purpose strings; th
 watch also declares the `workout-processing` background mode. The phone links no
 HealthKit code yet. `HealthKitWorkoutStore.deleteWorkouts(linkedTo:)` is the §4
 delete-propagation helper, but the phone has no session-delete action to call it
-from, so delete propagation is not wired. The phone Settings row now describes
-what the watch does; it still reads no authorization status, for the reason in
-the HealthKit Settings entry below.
+from, so delete propagation is not wired. (Superseded by 2026-11-03.)
+The phone Settings row now describes what the watch does; it still reads no
+authorization status, for the reason in the HealthKit Settings entry below.
 
 ## 2026-10-29 — Sync is wired into both apps; the snapshot carries the unit and rest default
 
@@ -101,9 +399,9 @@ built at launch from its app delegate (Watch Connectivity can wake either app
 with no view on screen): `PhoneSyncHost` binds `PhoneSyncCoordinator` to the
 WCSession adapter, `WatchSyncHost` does the same for `WatchSyncCoordinator`,
 and the watch delegate hands every Watch Connectivity background task to the
-adapter's `hasContentPending` completion rule. UI-test scenario launches get
-their seeded store and no sync, so the standalone UI suites never touch
-WCSession.
+adapter's `hasContentPending` completion rule. (Superseded by 2026-11-03.)
+UI-test scenario launches get their seeded store and no sync, so the
+standalone UI suites never touch WCSession.
 
 Snapshot schema 2 adds the phone's display unit and global rest default. A
 schema-1 body decodes as kilograms and 90 s, the only values a schema-1 phone
@@ -178,7 +476,8 @@ cancelling lands on History.
 The phone app does not own a `PhoneSyncCoordinator` yet, so an import, like every
 other phone-side history edit today, refreshes local state only.
 `PhoneHomeViewModel.refreshAfterHevyImport` names where `historyDidChange()` and
-`catalogDidChange()` belong once that wiring exists.
+`catalogDidChange()` belong once that wiring exists. (Superseded by 2026-11-03:
+`PhoneAppModel` owns a `PhoneSyncHost`, and that refresh now calls both.)
 
 ## 2026-10-29 — Phone Settings ships the display unit phone-only and the rest default read-only
 

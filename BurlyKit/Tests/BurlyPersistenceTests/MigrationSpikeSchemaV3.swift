@@ -1,46 +1,49 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The migration spike's throwaway v2 — **test target only, never shipped.**
+// The migration spike's throwaway v3 — **test target only, never shipped.**
 //
 // ## What it is for
 //
 // m1-06 review, finding M3: §1 promises that "v2 is an append, not a
-// retrofit", and until this round that promise was untested and in fact
-// false — the models were top-level classes that v2 would have had to edit
-// in place. The models are now nested in `BurlySchemaV1`
-// (Sources/BurlyPersistence/Schema/CurrentSchema.swift), and this file is
-// the proof that the resulting ladder actually carries data: it performs
-// the real v2 procedure end to end against a store file on disk.
+// retrofit". The spike was written to measure that before any real v2
+// existed. On 2026-11-03 a real v2 shipped in Sources/ (BurlySchemaV2, which
+// adds `SessionTombstone`), and ShippedStoreMigrationTests now measures
+// *that* append against stores the 0.9.1 code wrote. The spike moved one
+// step up so it keeps measuring the next append: it performs the v3
+// procedure end to end against a store file the shipping code wrote at v2.
 //
 // ## Why it lives in the test target — and in its own process
 //
 // The shipping `BurlyMigrationPlan` must keep declaring exactly
-// `[BurlySchemaV1]` with no stages — a real v2 in Sources/ would change
-// what every user's store migrates to. SwiftData imposes no obstacle to
-// declaring a `VersionedSchema` and a `SchemaMigrationPlan` outside the
-// module that owns v1: schemas are matched by *entity* name and shape, not
-// by Swift type identity or module, so a plan assembled here migrates a
-// store that BurlyPersistence wrote. `MigrationPlanTests.planIsEmptyAtV1`
-// asserts the shipping plan is untouched by any of this, and runs in the
-// ungated pass.
+// `[BurlySchemaV1, BurlySchemaV2]` with one stage — a v3 in Sources/ would
+// change what every user's store migrates to. SwiftData imposes no
+// obstacle to declaring a `VersionedSchema` and a `SchemaMigrationPlan`
+// outside the module that owns the shipping versions: schemas are matched
+// by *entity* name and shape, not by Swift type identity or module, so a
+// plan assembled here migrates a store that BurlyPersistence wrote.
+// `MigrationPlanTests.planIsV1ThenV2` asserts the shipping plan is
+// untouched by any of this, and runs in the ungated pass.
 //
 // That same name-based matching is why nothing here may be realised in a
-// process that also runs the production-shape tests: two live definitions
-// of "SetRecord" collide, and on the macos-26 CI build the collision
-// corrupts *unrelated* tests. MigrationSpikeTests.swift has the full
-// account and the environment gate; read it before touching this file.
+// process that also runs the production-shape tests: this v3's "SetRecord"
+// has a column the shipping one lacks, two live definitions of it collide,
+// and on the macos-26 CI build the collision corrupts *unrelated* tests.
+// The real V1 and V2 do not have that problem, because every entity they
+// share has the same shape (MigrationPlanTests.v2CopiesV1Verbatim pins
+// that). MigrationSpikeTests.swift has the full account and the
+// environment gate; read it before touching this file.
 //
-// ## What v2 changes
+// ## What v3 changes
 //
 // One additive optional column: `SetRecord.rpe`. Deliberately the smallest
 // possible change, because the spike is testing the *ladder*, not a
-// transformation. Everything else is copied from v1 verbatim.
+// transformation. Everything else is copied from v2 verbatim.
 //
 // And copied is the point: a `VersionedSchema` is a complete snapshot, not
-// a diff, so v2 re-declares all ten models rather than reaching back for
-// `BurlySchemaV1.Exercise`. Reaching back would reintroduce exactly the
-// defect this round fixes, one version later — v3 editing `Exercise` would
-// silently rewrite what v2 means. The verbatim copying below is what a real
-// `Schema/BurlySchemaV2.swift` would look like.
+// a diff, so v3 re-declares all eleven models rather than reaching back for
+// `BurlySchemaV2.Exercise`. Reaching back would reintroduce exactly the
+// defect M3 fixed, one version later — v4 editing `Exercise` would
+// silently rewrite what v3 means. Schema/BurlySchemaV2.swift is the real
+// example of the same copying.
 
 import Foundation
 import Synchronization
@@ -49,14 +52,14 @@ import BurlyCore
 @testable import BurlyPersistence
 
 /// The gate on `MigrationSpikeTests`. Off by default, so an ordinary
-/// `swift test` never realises the v2 schema; the CI job and anyone running
+/// `swift test` never realises the v3 schema; the CI job and anyone running
 /// the spike by hand set `BURLY_RUN_MIGRATION_SPIKE=1` for a second,
 /// separate `swift test --filter MigrationSpikeTests` process.
 let migrationSpikeIsEnabled =
     ProcessInfo.processInfo.environment["BURLY_RUN_MIGRATION_SPIKE"] == "1"
 
-enum MigrationSpikeSchemaV2: VersionedSchema {
-    static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
+enum MigrationSpikeSchemaV3: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(3, 0, 0) }
 
     static var models: [any PersistentModel.Type] {
         [
@@ -66,6 +69,7 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
             RoutineItem.self,
             Session.self,
             ActiveSessionJournal.self,
+            SessionTombstone.self,
             SessionItem.self,
             SetRecord.self,
             ExerciseLastPerformance.self,
@@ -73,7 +77,7 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
         ]
     }
 
-    // MARK: - Unchanged from v1 (copied verbatim)
+    // MARK: - Unchanged from v2 (copied verbatim)
 
     @Model
     final class Exercise {
@@ -224,6 +228,17 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
     }
 
     @Model
+    final class SessionTombstone {
+        @Attribute(.unique) var sessionID: UUID
+        var deletedAt: Date
+
+        init(sessionID: UUID, deletedAt: Date) {
+            self.sessionID = sessionID
+            self.deletedAt = deletedAt
+        }
+    }
+
+    @Model
     final class SessionItem {
         @Attribute(.unique) var id: UUID
         var exercise: Exercise?
@@ -263,9 +278,9 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
         }
     }
 
-    // MARK: - The one v2 change
+    // MARK: - The one v3 change
 
-    /// v1's `SetRecord` plus `rpe`. Optional with no default, which is the
+    /// v2's `SetRecord` plus `rpe`. Optional with no default, which is the
     /// cheapest kind of schema change there is: the stage adds a nullable
     /// column and every existing row reads back `nil`.
     @Model
@@ -277,7 +292,7 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
         var isWarmup: Bool
         var completedAt: Date
 
-        /// New in v2.
+        /// New in v3.
         var rpe: Double?
 
         var sessionItem: SessionItem?
@@ -302,69 +317,72 @@ enum MigrationSpikeSchemaV2: VersionedSchema {
     }
 }
 
-/// What the v1 → v2 stage saw while it ran. Without this the spike could
-/// only show that a v2 container *opened* a v1 file — which SwiftData will
+/// What the v2 → v3 stage saw while it ran. Without this the spike could
+/// only show that a v3 container *opened* a v2 file — which SwiftData will
 /// also do by inferring a lightweight migration, with or without a plan.
 /// Recording from inside the stage is what distinguishes "the ladder ran"
 /// from "SwiftData coped".
 struct SpikeMigrationTrace: Sendable, Equatable {
-    /// How many times the v1 → v2 stage has been entered. A migrated store
+    /// How many times the v2 → v3 stage has been entered. A migrated store
     /// must record its new version, so opening it again runs no stage; if
     /// this ever exceeds 1 the store is being re-migrated on every open,
     /// and anything written *after* the first migration is at risk.
     var stageRuns = 0
     /// Set by `willMigrate`, which by SwiftData's contract can see only the
-    /// *old* shape — so a non-nil value here is proof v1 is still a
+    /// *old* shape — so a non-nil value here is proof v2 is still a
     /// nameable, fetchable schema at migration time.
-    var setRecordsSeenAsV1: Int?
-    /// Set by `didMigrate`, which can see only the *new* shape.
     var setRecordsSeenAsV2: Int?
+    /// Set by `didMigrate`, which can see only the *new* shape.
+    var setRecordsSeenAsV3: Int?
 }
 
 let spikeMigrationTrace = Mutex(SpikeMigrationTrace())
 
-/// The ladder as it would look after step 2 of the v2 procedure: v1 first,
-/// v2 appended, one stage between them. Nothing is reordered or removed.
+/// The ladder as it would look after step 2 of the v3 procedure: the
+/// shipping ladder, untouched, with v3 appended and one stage after it.
+/// Nothing is reordered or removed. The shipping V1 → V2 stage is reused,
+/// not copied, so the spike ladder can never drift from the real one.
 ///
-/// The stage is `.custom` purely so it can record; a real additive v2 would
-/// use `.lightweight` and the column change would be identical. The
+/// The new stage is `.custom` purely so it can record; a real additive v3
+/// would use `.lightweight` as V1 → V2 does, and the column change would be
+/// identical. The
 /// closures deliberately mutate nothing, so migrated rows still read back
 /// `rpe == nil`.
 enum MigrationSpikePlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [BurlySchemaV1.self, MigrationSpikeSchemaV2.self]
+        BurlyMigrationPlan.schemas + [MigrationSpikeSchemaV3.self]
     }
 
     static var stages: [MigrationStage] {
-        [migrateV1toV2]
+        BurlyMigrationPlan.stages + [migrateV2toV3]
     }
 
-    static let migrateV1toV2 = MigrationStage.custom(
-        fromVersion: BurlySchemaV1.self,
-        toVersion: MigrationSpikeSchemaV2.self,
+    static let migrateV2toV3 = MigrationStage.custom(
+        fromVersion: BurlySchemaV2.self,
+        toVersion: MigrationSpikeSchemaV3.self,
         willMigrate: { context in
-            let count = try context.fetchCount(FetchDescriptor<BurlySchemaV1.SetRecord>())
+            let count = try context.fetchCount(FetchDescriptor<BurlySchemaV2.SetRecord>())
             spikeMigrationTrace.withLock {
                 $0.stageRuns += 1
-                $0.setRecordsSeenAsV1 = count
+                $0.setRecordsSeenAsV2 = count
             }
         },
         didMigrate: { context in
             let count = try context.fetchCount(
-                FetchDescriptor<MigrationSpikeSchemaV2.SetRecord>()
+                FetchDescriptor<MigrationSpikeSchemaV3.SetRecord>()
             )
-            spikeMigrationTrace.withLock { $0.setRecordsSeenAsV2 = count }
+            spikeMigrationTrace.withLock { $0.setRecordsSeenAsV3 = count }
         }
     )
 }
 
-/// Opens an existing store file at v2, through the spike ladder — step 3 of
-/// the v2 procedure. Mirrors `BurlyContainer.make` exactly (same
+/// Opens an existing store file at v3, through the spike ladder — step 3 of
+/// the v3 procedure. Mirrors `BurlyContainer.make` exactly (same
 /// configuration name, same `ModelContainer(for:migrationPlan:)` call), so
 /// what the test exercises is the migration, not a different way of opening
 /// a store.
 func openThroughSpikeLadder(_ kind: BurlyStoreKind, at url: URL) throws -> ModelContainer {
-    let schema = Schema(versionedSchema: MigrationSpikeSchemaV2.self)
+    let schema = Schema(versionedSchema: MigrationSpikeSchemaV3.self)
     return try ModelContainer(
         for: schema,
         migrationPlan: MigrationSpikePlan.self,
