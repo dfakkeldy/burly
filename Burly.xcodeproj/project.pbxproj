@@ -88,6 +88,8 @@
 		EDBAF78E0925F15C703E299B /* HevySyntheticFixture.csv in Resources */ = {isa = PBXBuildFile; fileRef = 5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */; };
 		4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B93D51444666972BC5B477A8 /* ImportUITests.swift */; };
 		7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */; };
+		07C9C62BBED29B2541F5E546 /* StoreScreenshotsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1E5259EB4EAB3D1C9619729 /* StoreScreenshotsUITests.swift */; };
+		5AD05656D13CB1E7DB61FE81 /* StoreScreenshotsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632B1ABB5B10E793CFB48E0B /* StoreScreenshotsUITests.swift */; };
 		FB1A91861BD70EAF11DA4DB3 /* HistoryEditingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8B1F25D50FBC2A5F92465D2 /* HistoryEditingUITests.swift */; };
 		B03EFAC4CE507E8E5A27456F /* BurlyImport in Frameworks */ = {isa = PBXBuildFile; productRef = EE2761409B9545392090D8F1 /* BurlyImport */; };
 		6FFE781D13B074329398E691 /* BurlyPhoneSync in Frameworks */ = {isa = PBXBuildFile; productRef = 22884904E09A66F1F8C220C3 /* BurlyPhoneSync */; };
@@ -212,6 +214,8 @@
 		5A370FF76DEB9CA1547B6856 /* HevySyntheticFixture.csv */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = HevySyntheticFixture.csv; sourceTree = "<group>"; };
 		B93D51444666972BC5B477A8 /* ImportUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImportUITests.swift; sourceTree = "<group>"; };
 		E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairedSyncUITests.swift; sourceTree = "<group>"; };
+		C1E5259EB4EAB3D1C9619729 /* StoreScreenshotsUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StoreScreenshotsUITests.swift; sourceTree = "<group>"; };
+		632B1ABB5B10E793CFB48E0B /* StoreScreenshotsUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StoreScreenshotsUITests.swift; sourceTree = "<group>"; };
 		E8B1F25D50FBC2A5F92465D2 /* HistoryEditingUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryEditingUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -301,6 +305,7 @@
 				18BCBFC1BFF8E38EBC6881C2 /* ResumeUITests.swift */,
 				0F8437C156829AC4085F2B00 /* SessionRecoveryUITests.swift */,
 				9CB607F492AF9F87F1EB504E /* WatchSyncStateUITests.swift */,
+				632B1ABB5B10E793CFB48E0B /* StoreScreenshotsUITests.swift */,
 				E0697857504DD768752EF4AC /* WatchSessionUXUITests.swift */,
 				0C6D2D56A7EFBEC67F27B159 /* SessionActionsUITests.swift */,
 			);
@@ -370,6 +375,7 @@
 				831A69A7A453C868EB8BC404 /* SettingsUITests.swift */,
 				B93D51444666972BC5B477A8 /* ImportUITests.swift */,
 				E7D311E60A658B26D6632ABF /* PairedSyncUITests.swift */,
+				C1E5259EB4EAB3D1C9619729 /* StoreScreenshotsUITests.swift */,
 				E8B1F25D50FBC2A5F92465D2 /* HistoryEditingUITests.swift */,
 			);
 			name = BurlyPhoneUITests;
@@ -636,6 +642,7 @@
 				921E3798A17C52B5ED543146 /* ResumeUITests.swift in Sources */,
 				EF4B08EC24187A93CF93B425 /* SessionRecoveryUITests.swift in Sources */,
 				AA6F0AEFD24914E844BCDDB4 /* WatchSyncStateUITests.swift in Sources */,
+				5AD05656D13CB1E7DB61FE81 /* StoreScreenshotsUITests.swift in Sources */,
 				2992CB34B41B7CC534AF2F07 /* WatchSessionUXUITests.swift in Sources */,
 				F79133F0C5FAD7A07AF00CDA /* SessionActionsUITests.swift in Sources */,
 			);
@@ -650,6 +657,7 @@
 				052946BFA2912DD9B70C62B2 /* SettingsUITests.swift in Sources */,
 				4BF3389A4631826CBDD31A69 /* ImportUITests.swift in Sources */,
 				7D036B619FE9DB764198B3EB /* PairedSyncUITests.swift in Sources */,
+				07C9C62BBED29B2541F5E546 /* StoreScreenshotsUITests.swift in Sources */,
 				FB1A91861BD70EAF11DA4DB3 /* HistoryEditingUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -159,6 +159,13 @@ enum WatchDemoSeed {
         /// `XCUIElement.increment()`/`.decrement()` are unavailable on this
         /// watchOS XCTest SDK).
         case activeLegDay
+        /// The App Store screenshots (StoreScreenshotsUITests): a synthetic
+        /// Push/Pull/Legs program with last-performance digests for every
+        /// exercise, plus today's Legs workout left `.active` with every set
+        /// logged, so the finish summary shows a real duration and volume.
+        /// Finishing it leaves the routine list behind, and Push then opens
+        /// on a prefilled first set.
+        case storeScreenshots
     }
 
     /// Thrown by a recognized scenario's seed construction. Never converted
@@ -265,6 +272,8 @@ enum WatchDemoSeed {
             try seedActiveLegDayIfNeeded(into: store)
         case .syncedNoRoutines:
             try seedSyncedCatalog(into: store)
+        case .storeScreenshots:
+            try seedStoreScreenshots(into: store)
         case .empty, .brokenSeed:
             break
         }
@@ -844,5 +853,152 @@ final class FaultInjectingStore: BurlyStore {
         try wrapped.loggedSessionDates(since: since, through: through)
     }
     func allLoggedSessionDates() throws -> [Date] { try wrapped.allLoggedSessionDates() }
+}
+
+// MARK: - App Store screenshots
+
+extension WatchDemoSeed {
+    /// Names a `WeightUnit` raw value ("kg" or "lb") for a seeded launch.
+    /// Seeded scenarios run without sync, so the watch would otherwise show
+    /// its pre-sync default, kilograms, while the en-US App Store
+    /// screenshots are in pounds. Ignored unless a scenario is requested.
+    static let displayUnitEnvironmentKey = "BURLY_WATCH_UI_TEST_DISPLAY_UNIT"
+
+    static var requestedDisplayUnit: WeightUnit? {
+        guard isScenarioRequested else { return nil }
+        return ProcessInfo.processInfo.environment[displayUnitEnvironmentKey].flatMap(WeightUnit.init(rawValue:))
+    }
+
+    /// One lift of the synthetic program (PhoneDemoSeed's, too): its last
+    /// session's `sets` sets of `reps` at `pounds` (whole pounds, so they
+    /// render exactly in lb), and how much heavier today's Legs workout went.
+    private struct StoreLift {
+        let name: String
+        var sets = 3
+        let reps: Int
+        let pounds: Double
+        let rest: TimeInterval
+        var gain: Double = 0
+    }
+
+    /// `name`, days since that routine was last done, and its lifts.
+    private static let storeProgram: [(name: String, daysAgo: Int, lifts: [StoreLift])] = [
+        ("Push", 4, [
+            StoreLift(name: "Barbell Bench Press", reps: 5, pounds: 185, rest: 120),
+            StoreLift(name: "Barbell Overhead Press", reps: 8, pounds: 110, rest: 120),
+            StoreLift(name: "Incline Dumbbell Bench Press", reps: 10, pounds: 65, rest: 90),
+            StoreLift(name: "Dumbbell Lateral Raise", reps: 12, pounds: 22.5, rest: 60),
+            StoreLift(name: "Cable Triceps Pushdown", reps: 12, pounds: 65, rest: 60)
+        ]),
+        ("Pull", 2, [
+            StoreLift(name: "Conventional Deadlift", reps: 5, pounds: 305, rest: 180),
+            StoreLift(name: "Lat Pulldown", reps: 10, pounds: 150, rest: 90),
+            StoreLift(name: "Seated Cable Row", reps: 10, pounds: 140, rest: 90),
+            StoreLift(name: "Face Pull", reps: 15, pounds: 50, rest: 60),
+            StoreLift(name: "Hammer Curl", reps: 10, pounds: 40, rest: 60)
+        ]),
+        ("Legs", 6, [
+            StoreLift(name: "Back Squat", sets: 5, reps: 5, pounds: 255, rest: 180, gain: 10),
+            StoreLift(name: "Romanian Deadlift", reps: 8, pounds: 175, rest: 120, gain: 10),
+            StoreLift(name: "Bulgarian Split Squat", reps: 10, pounds: 45, rest: 90),
+            StoreLift(name: "Lying Leg Curl", reps: 12, pounds: 85, rest: 60),
+            StoreLift(name: "Standing Calf Raise", reps: 12, pounds: 165, rest: 60)
+        ])
+    ]
+
+    private struct FixedWallClock: WallClock {
+        let now: Date
+    }
+
+    private static func seedStoreScreenshots(into store: SwiftDataStore) throws {
+        let seed = try SeedLoader.applyBundled(to: store)
+        func exerciseID(named name: String) throws -> UUID {
+            guard let id = seed.exercises.first(where: { $0.name == name })?.id else {
+                throw SeedError.catalogMissingExercise(name: name)
+            }
+            return id
+        }
+        /// The lift's sets, three minutes apart from `start`.
+        func sets(_ lift: StoreLift, pounds: Double, from start: Date) -> [SetRecordData] {
+            (0..<lift.sets).map { order in
+                SetRecordData(
+                    order: order,
+                    weight: Weight(pounds: pounds),
+                    reps: lift.reps,
+                    completedAt: start.addingTimeInterval(TimeInterval(order + 1) * 3 * 60)
+                )
+            }
+        }
+
+        let calendar = Calendar.current
+        let now = Date.now
+        var lastPerformance: [ExerciseLastPerformanceData] = []
+        var legs: (routine: RoutineData, lifts: [StoreLift])?
+        for (index, program) in storeProgram.enumerated() {
+            let exerciseIDs = try program.lifts.map { try exerciseID(named: $0.name) }
+            let routine = RoutineData(
+                name: program.name,
+                orderIndex: index,
+                items: program.lifts.indices.map { order in
+                    RoutineItemData(
+                        exerciseID: exerciseIDs[order],
+                        order: order,
+                        defaultSetCount: program.lifts[order].sets,
+                        restOverride: program.lifts[order].rest
+                    )
+                },
+                updatedAt: now
+            )
+            try store.createRoutine(routine)
+
+            // Its last session, early evening, and the digest the phone
+            // would have sent for it: the ghost rows and prefill.
+            let day = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -program.daysAgo, to: now) ?? now)
+            let startedAt = day.addingTimeInterval(17.5 * 60 * 60)
+            let items = program.lifts.indices.map { order in
+                SessionItemData(
+                    exerciseID: exerciseIDs[order],
+                    order: order,
+                    sets: sets(program.lifts[order], pounds: program.lifts[order].pounds, from: startedAt.addingTimeInterval(TimeInterval(order) * 12 * 60))
+                )
+            }
+            try store.createSession(SessionData(
+                routineID: routine.id,
+                routineName: routine.name,
+                startedAt: startedAt,
+                endedAt: startedAt.addingTimeInterval(60 * 60),
+                state: .logged,
+                origin: .live,
+                items: items
+            ))
+            for item in items {
+                guard let exerciseID = item.exerciseID else { continue }
+                lastPerformance.append(ExerciseLastPerformanceData(
+                    exerciseID: exerciseID,
+                    performedAt: startedAt,
+                    sets: item.sets.map { SetSnapshot(weight: $0.weight, reps: $0.reps) }
+                ))
+            }
+            if program.name == "Legs" {
+                legs = (routine: routine, lifts: program.lifts)
+            }
+        }
+        try store.applyDigest(lastPerformance: lastPerformance, ackedSessionIDs: [])
+
+        // Today's Legs: started 58 minutes ago, all 17 sets logged three
+        // minutes apart, the last one three minutes ago (well inside the
+        // one-hour stale guard).
+        guard let legs else { throw SeedError.catalogMissingExercise(name: "Legs") }
+        let startedAt = now.addingTimeInterval(-58 * 60)
+        var active = SessionBuilder.session(from: legs.routine, clock: FixedWallClock(now: startedAt))
+        var itemStart = startedAt.addingTimeInterval(4 * 60)
+        for index in active.session.items.indices {
+            let lift = legs.lifts[index]
+            active.session.items[index].sets = sets(lift, pounds: lift.pounds + lift.gain, from: itemStart)
+            itemStart = itemStart.addingTimeInterval(TimeInterval(lift.sets) * 3 * 60)
+        }
+        active.currentItemID = active.session.items.last?.id
+        try store.saveActiveSession(active)
+    }
 }
 #endif

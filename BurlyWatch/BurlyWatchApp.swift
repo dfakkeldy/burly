@@ -194,6 +194,10 @@ private struct RootView: View {
             result = WatchSyncedSettings(displayUnit: sync.displayUnit, restDefault: sync.restDefault)
         }
         #if DEBUG
+        // A seeded UI-test launch has no sync to carry the phone's unit.
+        if model.sync == nil, let unit = WatchDemoSeed.requestedDisplayUnit {
+            result.displayUnit = unit
+        }
         if let override = WatchDemoSeed.squatWeightOverride {
             result.displayUnit = override.unit
         }

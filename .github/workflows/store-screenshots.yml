@@ -1,0 +1,107 @@
+name: Store screenshots
+
+# Captures the App Store screenshots with Scripts/capture-store-screenshots.sh
+# on GitHub's simulators and uploads them as an artifact. Nothing is committed
+# or sent to App Store Connect here: someone reviews the PNGs, commits them to
+# fastlane/screenshots/en-US, and the Store listing workflow uploads them.
+#
+# - workflow_dispatch: capture from any branch.
+# - pull_request: only on a PR labelled store-screenshots, when the label is
+#   added and on every later push to it.
+#
+# No secrets: the screenshots come from synthetic Debug-only demo data.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+# A newer capture of the same ref cancels an older one. A run whose capture
+# job will skip (another label added, a push to an unlabelled PR) gets a
+# group of its own instead, so it can never cancel a capture: concurrency
+# cancels when a run is queued, before any job's `if` is read (ci.yml run
+# 41666073484 was cancelled that way by a label it ignores). The condition
+# below must stay the same as jobs.capture.if.
+concurrency:
+  group: >-
+    store-screenshots-${{ github.ref }}${{ !(github.event_name == 'workflow_dispatch' ||
+    (github.event.action == 'labeled' && github.event.label.name == 'store-screenshots') ||
+    (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'store-screenshots')))
+    && format('-skip-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    name: Capture store screenshots
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'store-screenshots') ||
+      (github.event.action == 'synchronize' &&
+       contains(github.event.pull_request.labels.*.name, 'store-screenshots'))
+    runs-on: macos-26
+    # Booting (up to about 6 minutes before xcodebuild sees a simulator), two
+    # builds and two short UI tests.
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Same pin as ci.yml, so the screenshots show what CI builds.
+      - name: Select Xcode 26.6
+        run: |
+          XCODE_PATH=/Applications/Xcode_26.6.app
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo "::error::Expected newest stable Xcode at $XCODE_PATH; available Xcodes follow"
+            find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
+      # The script creates its own iPhone 17 Pro Max but never the watch, which
+      # on the build Mac already exists. Create it here as ci.yml creates the
+      # acceptance watch, pinned to Series 11 46 mm: App Store Connect's
+      # 416 x 496 slot.
+      - name: Create the watch simulator
+        run: |
+          WATCH_RUNTIME="$(xcrun simctl list runtimes --json | /usr/bin/python3 -c '
+          import json, re, sys
+          runtimes = [
+              runtime for runtime in json.load(sys.stdin).get("runtimes", [])
+              if runtime.get("isAvailable") is True
+              and ".SimRuntime.watchOS-" in runtime.get("identifier", "")
+          ]
+          if not runtimes:
+              sys.exit("no available watchOS simulator runtime")
+          version = lambda runtime: tuple(int(part) for part in re.findall(r"\d+", runtime["version"]))
+          print(max(runtimes, key=version)["identifier"])
+          ')"
+          WATCH_UDID="$(xcrun simctl create \
+            "Burly Watch S11 46mm" \
+            com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm \
+            "$WATCH_RUNTIME")"
+          echo "Burly Watch S11 46mm: $WATCH_UDID on $WATCH_RUNTIME"
+
+      - name: Capture screenshots
+        env:
+          BURLY_LOCK_DIR: ${{ runner.temp }}/burly-sim.lock
+        run: Scripts/capture-store-screenshots.sh
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fastlane/screenshots/en-US/*.png
+          if-no-files-found: error
+
+      - name: Upload raw output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-screenshots-raw-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            Scripts/output/screenshots/**
+            !Scripts/output/screenshots/**/*.xcresult/**
+          if-no-files-found: warn
