@@ -1,0 +1,9 @@
+name: zz proof
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo proof
