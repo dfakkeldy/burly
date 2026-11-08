@@ -18,3 +18,4 @@ No account, no ads, no analytics and no tracking. Your workouts stay on your iPh
 
 FREE AND OPEN SOURCE
 Burly is free software under the GNU General Public License, version 3 or later. The complete source code is on GitHub.
+Proof line.
