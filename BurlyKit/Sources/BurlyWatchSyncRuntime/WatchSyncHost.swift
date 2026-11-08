@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyWatchSyncRuntime — WatchSyncHost
 //
 // The watch app's sync composition (m4-06): `WatchSyncCoordinator` over the

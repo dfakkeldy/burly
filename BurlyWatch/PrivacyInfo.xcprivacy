@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
-<!-- SPDX-License-Identifier: GPL-3.0-or-later
+<!-- SPDX-License-Identifier: MIT
      Burly sends nothing off the device: no tracking, no collected data,
      and the watch app uses no required-reason APIs. -->
 <plist version="1.0">

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyPhoneSync — PhoneSyncTransporting
 //
 // The seam between this runtime and the actual wire (m4-03's WCSession

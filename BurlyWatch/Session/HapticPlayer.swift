@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Maps BurlyCore's framework-free `HapticEvent` abstraction (see that
 // type's doc: "every engine operation ... returns the haptics it would
 // fire ... the watch layer (m2-03+) maps each case onto a

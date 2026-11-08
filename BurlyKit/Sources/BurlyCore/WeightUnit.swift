@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — WeightUnit
 //
 // The display-unit half of spec §9's Settings "display unit (kg/lb)" row

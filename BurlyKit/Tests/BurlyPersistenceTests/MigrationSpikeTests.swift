@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The migration spike's tests — **they must run in their own process.**
 //
 // ## Why this suite is gated behind an environment variable

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // §2 Discard: "destructive, double-confirm."
 //
 // m2-03 review round 3 (final pass): this used to be a single

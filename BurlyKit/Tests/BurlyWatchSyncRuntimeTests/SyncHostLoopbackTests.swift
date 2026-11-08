@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-06 — the app compositions, end to end in one process: a real
 // `PhoneSyncHost` and a real `WatchSyncHost`, each over a real store and a
 // real `WCSessionAdapter`, joined by two fake WCSessions that a test pumps

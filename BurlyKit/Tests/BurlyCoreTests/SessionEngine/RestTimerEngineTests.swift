@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §3 acceptance #1: "resolution order (override→routine→global);
 // endDate math under simulated suspension gaps; adjust/skip transitions;
 // next-set restart", and #4: "haptic events fired through the haptics

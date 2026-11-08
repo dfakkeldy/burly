@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m1-04 review — sealing the container boundary.
 //
 // `ModelContainer` exposes a public `.erase()` (and `.deleteAllData()`): a

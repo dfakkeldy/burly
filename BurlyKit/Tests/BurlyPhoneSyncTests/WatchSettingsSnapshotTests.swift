@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Schema 2: the phone's display unit and global rest default ride every
 // snapshot, read from the host app when the snapshot is built.
 import Foundation

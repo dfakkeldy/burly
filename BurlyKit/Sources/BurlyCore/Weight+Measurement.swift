@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — Weight + Foundation Measurement
 //
 // Spec §1 acceptance #4 requires the weight-construction API to "accept

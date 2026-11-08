@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Resolves a `HomeRoute` into a real `SessionEngine` and hands off to
 // `LoggingScreenView` -- this is what replaces SessionStartStubView as the
 // routine list's navigation destination (spec §2 Start).

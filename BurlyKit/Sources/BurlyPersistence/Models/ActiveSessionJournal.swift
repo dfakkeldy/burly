@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // ActiveSessionJournal — the half of an in-flight session §1 has no entity
 // for, plus the bounded index §2 Resume looks through.
 //

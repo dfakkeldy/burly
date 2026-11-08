@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Shared fixtures and test doubles for BurlyPhoneSyncTests.
 import Foundation
 import BurlyCore

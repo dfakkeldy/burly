@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // History tab (spec m5-01, the default tab): a real, store-backed empty
 // state on zero history, and a minimal list of logged sessions once any
 // exist -- the full history UI is a later task, but "no history" must be

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §4 at the session level: authorization at first session start,
 // degraded mode, linking metadata, the recovery matrix and the
 // duration-only workout. The end-sequence order itself is pinned by

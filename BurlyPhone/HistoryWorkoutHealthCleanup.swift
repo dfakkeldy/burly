@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Removing a deleted session's workout from Apple Health (spec §1 deletion
 // rule; §4 "Deleting a session (phone) deletes its HKWorkout via the
 // ExternalUUID predicate").

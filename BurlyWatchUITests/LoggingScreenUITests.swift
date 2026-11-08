@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 import XCTest
 
 /// Spec §2 acceptance #3 and #5 -- the real logging screen (m2-03),

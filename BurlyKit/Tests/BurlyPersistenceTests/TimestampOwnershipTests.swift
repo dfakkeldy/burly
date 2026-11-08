@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m1-06 review, m2 — who owns `Routine.updatedAt`.
 //
 // Before this round the answer changed by operation without anything

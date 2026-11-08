@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m1-06 review, M1 — a rejected create must leave nothing pending.
 //
 // The bug these close: `createRoutine` and `createSession` used to insert

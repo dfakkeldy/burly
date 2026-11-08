@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyPersistence — the local store for Burly (spec §1, architecture doc
 // option A: SwiftData, Dan's pick 2026-07-31).
 //

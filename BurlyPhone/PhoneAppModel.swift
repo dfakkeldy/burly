@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The phone app's one store and its sync host (m4-06).
 //
 // One store per process: the sync coordinator ingests watch sessions into

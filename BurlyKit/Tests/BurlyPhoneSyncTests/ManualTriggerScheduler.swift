@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // A `TriggerScheduling` a test drives explicitly: no real sleeping, no
 // wall-clock jitter, and exact-boundary assertions (e.g. "4.9 s does not
 // fire, 5.0 s does") are possible because the test controls every tick.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // State for the Hevy import screen (spec §8 flow; task m7-02): intro ->
 // choose a file -> read and parse off the main actor -> preview -> import
 // with progress -> summary.

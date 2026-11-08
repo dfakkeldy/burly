@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The m4-03 seam is guarded at build and policy levels: the target has no
 // dependencies, its sources import only Apple transport/Foundation modules,
 // and every value crossing the caller-supplied actor boundary is Sendable.

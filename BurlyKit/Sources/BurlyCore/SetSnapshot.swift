@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SetSnapshot
 //
 // Embedded value struct for `ExerciseLastPerformance.sets` (spec §1, watch

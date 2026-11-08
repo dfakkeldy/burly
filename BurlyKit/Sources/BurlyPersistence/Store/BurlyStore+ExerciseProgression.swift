@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyStore+ExerciseProgression — the blessed integration path from
 // m6-01 fix round 2, review item 3.
 //

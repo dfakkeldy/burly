@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The machine ⇄ wire binding: adapters must extract exactly the identity
 // facts the machines decide on (id, revision, version, acked ids) and pass
 // the DTO through untouched — plus the DTO-level flavor of the carried

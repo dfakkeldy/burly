@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §3 rest-timer presentation for the logging screen. `RestTimerState`
 // is deliberately the input: this view renders its stored wall-clock dates
 // through `TimelineView`, but delegates every mutation and every haptic

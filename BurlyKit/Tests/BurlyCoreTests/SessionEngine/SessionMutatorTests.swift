@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 acceptance #1, second half: "add/remove/skip/swap/reorder
 // mutations preserve set data and ordering invariants."
 import Testing

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — ActiveSession, ItemPlan
 //
 // The watch's in-flight working record for spec §2: a `SessionData` (the

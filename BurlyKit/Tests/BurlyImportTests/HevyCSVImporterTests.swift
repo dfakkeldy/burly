@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //
 // Exercises spec §8 acceptance criteria #1 and #2 (this task's acceptance):
 //   1. Fixture CSVs cover bodyweight rows -> 0 kg, warmups, cardio-row

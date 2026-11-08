@@ -1,5 +1,5 @@
 #!/usr/bin/swift
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //
 // Generates Burly's production Strongman app icon. Regenerate both target
 // assets from this source rather than editing their PNGs by hand.

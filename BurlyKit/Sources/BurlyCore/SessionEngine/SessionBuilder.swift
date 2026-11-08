@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SessionBuilder
 //
 // Spec §2 Start: "Start creates the Session as a mutable copy of the

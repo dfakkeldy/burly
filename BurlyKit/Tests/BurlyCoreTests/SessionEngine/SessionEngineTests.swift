@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The three cross-cutting logging rules (§2 logging haptic + auto-lock,
 // §3 auto-start on every set including warmups, next-set restart), and the
 // crash/resume path that carries the whole thing.

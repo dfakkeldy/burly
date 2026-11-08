@@ -48,7 +48,6 @@
 		A3B761EE1CB29A4FE9C8FE62 /* RestDefaultPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118AACBD04AC4AB9536B0193 /* RestDefaultPreference.swift */; };
 		65849FEF12A7E4A69089A611 /* LicensesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C1B4C336761A13E5004C05 /* LicensesView.swift */; };
 		6D16D2636E2EFF3C565EE8DB /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = EBF05FD63A1E5D1F55DC3549 /* LICENSE */; };
-		72DF77D12C8CE6D250412597 /* LICENSE-APP-STORE-EXCEPTION.md in Resources */ = {isa = PBXBuildFile; fileRef = 0B9375E4DB33392DE0851956 /* LICENSE-APP-STORE-EXCEPTION.md */; };
 		36F3DC863734EA65A8F9337E /* StatsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3734EA65A8F9337ED9BECDDD /* StatsTabView.swift */; };
 		FCBDAC4D143D7B59FAB386BA /* StoreUnavailableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 143D7B59FAB386BA278453F3 /* StoreUnavailableView.swift */; };
 		39D8D6F4A4D16084B6298D2B /* WelcomeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4D16084B6298D2B0E31B98E /* WelcomeState.swift */; };
@@ -174,7 +173,6 @@
 		118AACBD04AC4AB9536B0193 /* RestDefaultPreference.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RestDefaultPreference.swift; sourceTree = "<group>"; };
 		75C1B4C336761A13E5004C05 /* LicensesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LicensesView.swift; sourceTree = "<group>"; };
 		EBF05FD63A1E5D1F55DC3549 /* LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
-		0B9375E4DB33392DE0851956 /* LICENSE-APP-STORE-EXCEPTION.md */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = net.daringfireball.markdown; path = "LICENSE-APP-STORE-EXCEPTION.md"; sourceTree = SOURCE_ROOT; };
 		3734EA65A8F9337ED9BECDDD /* StatsTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatsTabView.swift; sourceTree = "<group>"; };
 		143D7B59FAB386BA278453F3 /* StoreUnavailableView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StoreUnavailableView.swift; sourceTree = "<group>"; };
 		A4D16084B6298D2B0E31B98E /* WelcomeState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WelcomeState.swift; sourceTree = "<group>"; };
@@ -362,7 +360,6 @@
 			isa = PBXGroup;
 			children = (
 				EBF05FD63A1E5D1F55DC3549 /* LICENSE */,
-				0B9375E4DB33392DE0851956 /* LICENSE-APP-STORE-EXCEPTION.md */,
 			);
 			name = Licenses;
 			sourceTree = "<group>";
@@ -566,7 +563,6 @@
 				6F52ED6B92E84F5A91C21E41 /* Assets.xcassets in Resources */,
 				5A1C0E7B9D2F4A6B8C3E1F01 /* PrivacyInfo.xcprivacy in Resources */,
 				6D16D2636E2EFF3C565EE8DB /* LICENSE in Resources */,
-				72DF77D12C8CE6D250412597 /* LICENSE-APP-STORE-EXCEPTION.md in Resources */,
 				EDBAF78E0925F15C703E299B /* HevySyntheticFixture.csv in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

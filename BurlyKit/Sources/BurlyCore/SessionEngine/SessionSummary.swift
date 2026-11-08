@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SessionSummary, PersonalRecordData, SessionSummaryBuilder
 //
 // Spec §2 Finish: "'End workout' → summary: duration, total volume, sets,

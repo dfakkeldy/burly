@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Unit tests for CalendarBucketing (m6-01 fix round 1, majors #3 and #5):
 // day/week bucketing must honor an explicit Calendar (time zone +
 // week-start convention), never a fixed UTC epoch anchor, and a named

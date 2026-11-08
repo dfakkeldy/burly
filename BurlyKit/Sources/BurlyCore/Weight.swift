@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — Weight
 //
 // Canonical-kg unit handling (spec §1 acceptance #4). `weightKg: Double` on

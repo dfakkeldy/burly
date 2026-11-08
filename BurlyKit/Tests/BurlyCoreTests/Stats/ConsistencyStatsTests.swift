@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Fixture-truth tests for ConsistencyStats (spec §7 #4, acceptance #1):
 // sessions/week, the trailing-typical-week baseline, and calendar-dot
 // deduplication, all hand-computed against a synthetic three-week history.

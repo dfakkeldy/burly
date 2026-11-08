@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The one-time first-launch welcome decision (spec m5-01): "the choice
 // persists (relaunches skip welcome)."
 //

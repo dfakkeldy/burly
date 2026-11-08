@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The phone's display-unit choice (spec §9 Settings: "display unit
 // (kg/lb)"). Stored in the phone's own UserDefaults and read with
 // `@AppStorage(DisplayUnitPreference.storageKey)` by every view that renders

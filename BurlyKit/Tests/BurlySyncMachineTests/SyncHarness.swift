@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // A fake transport plus both machines, wired the way m4-03/m4-05 will wire
 // the real ones — and nothing else. The three §5 channels are plain
 // in-memory values the tests may lose, duplicate, and reorder at will:

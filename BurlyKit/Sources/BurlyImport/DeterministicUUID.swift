@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyImport — DeterministicUUID
 //
 // UUIDv5 derivation (RFC 4122 §4.3, name-based, SHA-1) for every identifier

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2: the real logging screen that replaces SessionStartStubView.
 // Hosts the exercise pager, the ellipsis menu's mid-session edits, the
 // swap/add picker sheet, and the Finish/Keep going/Discard summary flow.

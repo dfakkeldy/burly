@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # Scripts/altool-ipa.sh validate|upload EXPORT_DIR LOG_FILE
 #

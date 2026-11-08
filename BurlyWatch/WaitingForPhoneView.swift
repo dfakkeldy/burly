@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §5: "Fresh install (watch): empty store + no digest renders a
 // 'waiting for iPhone' state; arrival of snapshot + digest unlocks the
 // routine list." This is what an empty watch store shows until the phone's

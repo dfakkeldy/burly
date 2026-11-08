@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §5 phone-side rules, each pinned directly against the machine:
 // the idempotent upsert rule (incoming revision ≤ stored → drop silently)
 // as a pure routing decision, acks earned exclusively by store

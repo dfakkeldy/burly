@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // RoutineItem — spec §1 entity. Module-internal and nested in BurlySchemaV1
 // (see Exercise.swift and Schema/CurrentSchema.swift).
 

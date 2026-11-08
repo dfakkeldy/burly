@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlySyncAdapters — WatchKit background-task wrapper
 
 #if os(watchOS)

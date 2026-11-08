@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Unit tests for TrailingWindow (m6-01 fix round 2, review item 7): the
 // validated, sentinel-proof domain type that bounds an all-exercises §7
 // stats query. These pin its `dateRange(asOf:calendar:)` conversion against

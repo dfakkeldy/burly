@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m5-01 — the bounded phone-shell existence/count queries added in the fix
 // round for review finding 3 (the shell must establish empty states and a
 // workout count without hydrating full graphs). These tests pin the two

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 watch home: routine list, one Start row per routine plus the
 // list-end "Empty session" secondary action. Whole-row NavigationLinks keep
 // tap targets large and glanceable (the hands-busy test).

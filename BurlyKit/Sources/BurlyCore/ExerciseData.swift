@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — ExerciseData
 //
 // Value-type mirror of the SwiftData `Exercise` entity (spec §1). See the

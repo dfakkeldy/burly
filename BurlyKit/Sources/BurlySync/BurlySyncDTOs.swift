@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlySync — wire payloads
 //
 // The versioned envelope and its three payload wrappers are the only sync

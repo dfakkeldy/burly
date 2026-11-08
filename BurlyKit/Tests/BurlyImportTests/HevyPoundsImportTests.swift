@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //
 // Package hevy-pounds: a Hevy account set to pounds writes `weight_lbs` and
 // `distance_miles` instead of `weight_kg` and `distance_km`. Before this,

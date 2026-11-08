@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 Finish: "'End workout' -> summary: duration, total volume, sets,
 // any PRs -> Finish (primary) / 'Keep going' / 'Discard' (destructive,
 // double-confirm)." One view serves both the pre-commit preview (nothing

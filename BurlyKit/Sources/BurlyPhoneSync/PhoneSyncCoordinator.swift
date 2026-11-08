@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyPhoneSync — PhoneSyncCoordinator
 //
 // The phone-side session ingest executor and push-trigger runtime

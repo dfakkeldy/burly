@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # Scripts/capture-store-screenshots.sh
 #
 # The App Store screenshots in fastlane/screenshots/en-US, captured from

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Test support for the §2/§3 session-engine suites: a hand-driven clock, a
 // deterministic id source, a seeded RNG, and routine fixtures.
 //

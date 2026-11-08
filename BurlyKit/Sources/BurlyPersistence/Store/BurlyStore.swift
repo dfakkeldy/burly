@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyStore — the small protocol the architecture doc puts in front of the
 // persistence fork ("BurlyPersistence: the store … domain↔storage mapping
 // behind a small protocol"). Everything it speaks is a BurlyCore value type;

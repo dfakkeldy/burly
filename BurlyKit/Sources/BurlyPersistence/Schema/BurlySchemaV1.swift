@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlySchemaV1 — spec §1: "Schema declared once in BurlyPersistence,
 // registered as `BurlySchemaV1: VersionedSchema` with a
 // `SchemaMigrationPlan` from day one (empty stage list at v1) — so v2 is an

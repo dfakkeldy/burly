@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // A full-screen question in place of the logging pager, for the two §4
 // lifecycle rules that interrupt a running session: the stale-session
 // guard ("Still working out?") and "another workout is running". Drawn as

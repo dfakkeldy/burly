@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 "Mid-session edits ... Ellipsis menu on the logging screen: add
 // set / remove empty set, skip exercise, swap exercise ..., add exercise
 // ..., reorder (move up/down), end workout." The spec lists the actions;

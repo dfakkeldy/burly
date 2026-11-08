@@ -1,32 +1,25 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// About → Licenses (spec §9 Settings "about/licenses (GPL text)"). Shows the
-// complete license Burly ships under: the GPL-3.0-or-later text and the App
-// Store distribution exception, read from the repository-root LICENSE and
-// LICENSE-APP-STORE-EXCEPTION.md files that the BurlyPhone target bundles
-// as resources — the same bytes as the repository, not a retyped copy that
-// could drift.
+// SPDX-License-Identifier: MIT
+// About → Licenses (spec §9 Settings "about/licenses"). Shows the complete
+// license Burly ships under, the MIT License, read from the repository-root
+// LICENSE file that the BurlyPhone target bundles as a resource — the same
+// bytes as the repository, not a retyped copy that could drift.
 //
-// Both files are hard-wrapped at ~72 columns for terminals. Rendered as-is,
+// The file is hard-wrapped at ~80 columns for terminals. Rendered as-is,
 // those line breaks turn ragged at large Dynamic Type sizes, so the text is
-// reflowed into paragraphs (blank-line separated) and laid out lazily — the
-// GPL alone is ~200 paragraphs.
+// reflowed into paragraphs (blank-line separated).
 
 import SwiftUI
 
 struct LicensesView: View {
-    private let exception = LicenseDocument.load(resource: "LICENSE-APP-STORE-EXCEPTION", extension: "md")
-    private let gpl = LicenseDocument.load(resource: "LICENSE", extension: nil)
+    private let license = LicenseDocument.load(resource: "LICENSE", extension: nil)
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
                 summary
 
-                sectionHeading("App Store exception", identifier: "licenses.exceptionHeading")
-                documentBody(exception, identifierPrefix: "licenses.exception")
-
-                sectionHeading("GNU General Public License, version 3", identifier: "licenses.gplHeading")
-                documentBody(gpl, identifierPrefix: "licenses.gpl")
+                sectionHeading("MIT License", identifier: "licenses.mitHeading")
+                documentBody(license, identifierPrefix: "licenses.mit")
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -43,8 +36,7 @@ struct LicensesView: View {
             Text("In short")
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
-            Text("Burly is free software. You can use it, study how it works, change it, and share it, including your changed versions, under the GNU General Public License, version 3 or later. If you share Burly or a changed version, you must share its source code under the same license.")
-            Text("An extra permission lets Burly, including changed versions, be linked with Apple's frameworks and distributed through Apple's App Store and TestFlight, which the GPL alone does not allow. The condition is that the complete source code stays available to everyone under the GPL. It takes none of your GPL freedoms away.")
+            Text("Burly is free and open source under the MIT License. You can use it, study how it works, change it, and share it, including your changed versions, for any purpose. The one condition is that copies keep the copyright notice and the license text.")
             Text("Burly comes with no warranty. This summary is not legal advice; the full text below is what applies.")
                 .foregroundStyle(.secondary)
         }
@@ -121,9 +113,9 @@ struct LicenseDocument {
     }
 
     /// Blank lines separate paragraphs; the line breaks inside a paragraph
-    /// are terminal wrapping and become spaces. For the Markdown exception,
-    /// `#` headings and `---` rules get their own kinds and inline Markdown
-    /// (bold, links, code) is rendered; the GPL is plain text throughout.
+    /// are terminal wrapping and become spaces. For a Markdown file, `#`
+    /// headings and `---` rules get their own kinds and inline Markdown
+    /// (bold, links, code) is rendered; a plain-text file stays plain.
     init(text: String, interpretsMarkdown: Bool) {
         var blocks: [[String]] = [[]]
         for line in text.components(separatedBy: .newlines) {
@@ -166,9 +158,8 @@ struct LicenseDocument {
               ) else {
             return AttributedString(source)
         }
-        // A relative link ("[`LICENSE`](LICENSE)" in the exception) points
-        // at a sibling file in the repository; in the app it has nowhere to
-        // go, so openURL would fail silently on a tap. Keep its text, drop
+        // A relative link ("[`LICENSE`](LICENSE)") points at a sibling
+        // file in the repository; in the app it has nowhere to go, so openURL would fail silently on a tap. Keep its text, drop
         // the link. Absolute links (the GitHub autolink) stay tappable.
         return rendered.transformingAttributes(\.link) { link in
             if link.value?.scheme == nil { link.value = nil }

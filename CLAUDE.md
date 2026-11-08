@@ -1,6 +1,6 @@
 # Burly
 
-Free, open-source (GPL-3.0-or-later, with an App Store exception), watch-first
+Free, open-source (MIT), watch-first
 lifting tracker for iPhone and Apple Watch. Under active development.
 
 ## Layout
@@ -25,7 +25,7 @@ separate CI-only script.
 
 ## Rules
 
-- Source files start with `// SPDX-License-Identifier: GPL-3.0-or-later`.
+- Source files start with `// SPDX-License-Identifier: MIT`.
 - This repo is public. Planning lives in the private `~/Developer/_local/health-apps`
   repo; never copy personal health details from there into this one.
 

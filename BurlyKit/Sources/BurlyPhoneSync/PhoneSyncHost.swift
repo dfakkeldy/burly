@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyPhoneSync — PhoneSyncHost
 //
 // The phone app's sync composition (m4-06): one `PhoneSyncCoordinator`

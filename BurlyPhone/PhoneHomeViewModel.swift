@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Loads the iPhone shell's shared state from the phone store (spec m5-01):
 // the History, Routines, and Stats tabs all render from this one load.
 //

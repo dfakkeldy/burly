@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SetRecordData
 //
 // Value-type mirror of the SwiftData `SetRecord` entity (spec §1). See the

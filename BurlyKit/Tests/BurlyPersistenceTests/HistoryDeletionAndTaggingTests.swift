@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The phone's history delete (§1 deletion rule, §6 "deleting the session")
 // and the exercise muscle-tag writes the naming queue and the catalog use.
 //

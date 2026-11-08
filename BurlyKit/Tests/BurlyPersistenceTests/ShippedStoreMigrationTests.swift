@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // A store TestFlight 0.9.1 wrote opens in this build with everything in it.
 //
 // ## The fixtures

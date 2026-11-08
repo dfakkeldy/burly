@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §1 store shape — "the watch never accumulates full history: after
 // ack, delivered sessions are pruned from the watch store."
 //

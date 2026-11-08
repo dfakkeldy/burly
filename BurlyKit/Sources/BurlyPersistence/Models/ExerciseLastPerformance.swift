@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // ExerciseLastPerformance — spec §1 entity, **watch store content only**.
 //
 // The model class lives in BurlyPersistence with the rest of the schema, but

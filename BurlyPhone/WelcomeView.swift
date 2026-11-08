@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The one-time first-launch welcome (spec m5-01, §9): a single screen
 // offering "Import from Hevy" or "Start fresh".
 //

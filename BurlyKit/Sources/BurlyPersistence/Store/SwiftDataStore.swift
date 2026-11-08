@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // SwiftDataStore — the SwiftData implementation of `BurlyStore`
 // (architecture doc option A, Dan's pick 2026-07-31).
 //

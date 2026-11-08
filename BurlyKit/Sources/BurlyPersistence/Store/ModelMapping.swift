@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // @Model → BurlyCore value type mapping. One direction only lives here;
 // the other direction (value → model) needs the context, to resolve
 // exercise references, so it lives in SwiftDataStore.

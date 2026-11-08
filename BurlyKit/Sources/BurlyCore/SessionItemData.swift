@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SessionItemData
 //
 // Value-type mirror of the SwiftData `SessionItem` entity (spec §1). See

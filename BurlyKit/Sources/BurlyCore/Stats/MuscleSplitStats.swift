@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — MuscleSplitStats
 //
 // Spec §7 #3: fractional muscle-group attribution. A working set on an

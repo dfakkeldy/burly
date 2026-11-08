@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 — spec §5's push triggers: "snapshot on app launch, on any routine/
 // catalog edit (debounced 5 s), when isWatchAppInstalled flips true, and
 // daily. ... Digest is refreshed whenever history changes ... A newer

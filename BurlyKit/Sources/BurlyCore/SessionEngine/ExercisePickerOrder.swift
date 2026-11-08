@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 mid-session edits: the swap/add "catalog picker: recents →
 // curated → customs". Pure ordering over the catalog the watch already
 // holds, so the watch view model only has to supply what "recent" means

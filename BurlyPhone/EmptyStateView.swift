@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The shared empty-state / failure layout for the tab shell (spec m5-01):
 // each tab renders honest copy for zero data, and load failures render the
 // same layout with a retry. Scroll-capable so a long message or large

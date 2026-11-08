@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m1-06 review, B1 — the store-owned active-session unit of work.
 //
 // The blocker these tests close: between §2's Start and Finish, the session

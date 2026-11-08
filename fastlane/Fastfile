@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # The App Store listing as code. Builds still upload with xcodebuild from
 # .github/workflows/release.yml; these lanes only edit the store page:

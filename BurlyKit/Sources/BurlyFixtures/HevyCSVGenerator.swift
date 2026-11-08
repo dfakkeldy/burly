@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyFixtures
 //
 // Synthetic Hevy-export-shaped CSV generator, for exercising the future

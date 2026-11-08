@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §5 acceptance #1: the state machines against a fake transport —
 // dedupe on double delivery, out-of-order revisions,
 // ack-then-ghost-redelivery, snapshot supersession, outbox retry-until-ack.

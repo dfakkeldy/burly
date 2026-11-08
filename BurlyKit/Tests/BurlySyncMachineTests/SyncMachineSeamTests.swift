@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The m4-02 seam criterion, guarded twice over:
 //
 // 1. **Build assertion (primary).** The BurlySyncMachine target declares no

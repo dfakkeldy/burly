@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlySchemaV2 — V1 plus `SessionTombstone`, the phone's record of a
 // deleted session (Models/SessionTombstone.swift).
 //

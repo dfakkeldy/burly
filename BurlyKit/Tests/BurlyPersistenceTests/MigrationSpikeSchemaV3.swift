@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The migration spike's throwaway v3 — **test target only, never shipped.**
 //
 // ## What it is for

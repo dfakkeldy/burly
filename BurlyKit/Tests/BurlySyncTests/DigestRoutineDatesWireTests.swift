@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The digest's `routineLastPerformed` key is additive within schema 2 (see
 // `BurlyDigestPayloadDTO`'s doc): no schema bump, older phones' digests
 // still decode (with the key absent, not empty), and each entry is strict

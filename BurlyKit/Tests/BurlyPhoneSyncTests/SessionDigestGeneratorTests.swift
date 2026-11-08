@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 — the digest generator's completeness property test, carried from
 // m1-06 review 4 (gate review) and restated on `SessionDigestReceipt`:
 // "for every digest emitted, lastPerformance is the complete latest-per-

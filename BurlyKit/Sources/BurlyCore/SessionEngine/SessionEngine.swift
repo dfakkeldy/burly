@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SessionEngine
 //
 // The thin seam that wires the three §2/§3 machines together, so the watch

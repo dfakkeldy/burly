@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 — `PhoneSyncCoordinator.sessionReceived(_:)`, the binding contract
 // (SyncMachineBinding.swift) executed against a real `SwiftDataStore`. Each
 // test below is named for the contract item(s) it pins.

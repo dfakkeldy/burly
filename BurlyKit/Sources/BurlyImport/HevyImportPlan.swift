@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyImport — HevyImportPlan
 //
 // The preview/commit seam for spec §8's flow (task m7-02): "preview (N

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §1 acceptance #6 — the pruning gate.
 //
 // "after a simulated ack, the delivered session is absent from the watch

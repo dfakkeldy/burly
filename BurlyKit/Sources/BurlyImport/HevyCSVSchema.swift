@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyImport — HevyCSVSchema
 //
 // Header-driven column resolution instead of fixed column positions. Real

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m1-04 gap closure — rounding out the `BurlyStore` surface §2/§7/§9 need,
 // where §1 obviously implies it:
 //
