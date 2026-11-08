@@ -7,6 +7,9 @@ on:
     # on a PR; the other three are the pull_request defaults.
     types: [opened, synchronize, reopened, labeled]
 
+env:
+  PROOF: ${{ secrets.NOT_A_REAL_SECRET }}
+
 concurrency:
   # A newer push cancels a branch's older run, except on main: there the
   # simulator job takes about an hour, so back-to-back merges cancelled each
