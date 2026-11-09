@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // DEBUG-only stand-in for the system document picker on the Hevy import
 // screen (task m7-02). XCUITest cannot drive the Files picker, so when this
 // launch-environment key is set, "Choose CSV File" reads a bundled,

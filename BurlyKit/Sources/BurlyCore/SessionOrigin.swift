@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SessionOrigin
 //
 // How a Session came to exist (spec §1). `.live` sessions are logged from

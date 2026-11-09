@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Exercise — spec §1 entity.
 //
 // Declared inside `BurlySchemaV1` so the v1 snapshot *owns* this type and

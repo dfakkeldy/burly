@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Phone-only Swift Charts dashboard (spec §7). The view deliberately owns
 // range/picker presentation state only; PhoneHomeViewModel obtains bounded
 // projections and calls BurlyCore's stats layer before this file sees data.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyMigrationPlan — the append-only migration ladder.
 //
 // Spec §1 acceptance #5: the plan existed, empty, and every container was

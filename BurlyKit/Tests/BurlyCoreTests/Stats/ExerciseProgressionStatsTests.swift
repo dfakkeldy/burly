@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Fixture-truth tests for ExerciseProgressionStats (spec §7 #1, acceptance
 // #1): every number below is hand-computed against a synthetic three-
 // session history, not derived by mirroring the implementation.

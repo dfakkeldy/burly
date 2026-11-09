@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 acceptance #1, property-style: random routines, random mutation
 // sequences, and after *every* step the two things §2 actually promises —
 // the ordering invariants hold, and no logged set was harmed.

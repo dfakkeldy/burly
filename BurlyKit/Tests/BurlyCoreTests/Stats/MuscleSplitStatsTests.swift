@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Fixture-truth tests for MuscleSplitStats (spec §7 #3, acceptance #1):
 // fractional attribution across multi-tagged exercises, hand-computed, and
 // the "always sums to 100%" invariant — now including the unattributed

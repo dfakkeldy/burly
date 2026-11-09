@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 #if canImport(HealthKit) && (os(iOS) || os(watchOS)) && !targetEnvironment(macCatalyst)
 import Foundation
 import HealthKit

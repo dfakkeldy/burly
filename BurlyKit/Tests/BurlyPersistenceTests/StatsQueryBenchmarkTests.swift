@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m6-01 — the 50k-SetRecord benchmark the task brief requires: wall time
 // and process high-water RSS around the §7 stats queries
 // (`loggedSetSlices`, `loggedSessionDates`) against a store at roughly the

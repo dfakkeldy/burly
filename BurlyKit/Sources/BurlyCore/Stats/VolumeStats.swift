@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — VolumeStats
 //
 // Spec §7 #2: weekly total volume (Σ weight × reps, working sets only,

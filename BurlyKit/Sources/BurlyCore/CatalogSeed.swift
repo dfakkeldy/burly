@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — versioned, authored exercise catalog seed (spec §9).
 //
 // The bundled JSON is Burly-owned source material: exercise names and muscle

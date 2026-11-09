@@ -98,7 +98,5 @@ scrolling to the bottom.
 
 ## License
 
-Burly is licensed under the [GNU General Public License v3.0 or later](LICENSE),
-with an [App Store distribution exception](LICENSE-APP-STORE-EXCEPTION.md) that
-permits distribution through Apple's App Store while keeping the complete
-source available to everyone under the GPL.
+Burly is free and open source under the [MIT License](LICENSE). It is free on
+the App Store and always will be.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 review round 1, major 10 — a gated 50k-SetRecord benchmark for
 // `SessionDigestGenerator.generate`, mirroring
 // `BurlyPersistenceTests.StatsQueryBenchmarkTests`'s pattern exactly:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §1 acceptance #5 — the migration-scaffold gate.
 //
 // "BurlySchemaV1 registered; a migration-plan test instantiates the

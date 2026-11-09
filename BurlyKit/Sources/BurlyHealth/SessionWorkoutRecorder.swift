@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §4 at the level of a Burly session: when to ask for Health access,
 // when a live workout starts and ends, and what the recovery matrix does
 // after a relaunch. `WorkoutController` stays the only owner of the ordered

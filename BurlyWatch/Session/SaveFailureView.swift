@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m2-03 review findings 6-9: a lifter mid-workout must never be lied to
 // about whether their sets are saved. Any failed `saveActiveSession` /
 // `createExercise` during ordinary logging or a mid-session edit blocks

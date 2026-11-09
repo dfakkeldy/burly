@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — TrailingWindow
 //
 // m6-01 fix round 2, review item 7: the previous fix round closed the

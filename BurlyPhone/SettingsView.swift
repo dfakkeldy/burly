@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Settings tab (spec §9 Phone IA: "display unit (kg/lb), global rest
-// default, HealthKit status row (§4), Hevy import (§8), about/licenses (GPL
-// text)"; planning task m5-05).
+// default, HealthKit status row (§4), Hevy import (§8), about/licenses;
+// Burly is MIT-licensed)"; planning task m5-05).
 //
 // Every row either does what it says or says plainly that it is
 // informational — no control that silently does nothing:
@@ -37,7 +37,7 @@ struct SettingsView: View {
         self.sync = sync
     }
 
-    /// Burly's public repository (the GPL "Corresponding Source").
+    /// Burly's public repository.
     static let sourceCodeURL = URL(string: "https://github.com/dfakkeldy/burly")!
 
     /// The policy App Store Connect links to (fastlane/metadata/en-US/
@@ -240,7 +240,7 @@ struct SettingsView: View {
         } header: {
             Text("About")
         } footer: {
-            Text("Burly is free software under the GNU GPL, version 3 or later.")
+            Text("Burly is free and open source under the MIT License.")
         }
     }
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m6-01 — the bounded §7 stats query surface added to close the m1-06
 // adversarial-review finding that stats must not build on `sessions()`'s
 // unbounded, whole-graph fetch (session → items → sets fault

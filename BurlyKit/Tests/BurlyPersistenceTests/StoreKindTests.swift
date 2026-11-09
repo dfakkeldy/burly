@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §1, ExerciseLastPerformance — watch-store-only write gate.
 //
 // "The model class lives in BurlyPersistence with the rest of the schema,

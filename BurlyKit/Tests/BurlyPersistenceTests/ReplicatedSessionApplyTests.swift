@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 — `applyReplicatedSession(_:)`, the session counterpart to
 // `applyRoutineSnapshot(_:)` (m1-06 fix round A's local-authoring vs
 // replicated-apply split, extended to sessions here). These tests pin the

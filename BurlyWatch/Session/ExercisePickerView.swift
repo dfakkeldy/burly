@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 ellipsis "swap exercise" / "add exercise": "catalog picker:
 // recents -> curated -> customs; search is scribble/dictation only, never
 // required." The list arrives in that order from `SessionViewModel

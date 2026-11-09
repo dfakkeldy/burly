@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SessionState
 //
 // A session's lifecycle state (spec §1, §2). `.active` sessions are

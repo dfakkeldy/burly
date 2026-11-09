@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Durable, watch-only §5 coordinator facts. This is deliberately a single
 // JSON payload so the store can stage it beside a digest or snapshot and save
 // the two facts together. It went into V1, rather than a later schema stage,

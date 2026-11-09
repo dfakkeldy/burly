@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlySyncAdapters — concrete Apple WatchConnectivity bridge
 
 #if os(iOS) || os(watchOS)

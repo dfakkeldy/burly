@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §4 lifecycle rules, "Stale-session guard": on watch app activation,
 // if the active session's last logged set is more than 1 h old, offer
 // finish (with the original timestamps) or discard. Never auto-ends.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // SessionDigest — the seam between sync and the watch's local state (spec
 // §5's `digest` payload; §1: "the watch never accumulates full history —
 // after ack, delivered sessions are pruned from the watch store").

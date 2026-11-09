@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The phone app's exit from an unrecoverable sync journal (`PhoneSyncHost`'s
 // file doc): checked again on the first foreground, reset only if it is
 // still unrecoverable then, and left alone when it was only unreadable at

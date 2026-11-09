@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyImport — HevyRowDecoding
 //
 // Per-row validation and the transient grouping structures

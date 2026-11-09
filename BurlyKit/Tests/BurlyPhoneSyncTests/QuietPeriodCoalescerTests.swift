@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 review round 1, major 6 — direct unit tests against
 // `QuietPeriodCoalescer` itself (not through the coordinator): single
 // pending task, cancellation actually frees a superseded countdown, and no

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m2-03 review finding 1 (blocker, scoped by dispatcher): a second `Start`
 // while a session is already `.active` must never proceed to an unsaved
 // logging screen -- the store correctly refuses the second

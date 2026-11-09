@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — HapticEvent, HapticLog
 //
 // The haptics abstraction the spec's acceptance criteria assert against

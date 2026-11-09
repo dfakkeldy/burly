@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Shown when the phone store fails to open (e.g. Application Support
 // unavailable), or when a PhoneDemoSeed scenario deliberately fails closed
 // (m5-01 review finding 6 -- see PhoneDemoSeed.swift). Not a spec-defined

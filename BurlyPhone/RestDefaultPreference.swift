@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The phone's global rest default (spec §9 Settings: "global rest default";
 // §3: 15 s–5 min in 15 s steps, 90 s by default). Stored in the phone's own
 // UserDefaults like `DisplayUnitPreference`, edited in Settings, and carried

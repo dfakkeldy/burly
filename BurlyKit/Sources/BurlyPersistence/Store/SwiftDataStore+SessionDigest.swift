@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // SwiftDataStore + SessionDigestApplying — wires BurlySync's §5 digest seam
 // (spec §1 acceptance #6) to the watch's own digest transaction.
 //

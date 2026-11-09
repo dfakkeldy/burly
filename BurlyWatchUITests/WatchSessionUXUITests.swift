@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 import XCTest
 
 /// The logging screen as a tester first meets it: everything needed to log

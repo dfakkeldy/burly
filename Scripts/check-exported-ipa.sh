@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # Scripts/check-exported-ipa.sh IPA_PATH
 #

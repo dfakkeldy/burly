@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m2-06 review finding 2.1: the targeted recovery for
 // `WatchHomeViewModel.LoadState.unreadableSession` -- see that file's doc
 // for why this exists as its own state rather than folding into `.failed`,

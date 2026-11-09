@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 import XCTest
 
 /// Spec §2 acceptance #4 and §3 acceptance #3 (m2-06): a real process kill

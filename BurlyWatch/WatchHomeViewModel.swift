@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Loads the watch home's state from the store (spec §2 Start, §5 fresh
 // install). Routines reach the watch store only through the phone's sync
 // snapshot (routine authoring is phone-only, §9), so until the first

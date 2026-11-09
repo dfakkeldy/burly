@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 "Logging screen (one exercise at a time, TabView paging
 // vertical)": header, ghost row, weight + reps controls, one primary
 // full-width Log set button, and the §3 rest-timer hosting seam. One of

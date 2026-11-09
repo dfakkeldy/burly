@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — CalendarBucketing
 //
 // Shared day/week bucketing for §7's volume and consistency charts.

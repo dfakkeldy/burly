@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m1-06 review round E — a failed save must not leave pending changes
 // behind for someone else's save to commit.
 //

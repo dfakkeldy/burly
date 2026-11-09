@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Fixture-truth tests for VolumeStats (spec §7 #2, acceptance #1): weekly
 // bucketing, warmup exclusion, and kg→lb display conversion, all hand-
 // computed.

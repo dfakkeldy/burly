@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 input model: "Reps: +/- buttons (large tap targets), crown
 // adjusts when focused." Reps have no lock -- only weight does -- so this
 // is a plain adjustable control, collapsed into one accessibility element

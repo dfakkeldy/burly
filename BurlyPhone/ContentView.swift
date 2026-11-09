@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // iPhone app shell root (spec m5-01): shows the one-time welcome while the
 // user hasn't chosen how to start, then hosts the four-tab shell.
 //

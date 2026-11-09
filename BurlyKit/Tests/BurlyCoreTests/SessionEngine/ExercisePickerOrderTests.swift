@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 mid-session edits: the swap/add picker lists recents, then
 // curated, then customs.
 import Testing

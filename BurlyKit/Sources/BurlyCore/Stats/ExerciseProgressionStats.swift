@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — ExerciseProgressionStats
 //
 // Spec §7 #1: exercise progression / PRs. Two independently-tracked series

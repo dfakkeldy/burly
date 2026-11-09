@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SessionMutationError, SessionMutator
 //
 // Spec §2 "Mid-session edits", as pure functions over `ActiveSession`:

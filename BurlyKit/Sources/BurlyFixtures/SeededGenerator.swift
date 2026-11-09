@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyFixtures
 //
 // Deterministic pseudo-random number generator used by every fixture

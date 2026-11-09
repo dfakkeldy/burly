@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The four-tab iPhone shell (spec m5-01): History (default) / Routines /
 // Stats / Settings. Every tab renders its real state from the shared
 // PhoneHomeViewModel, which loads the phone store once on appear — a fresh

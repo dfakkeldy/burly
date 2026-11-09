@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SetRecordSlice
 //
 // Flat, stats-shaped projection of one logged `SetRecord` (spec §7). Not a

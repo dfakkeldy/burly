@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyPhoneSync — SessionDigestGenerator
 //
 // The generator `SessionDigestReceipt`'s doc names and defers to M4 for: "the

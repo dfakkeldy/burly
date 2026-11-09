@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Container factories — module-internal. `ModelContainer` exposes a public
 // `.erase()` (and `.deleteAllData()`), a bulk hard-delete that bypasses
 // `BurlyStore` entirely — the same class of bypass §1 acceptance #3 already

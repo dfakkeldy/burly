@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Watch app shell root (spec §2 home, §5 fresh install). Switches between
 // the routine list, the "waiting for iPhone" state, and a store-failure
 // fallback, then routes Start / "Empty session" (§2) to the real session

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Navigation routes for the watch home shell (spec §2). Start and the
 // list-end "Empty session" action push these values; ContentView resolves
 // them to a real session (SessionEntryView, m2-03).

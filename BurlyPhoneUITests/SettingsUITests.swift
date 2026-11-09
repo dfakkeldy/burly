@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 import XCTest
 
 /// Exercises the phone Settings tab (spec §9 Phone IA Settings bullet,
@@ -97,18 +97,12 @@ final class SettingsUITests: XCTestCase {
             anyElement(app, identifier: "licenses.summary").waitForExistence(timeout: 5),
             "Expected the plain-language summary at the top of Licenses"
         )
-        XCTAssertTrue(scrollToElement(app, identifier: "licenses.exceptionHeading").exists, "Expected the App Store exception section")
-        XCTAssertFalse(anyElement(app, identifier: "licenses.exception.unavailable").exists, "Expected the bundled exception text to load")
+        XCTAssertTrue(scrollToElement(app, identifier: "licenses.mitHeading").exists, "Expected the MIT License section")
         XCTAssertTrue(
-            scrollToElement(app, labelContaining: "Distribute through Apple").exists,
-            "Expected the exception's own text, read from the bundled file"
+            scrollToElement(app, labelContaining: "Permission is hereby granted").exists,
+            "Expected the MIT text, read from the bundled LICENSE file"
         )
-        XCTAssertTrue(scrollToElement(app, identifier: "licenses.gplHeading").exists, "Expected the GPL section")
-        XCTAssertTrue(
-            scrollToElement(app, labelContaining: "GNU GENERAL PUBLIC LICENSE").exists,
-            "Expected the GPL text, read from the bundled LICENSE file"
-        )
-        XCTAssertFalse(anyElement(app, identifier: "licenses.gpl.unavailable").exists, "Expected the bundled GPL text to load")
+        XCTAssertFalse(anyElement(app, identifier: "licenses.mit.unavailable").exists, "Expected the bundled license text to load")
         attachScreenshot(from: app, name: "BurlyPhone-licenses")
 
         app.navigationBars.buttons.element(boundBy: 0).tap()

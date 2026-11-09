@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 review round 3, §1 — the unrecoverable state must be PREVENTED from
 // transmitting, not merely detected: after a load that throws
 // `PhoneSyncStateUnrecoverableError` (journal present with zero valid lines),

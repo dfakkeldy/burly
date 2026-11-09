@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Fixture-truth tests for ExerciseRecencyStats: which exercise the phone's
 // progression chart opens on, and which exercises its picker leads with.
 import Testing

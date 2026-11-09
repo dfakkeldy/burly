@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 "Guarded weight edit (the deliberate-gesture arm)". The UI layer
 // over `GuardedWeightEditMachine` (BurlyCore) -- this view holds no lock
 // logic of its own; every state transition is asked of `SessionViewModel`,

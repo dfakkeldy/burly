@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // What the watch takes from the phone's Settings (sync snapshot schema 2):
 // the display unit every weight renders in, and the §3 global rest default
 // that ends the rest ladder (an exercise's own rest, then the routine's,

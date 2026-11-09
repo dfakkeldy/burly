@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §1 acceptance #2 — the cascade gate.
 //
 // "deleting Session removes its items/sets; deleting Routine removes

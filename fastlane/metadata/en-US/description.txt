@@ -17,4 +17,4 @@ PRIVATE BY DESIGN
 No account, no ads, no analytics and no tracking. Your workouts stay on your iPhone and Apple Watch, which talk to each other directly. Burly itself never sends your data anywhere.
 
 FREE AND OPEN SOURCE
-Burly is free software under the GNU General Public License, version 3 or later. The complete source code is on GitHub.
+Burly is free, always, and open source under the MIT License. The complete source code is on GitHub.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m1-06 review, M2 — the §5 digest applies as one transaction.
 //
 // §5's `digest` payload carries two halves of one latest-wins fact: the

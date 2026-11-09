@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyPhoneSync — PhoneSyncStatePersisting
 //
 // Binding contract item 5 requires the state carrying a new ack to be

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 input model: "Prefill: weight/reps prefill from last session's
 // same set index; fallback: previous set this session; fallback: empty",
 // and §2 acceptance #5's "absent digest … no stale data".

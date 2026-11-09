@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //
 // Task m7-02: the import plan behind the phone's preview/commit screen.
 // Spec §8 acceptance #2 (same file twice -> zero duplicates; overlapping

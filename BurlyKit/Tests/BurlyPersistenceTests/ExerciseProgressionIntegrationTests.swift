@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m6-01 fix round 2, review item 3 — the blessed integration path
 // (`BurlyStore.exerciseProgression(exerciseID:displayRange:)`) against a
 // real store, reproducing the round-2 review's exact concrete scenario: an

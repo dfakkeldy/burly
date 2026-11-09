@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyImport — HevyTimestamp
 //
 // Parses the two known shapes of Hevy's `start_time`/`end_time` columns:

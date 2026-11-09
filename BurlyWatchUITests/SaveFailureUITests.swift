@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 import XCTest
 
 /// m2-03 review findings 6-9: "a lifter mid-workout must never be lied to

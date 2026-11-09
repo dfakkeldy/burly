@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — ExerciseRecencyStats
 //
 // Spec §7 #1 names the progression chart's ranges but no default exercise.

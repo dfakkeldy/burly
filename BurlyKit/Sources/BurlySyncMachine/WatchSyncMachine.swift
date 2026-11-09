@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlySyncMachine — WatchSyncMachine
 //
 // The watch half of the §5 sync protocol, as a pure state machine:

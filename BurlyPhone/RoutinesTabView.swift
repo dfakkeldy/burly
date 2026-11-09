@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Phone routine authoring (spec §9): a manually ordered routine list, a
 // whole-routine editor, and the small on-device exercise catalog. Persistence
 // work is routed through PhoneHomeViewModel, never performed by a view.

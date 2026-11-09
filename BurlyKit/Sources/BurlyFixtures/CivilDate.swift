@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyFixtures
 //
 // A minimal proleptic-Gregorian calendar date, computed with pure integer

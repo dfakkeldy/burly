@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyImport — CSVTokenizer
 //
 // Hand-rolled RFC-4180-ish tokenizer: no third-party CSV library, per the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 "Always-On & recovery": "Relaunch with an `.active` session in
 // store → Resume screen (session intact to the last logged set) +
 // `recoverActiveWorkoutSession()` reattach. Declining resume = normal

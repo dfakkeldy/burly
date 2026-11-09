@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # Scripts/paired-sync-sim.sh
 #
 # m4-06 paired-simulator sync check: the real phone and watch apps on the

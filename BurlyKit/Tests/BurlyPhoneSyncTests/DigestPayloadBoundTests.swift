@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The §5 digest rides `updateApplicationContext`, which refuses a payload
 // over roughly 64 KB. Before this bound, a heavy history (a multi-year Hevy
 // import: hundreds of non-archived exercises) produced a digest that failed

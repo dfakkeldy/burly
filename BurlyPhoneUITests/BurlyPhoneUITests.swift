@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 import XCTest
 
 /// Exercises the iPhone app shell (spec m5-01): the four-tab shell, the

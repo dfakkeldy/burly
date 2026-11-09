@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — ExerciseOrigin
 //
 // Where an Exercise entered the catalog (spec §1). `.curated` ships with

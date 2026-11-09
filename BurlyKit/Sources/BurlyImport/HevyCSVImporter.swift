@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyImport — HevyCSVImporter
 //
 // Top-level entry point (spec §8): tokenize -> validate the header -> decode

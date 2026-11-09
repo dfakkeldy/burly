@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The current-schema façade — one file, one block, the whole cost of a
 // version bump.
 //

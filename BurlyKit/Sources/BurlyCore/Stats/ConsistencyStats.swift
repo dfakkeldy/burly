@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — ConsistencyStats
 //
 // Spec §7 #4: sessions per week vs. a trailing typical week, plus calendar

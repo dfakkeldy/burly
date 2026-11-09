@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // LatestLoggedSession — the one "which logged session is latest" rule the
 // §5 digest uses, shared by the store's narrow read and the generator
 // (issue #24).

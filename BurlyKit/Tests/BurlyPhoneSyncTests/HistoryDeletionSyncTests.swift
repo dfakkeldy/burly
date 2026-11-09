@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Phone history edits that a later §5 delivery must not undo, driven
 // through the real `PhoneSyncCoordinator` against a real `SwiftDataStore`:
 //

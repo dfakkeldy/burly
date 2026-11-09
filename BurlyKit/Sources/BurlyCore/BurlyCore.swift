@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore
 //
 // Pure Swift domain layer for Burly (architecture doc, §module layout):

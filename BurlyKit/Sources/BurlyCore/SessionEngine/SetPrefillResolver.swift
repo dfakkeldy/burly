@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — SetPrefill, SetPrefillSource, SetPrefillResolver
 //
 // Spec §2 input model: "Prefill: weight/reps prefill from last session's

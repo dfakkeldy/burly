@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §1 acceptance #1 — the round-trip gate.
 //
 // "create routine → start session → log sets → persist → cold-load

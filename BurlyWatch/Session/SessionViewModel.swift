@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Drives the §2 logging screen: owns the `SessionEngine`, persists through
 // `BurlyStore.saveActiveSession(_:)` after every mutation (and once more
 // after Finish, per that method's doc), and plays the haptics each engine

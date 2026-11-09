@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // m4-04 — `allLoggedSetSlices()`, the one-shot, all-exercise, all-time
 // bounded fetch the §5 digest generator (`BurlyPhoneSync.SessionDigestGenerator`)
 // is built on. See the protocol doc for why this exists instead of a

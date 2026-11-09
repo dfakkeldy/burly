@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The Hevy CSV import screen (spec §8; task m7-02), replacing m5-01's
 // placeholder. Reached from the welcome's "Import from Hevy" and from the
 // Settings row; both present it over the tab shell (see MainTabView).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §4 acceptance #5: the stale-session guard fires at the 1 h boundary
 // (injected clock), measured from the last logged set.
 import Testing

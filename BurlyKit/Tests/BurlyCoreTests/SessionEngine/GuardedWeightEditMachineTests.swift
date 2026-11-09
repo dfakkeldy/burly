@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §2 acceptance #2: "locked→armed only via arm action; armed→locked on
 // 3 s idle / log / page-away; adjust events while locked are no-ops",
 // plus §2's "every lock/unlock transition is a distinct haptic".

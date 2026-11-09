@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Concrete watch endpoint: envelope routing plus the atomic store executor.
 
 import Foundation

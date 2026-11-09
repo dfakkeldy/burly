@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §1 acceptance #3 (shape) plus the archive semantics §1 and §9 rely on.
 //
 // Acceptance #3 — "attempting hard-delete of a referenced Exercise is

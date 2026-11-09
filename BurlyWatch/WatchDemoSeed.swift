@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Deterministic watch-store scenarios for BurlyWatchUITests
 // (Scripts/acceptance-sim.sh). Debug-only, and driven entirely by an
 // XCUITest launch-environment variable -- a real device launch never sets

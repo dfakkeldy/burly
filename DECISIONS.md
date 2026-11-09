@@ -1,5 +1,19 @@
 <!-- Newest entry first. Dates are local (ADT/AST), matching the commit that adds them. -->
 
+## 2026-11-08 — Burly is MIT-licensed, and free forever
+
+Dan's call: Burly moves from GPL-3.0-or-later with an App Store exception to
+the MIT License, and stays free on the App Store permanently. Every commit so
+far is Dan's or an agent's working for him, and the app has no third-party
+dependencies, so no one else's consent was needed.
+
+- `LICENSE` is the MIT text; `LICENSE-APP-STORE-EXCEPTION.md` is gone,
+  because MIT already allows App Store distribution.
+- Every SPDX header now reads `MIT`.
+- Settings → Licenses shows the MIT text and a one-paragraph summary. The
+  listing description, review notes and README say MIT.
+- Copies already published under the GPL stay available under the GPL.
+
 ## 2026-11-03 — Watch session: no back exit, recents-first picker, §4 prompts on the logging screen
 
 #54. The logging screen, the swap/add picker, and the §4 prompts.

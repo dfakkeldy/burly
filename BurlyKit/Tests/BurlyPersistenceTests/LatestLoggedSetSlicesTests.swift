@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Issue #24 — `latestLoggedSetSlices(forExercises:)`, the digest generator's
 // narrow read, held to the full-history answer it replaces, case by case:
 // empty, latest-empty, tie, repeated, nil, active, archived and corrupt.

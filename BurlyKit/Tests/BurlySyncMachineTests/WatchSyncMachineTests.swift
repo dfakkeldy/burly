@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Spec §5 watch-side rules, each pinned directly against the machine:
 // outbox-until-ack (transfer callbacks are never delivery proof),
 // activation retries, whole-replace snapshot monotonicity, and latest-wins

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Entry points into the Hevy import screen (spec §8/§9; task m7-02).
 //
 // The import screen is presented by MainTabView, which owns the store's

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // SessionTombstone — the phone's record that the user deleted a session.
 //
 // ## Why a deleted session needs a row at all

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyPhoneSync — TriggerScheduling
 //
 // The one thing in this module that is allowed to "wait": a minimal,

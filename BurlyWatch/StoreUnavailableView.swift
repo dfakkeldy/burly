@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Shown when the watch store fails to open, or when a load against an
 // already-open store fails (e.g. Application Support unavailable, or a
 // WatchDemoSeed scenario that deliberately fails closed -- see

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import Foundation
 import Testing
 import BurlyCore

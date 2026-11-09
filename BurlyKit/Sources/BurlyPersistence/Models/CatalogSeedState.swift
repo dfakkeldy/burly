@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Internal metadata for §9 catalog seed application.
 //
 // BurlySchemaV1 had not shipped when this was added, so registering it in V1

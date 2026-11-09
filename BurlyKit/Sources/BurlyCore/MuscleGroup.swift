@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // BurlyCore — MuscleGroup
 //
 // The frozen 12-value muscle-tag taxonomy (spec burly-spec.md §1, §9).
