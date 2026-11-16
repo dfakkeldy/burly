@@ -1191,18 +1191,10 @@ struct ActiveSessionTransactionTests {
         #expect(resumed.isWellFormed)
     }
 
-    /// Pins a measured SwiftData limitation, not a Burly design choice.
-    ///
-    /// The obvious bounded Resume query is
-    /// `#Predicate<Session> { $0.state == .active }` with `fetchLimit = 1`.
-    /// SwiftData rejects it at *runtime* — it compiles fine — which is why
-    /// `resumableActiveSession()` goes through the `ActiveSessionJournal`
-    /// index instead of predicating on the enum directly.
-    ///
-    /// If a future SwiftData starts supporting it, this test fails: delete
-    /// the journal indirection from `resumableActiveSession()` and the
-    /// paragraph explaining it in Models/ActiveSessionJournal.swift.
-    @Test("SwiftData cannot predicate on SessionState — the reason the resume lookup is indexed by the journal")
+    /// The iOS 26 runtime rejects the enum predicate, so the journal is
+    /// still needed at our deployment floor. iOS 27 accepts it. Check its
+    /// filtering there rather than requiring an obsolete runtime error.
+    @Test("SessionState predicates filter on iOS 27; legacy runtimes still require the journal")
     func swiftDataCannotPredicateOnSessionState() throws {
         let container = try BurlyContainer.make(.watch, at: .inMemory)
         let store = SwiftDataStore(container: container, clock: TestClock())
@@ -1212,6 +1204,17 @@ struct ActiveSessionTransactionTests {
         let target = SessionState.active
         var descriptor = FetchDescriptor<Session>(predicate: #Predicate { $0.state == target })
         descriptor.fetchLimit = 1
+
+        #if os(iOS)
+        if #available(iOS 27, *) {
+            let logged = SessionData(startedAt: Fixture.epoch, state: .logged, origin: .live, items: [])
+            try store.createSession(logged)
+            descriptor.fetchLimit = nil
+            let matches = try ModelContext(container).fetch(descriptor)
+            #expect(matches.map(\.id) == [active.id])
+            return
+        }
+        #endif
 
         #expect(throws: (any Error).self) {
             try ModelContext(container).fetch(descriptor)

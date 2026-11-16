@@ -26,20 +26,21 @@
 // ticket to m8-02 (the device-floor task), not a silent pass.
 import Foundation
 import Darwin
+import CryptoKit
 import Testing
 import BurlyCore
 import BurlyPersistence
 import BurlyFixtures
+import BurlySync
 @testable import BurlyPhoneSync
 
 let digestBenchmarkIsEnabled =
     ProcessInfo.processInfo.environment["BURLY_RUN_DIGEST_BENCHMARK"] == "1"
 
-/// The review's own named thresholds — crossing either is not a hard test
-/// failure (a benchmark that fails the build on a slow CI runner is the
-/// wrong kind of flaky), but must be printed loudly enough that it cannot be
-/// missed in CI output, per the brief: "note it loudly — projection
-/// optimization is then ticketed to m8-02, not silently accepted."
+/// Keep the original three-second and RSS thresholds. The explicitly gated
+/// benchmark also fails when the median of five cold-context generations
+/// crosses the wall-time threshold. RSS is a process-lifetime high-water
+/// mark, so it remains a diagnostic rather than an interval allocation test.
 private let wallTimeThresholdSeconds = 3.0
 private let residentBytesThreshold: UInt64 = 250 * 1_048_576
 
@@ -72,12 +73,26 @@ struct DigestGenerationBenchmarkTests {
         // reusing the seeding context's identity-map cache. Same rationale
         // as `StatsQueryBenchmarkTests`: "app launches, publishes a digest,"
         // not "same session digests what it just wrote."
-        let store = try SwiftDataStore(kind: .phone, at: .file(url))
-
-        let acked: Set<UUID> = [UUID(), UUID()]
-        let (payload, seconds, peakBytes) = try measureDigestBenchmark {
-            try SessionDigestGenerator.generate(from: store, snapshotVersion: 42, ackedSessionIDs: acked)
+        let acked: Set<UUID> = [
+            UUID(uuidString: "FFFFFFFF-0000-0000-0000-000000000001")!,
+            UUID(uuidString: "FFFFFFFF-0000-0000-0000-000000000002")!
+        ]
+        var timings: [Double] = []
+        var payloads: [BurlyDigestPayloadDTO] = []
+        for run in 1...5 {
+            let store = try SwiftDataStore(kind: .phone, at: .file(url))
+            let (payload, seconds, _) = try measureDigestBenchmark {
+                try SessionDigestGenerator.generate(from: store, snapshotVersion: 42, ackedSessionIDs: acked)
+            }
+            timings.append(seconds)
+            payloads.append(payload)
+            print("[digest five runs] run \(run): \(seconds)s")
         }
+        let payload = try #require(payloads.first)
+        let seconds = timings.sorted()[2]
+        let peakBytes = currentDigestBenchmarkPeakResidentBytes()
+        print("[digest five runs] median: \(seconds)s")
+        #expect(seconds < wallTimeThresholdSeconds, "digest generation median must stay below 3 seconds")
 
         print("""
         [m4-04 digest benchmark] generate(): \(payload.lastPerformance.count) exercise entries, \
@@ -93,10 +108,35 @@ struct DigestGenerationBenchmarkTests {
         // this scale, in another fresh context (after the timed call, so
         // the timing above never benefits from this read's cache).
         let referenceStore = try SwiftDataStore(kind: .phone, at: .file(url))
-        let (fullHistory, fullSeconds, _) = try measureDigestBenchmark {
-            SessionDigestGenerator.latestPerformancePerExercise(from: try referenceStore.allLoggedSetSlices())
+        let (allSlices, fetchSeconds, _) = try measureDigestBenchmark {
+            try referenceStore.allLoggedSetSlices()
         }
+        let (fullHistory, computeSeconds, _) = measureDigestBenchmark {
+            SessionDigestGenerator.latestPerformancePerExercise(from: allSlices)
+        }
+        let fullSeconds = fetchSeconds + computeSeconds
+        print("[digest phases] full-history fetch \(fetchSeconds)s; pure derivation \(computeSeconds)s")
         #expect(payload.lastPerformance == fullHistory)
+        // Compare the complete encoded envelope against the full-history
+        // oracle on the fixed-seed persisted fixture. Sort JSON object keys
+        // because Foundation does not promise their default ordering.
+        let reference = BurlyDigestPayloadDTO(
+            snapshotVersion: 42,
+            lastPerformance: fullHistory,
+            ackedSessionIDs: acked.sorted { $0.uuidString < $1.uuidString },
+            routineLastPerformed: []
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let expectedBytes = try BurlySyncEnvelope(payload: .digest(reference)).encodedData(using: encoder)
+        let hash = SHA256.hash(data: expectedBytes).map { String(format: "%02x", $0) }.joined()
+        // Captured on origin/main a6bef0b before this test-only change.
+        #expect(hash == "069caa3a3a01092a58b8f6be3f0c34f422b2da3b47730708f695cc71e40922f6")
+        print("[digest bytes] fixed-seed envelope SHA256 \(hash), \(expectedBytes.count) bytes")
+        for generated in payloads {
+            let bytes = try BurlySyncEnvelope(payload: .digest(generated)).encodedData(using: encoder)
+            #expect(bytes == expectedBytes)
+        }
         print("""
         [m4-04 digest benchmark] full-history derivation for comparison: \(fullHistory.count) entries, \
         \(String(format: "%.4f", fullSeconds))s
@@ -124,6 +164,37 @@ struct DigestGenerationBenchmarkTests {
         }
 
         print("[m4-04 digest benchmark] done\n")
+    }
+}
+
+// Byte equivalence also runs in the ordinary unit suite, without the
+// expensive 50k-row benchmark gate.
+@MainActor
+@Suite("#24 — fixed-seed digest wire equivalence")
+struct DigestWireEquivalenceTests {
+    @Test("cold-store digest bytes equal the full-history reference on a fixed seed")
+    func fixedSeedWireBytes() throws {
+        let url = try makeDigestBenchmarkStoreURL()
+        defer { removeDigestBenchmarkStoreFiles(at: url) }
+        _ = try DigestBenchmarkFixture.seedStore(at: url, sessionCount: 36)
+        let acked: Set<UUID> = [UUID(uuidString: "FFFFFFFF-0000-0000-0000-000000000001")!]
+        let referenceStore = try SwiftDataStore(kind: .phone, at: .file(url))
+        let reference = BurlyDigestPayloadDTO(
+            snapshotVersion: 42,
+            lastPerformance: SessionDigestGenerator.latestPerformancePerExercise(
+                from: try referenceStore.allLoggedSetSlices()
+            ),
+            ackedSessionIDs: acked.sorted { $0.uuidString < $1.uuidString },
+            routineLastPerformed: []
+        )
+        let cold = try SwiftDataStore(kind: .phone, at: .file(url))
+        let generated = try SessionDigestGenerator.generate(
+            from: cold, snapshotVersion: 42, ackedSessionIDs: acked
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        #expect(try BurlySyncEnvelope(payload: .digest(generated)).encodedData(using: encoder)
+            == BurlySyncEnvelope(payload: .digest(reference)).encodedData(using: encoder))
     }
 }
 
@@ -211,12 +282,12 @@ private enum DigestBenchmarkFixture {
     /// `StatsQueryBenchmarkTests.BenchmarkFixture.seedStore` — ~3,600
     /// sessions comfortably north of the 50k-SetRecord target — so the two
     /// benchmarks' numbers are directly comparable at a glance.
-    static func seedStore(at url: URL) throws -> SeedResult {
+    static func seedStore(at url: URL, sessionCount: Int = 3_600) throws -> SeedResult {
         let start = Date()
 
         let sessions = WorkoutHistoryGenerator.generate(
             seed: 0xB0_5E_ED_01,
-            sessionCount: 3_600,
+            sessionCount: sessionCount,
             spanDays: 10 * 365,
             startDate: CivilDate(year: 2026, month: 8, day: 1)
         )
@@ -225,6 +296,13 @@ private enum DigestBenchmarkFixture {
 
         var exerciseIDByTitle: [String: UUID] = [:]
         var setCount = 0
+        // Stable identities make the complete wire bytes reproducible,
+        // including session/set UUID tie breakers.
+        var identity: UInt64 = 0
+        func nextID() -> UUID {
+            identity += 1
+            return UUID(uuidString: String(format: "00000000-0000-0000-0000-%012llX", identity))!
+        }
 
         for session in sessions {
             var items: [SessionItemData] = []
@@ -233,7 +311,7 @@ private enum DigestBenchmarkFixture {
                 if let existing = exerciseIDByTitle[exercise.title] {
                     exerciseID = existing
                 } else {
-                    let id = UUID()
+                    let id = nextID()
                     try store.createExercise(
                         ExerciseData(
                             id: id,
@@ -249,6 +327,7 @@ private enum DigestBenchmarkFixture {
                 let sessionStart = date(from: session.start)
                 let sets = exercise.sets.enumerated().map { index, set in
                     SetRecordData(
+                        id: nextID(),
                         order: index,
                         weight: Weight(kg: set.weightKg),
                         reps: set.reps,
@@ -257,11 +336,12 @@ private enum DigestBenchmarkFixture {
                     )
                 }
                 setCount += sets.count
-                items.append(SessionItemData(exerciseID: exerciseID, order: items.count, sets: sets))
+                items.append(SessionItemData(id: nextID(), exerciseID: exerciseID, order: items.count, sets: sets))
             }
 
             try store.createSession(
                 SessionData(
+                    id: nextID(),
                     startedAt: date(from: session.start),
                     endedAt: date(from: session.end),
                     state: .logged,
