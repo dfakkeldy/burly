@@ -516,7 +516,7 @@ final class BurlyPhoneUITests: XCTestCase {
         replaceText(in: app.textFields["historyDetail.setReps"], with: "12", app: app)
         app.buttons["historyDetail.saveSet"].tap()
         assertRevision(2, in: app)
-        XCTAssertTrue(app.staticTexts["82.5 kg × 12"].waitForExistence(timeout: 5), "Expected the saved set values to render")
+        assertEditedWorkingSetValues(in: app)
         assertHealthKitLink(in: app)
 
         // Warmup is a separate edit and therefore must produce its own
@@ -619,7 +619,7 @@ final class BurlyPhoneUITests: XCTestCase {
 
         app.buttons["historyDetail.saveSet"].tap()
         assertRevision(2, in: app)
-        XCTAssertTrue(app.staticTexts["82.5 kg × 12"].waitForExistence(timeout: 5))
+        assertEditedWorkingSetValues(in: app)
         assertHealthKitLink(in: app)
         attachScreenshot(from: app, name: "BurlyPhone-historySaveRetry")
     }
@@ -862,6 +862,17 @@ final class BurlyPhoneUITests: XCTestCase {
             scrollUpToElement(app, identifier: "historyDetail.revision.\(revision)").exists,
             "Expected edit to persist exactly revision \(revision)"
         )
+    }
+
+    /// Weight formatting follows the device locale. The French simulator
+    /// renders 82,5, while English renders 82.5. Match the exact edited row
+    /// and both expected values without requiring one decimal separator.
+    private func assertEditedWorkingSetValues(in app: XCUIApplication) {
+        let row = anyElement(app, identifier: "historyDetail.set.\(Self.squatWorkingSetID)")
+        let expected = NSPredicate(format: "label MATCHES %@", "82[.,]5 kg × 12")
+        let saved = XCTNSPredicateExpectation(predicate: expected, object: row)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed,
+                       "Expected the saved working set to show 82.5 kg and 12 reps; got \(row.label)")
     }
 
     private func assertHealthKitLink(in app: XCUIApplication) {
